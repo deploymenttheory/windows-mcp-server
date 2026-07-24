@@ -133,7 +133,7 @@ Tools are grouped into **toolsets**. The default configuration enables `screen`,
 | Toolset | Default | Tools |
 |---|:---:|---|
 | `screen` | ✓ | `Snapshot`, `Screenshot`, `DisplayInventory` |
-| `interaction` | ✓ | `Click`, `Type`, `Scroll`, `Move`, `Shortcut`, `Wait`, `WaitFor`, `MultiSelect`, `MultiEdit` |
+| `interaction` | ✓ | `Click`, `Type`, `Invoke`, `GetText`, `Scroll`, `Move`, `Shortcut`, `Wait`, `WaitFor`, `MultiSelect`, `MultiEdit` |
 | `apps` | ✓ | `App` (launch / launch_executable / switch / resize) |
 | `system` | ✓ | `Clipboard`, `Process`, `Registry`, `Notification` |
 | `shell` | | `PowerShell` |
@@ -161,7 +161,52 @@ instructions so the agent adopts that persona's workflow.
 |---|---|---|
 | `first-line-support` | screen, interaction, apps, system, shell, diagnostics | Diagnose before acting; `SystemInfo`/`Process`/`Service` + PowerShell |
 | `qa-test-engineer` | screen, interaction, apps, system, filesystem, web, testing | Deterministic UI tests; label targeting, `Assert`, `CaptureEvidence` |
-| `business-user` | screen, interaction, apps | Simple, safe interaction in open apps; no shell/registry/filesystem |
+| `business-user` | screen, interaction, apps, web, testing | End-user tasks & user-journey testing through the real UI; verify with `Assert`/`GetText`; no shell/registry/filesystem |
+
+## User-journey testing (RPA)
+
+The `business-user` and `qa-test-engineer` personas are built for driving
+scripted user journeys — open apps, log into sites, click through flows, browse,
+check and change settings via the UI — and verifying each step. The loop is:
+
+**perceive → target → act → synchronize → verify**
+
+```
+Snapshot                       # see the foreground window + labeled elements
+Invoke  {name:"Sign in"}       # act via the accessibility pattern (reliable)
+WaitFor {condition:active_window, window_name:"Inbox"}
+Assert  {condition:text_present, text:"Welcome"}
+CaptureEvidence {label:"logged in"}
+```
+
+**Prefer `Invoke` over `Click`/`Type`.** `Invoke` (and `set_value`, `toggle`,
+`select`, `expand`/`collapse`) acts on an element through its UI Automation
+control pattern instead of synthesizing mouse/keyboard input. It does not depend
+on the window being focused, unoccluded, or at a particular DPI, so journeys are
+far less flaky. `Click`/`Type` remain as the fallback for controls that expose
+no pattern.
+
+**Target by name or by label.** Every interaction tool accepts a `label` from the
+latest Snapshot, an explicit `loc` [x,y], or a `name` (with optional
+`control_type` and `nth`) — so a step can read as `Invoke {name:"Submit",
+control_type:"Button"}`. Use `GetText` to read an element's value for precise
+assertions.
+
+### What cannot be automated (by design)
+
+These sit on the Windows **secure desktop**, which no user-session process can
+see or drive — a platform security boundary, not a limitation of this server:
+
+- The **Windows sign-in / lock screen** and **UAC elevation prompts**.
+- Driving **elevated (admin) apps** from a non-elevated process (UIPI).
+
+Design journeys around this: have the harness deliver an **already-signed-in,
+unlocked session** (e.g. configure autologon and keep the machine unlocked), and
+**auto-start this server at login** (a scheduled task) so it is present when the
+journey begins. "Login/logout" inside a journey then means **application and
+website** sign-in (fully supported) and `logoff` — not the OS credential screen.
+If a journey must handle admin UI or UAC, relax UAC in the dedicated test VM or
+run the server elevated.
 
 ## Flags & environment
 

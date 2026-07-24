@@ -73,16 +73,34 @@ func (d *Desktop) Snapshot(opts SnapshotOptions) (*DesktopState, error) {
 			Interactive: tb.interactive,
 			TreeText:    strings.Join(tb.lines, "\n"),
 		}
+
+		// Swap in the new state and release the previous snapshot's retained
+		// element references — on this STA thread, where the COM objects live.
+		d.stateMu.Lock()
+		old := d.lastState
+		d.lastState = state
+		d.stateMu.Unlock()
+		releaseStateElements(old)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	d.stateMu.Lock()
-	d.lastState = state
-	d.stateMu.Unlock()
 	return state, nil
+}
+
+// releaseStateElements releases the retained UIA element references held by a
+// snapshot. Must run on the engine STA thread.
+func releaseStateElements(s *DesktopState) {
+	if s == nil {
+		return
+	}
+	for i := range s.Interactive {
+		if s.Interactive[i].element != nil {
+			s.Interactive[i].element.Release()
+			s.Interactive[i].element = nil
+		}
+	}
 }
 
 // selectTargets orders windows for traversal: the foreground window first, then
@@ -143,4 +161,51 @@ func (d *Desktop) LastState() *DesktopState {
 	d.stateMu.Lock()
 	defer d.stateMu.Unlock()
 	return d.lastState
+}
+
+// LabelForName resolves an element name to its label from the most recent
+// Snapshot. controlType (optional, e.g. "Button") narrows the match; nth (0-based)
+// selects among multiple matches. An exact name match is preferred over a
+// substring match. Returns the label and whether one was found.
+func (d *Desktop) LabelForName(name, controlType string, nth int) (int, bool) {
+	d.stateMu.Lock()
+	defer d.stateMu.Unlock()
+	if d.lastState == nil {
+		return 0, false
+	}
+	needle := strings.ToLower(strings.TrimSpace(name))
+	if needle == "" {
+		return 0, false
+	}
+	if nth < 0 {
+		nth = 0
+	}
+
+	typeOK := func(e *LabeledElement) bool {
+		return controlType == "" || strings.EqualFold(e.Info.ControlType, controlType)
+	}
+
+	// Pass 1: exact (case-insensitive) name matches.
+	seen := 0
+	for i := range d.lastState.Interactive {
+		e := &d.lastState.Interactive[i]
+		if typeOK(e) && strings.ToLower(e.Info.Name) == needle {
+			if seen == nth {
+				return e.Label, true
+			}
+			seen++
+		}
+	}
+	// Pass 2: substring matches.
+	seen = 0
+	for i := range d.lastState.Interactive {
+		e := &d.lastState.Interactive[i]
+		if typeOK(e) && strings.Contains(strings.ToLower(e.Info.Name), needle) {
+			if seen == nth {
+				return e.Label, true
+			}
+			seen++
+		}
+	}
+	return 0, false
 }

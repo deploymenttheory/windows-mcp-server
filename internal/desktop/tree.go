@@ -16,6 +16,12 @@ type LabeledElement struct {
 	Info    ElementInfo
 	CenterX int
 	CenterY int
+
+	// element is the live UI Automation element, retained (AddRef'd) so that
+	// pattern-based actions (Invoke/SetValue/Toggle/...) can act on it directly
+	// rather than via synthetic input. It is released when the snapshot is
+	// replaced (see releaseStateElements). STA-thread use only.
+	element *accessibility.IUIAutomationElement
 }
 
 const (
@@ -80,8 +86,12 @@ func (tb *treeBuilder) visit(el *accessibility.IUIAutomationElement, depth int) 
 	case interactive:
 		label := len(tb.interactive)
 		cx, cy := info.Rect.Center()
+		// Retain the element so pattern-based actions can use it later. The
+		// caller (visitChildren) releases its own reference after this returns;
+		// the AddRef here keeps ours alive until the snapshot is replaced.
+		el.AddRef()
 		tb.interactive = append(tb.interactive, LabeledElement{
-			Label: label, Info: info, CenterX: cx, CenterY: cy,
+			Label: label, Info: info, CenterX: cx, CenterY: cy, element: el,
 		})
 		tb.lines = append(tb.lines, fmt.Sprintf("%s[%d] %s %q (%d,%d)", indent, label, info.ControlType, info.Name, cx, cy))
 	case info.Name != "":
