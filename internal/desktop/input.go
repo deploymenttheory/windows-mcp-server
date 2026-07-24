@@ -1,0 +1,300 @@
+//go:build windows && (amd64 || arm64)
+
+package desktop
+
+import (
+	"fmt"
+	"strings"
+	"time"
+	"unicode/utf16"
+	"unsafe"
+
+	km "github.com/deploymenttheory/go-bindings-win32/bindings/win32/ui/input/keyboardandmouse"
+	wm "github.com/deploymenttheory/go-bindings-win32/bindings/win32/ui/windowsandmessaging"
+)
+
+// inputSize is the size of one INPUT record, passed to SendInput.
+var inputSize = int32(unsafe.Sizeof(km.INPUT{}))
+
+// sendInputs injects a batch of synthesized input events.
+func sendInputs(inputs []km.INPUT) error {
+	if len(inputs) == 0 {
+		return nil
+	}
+	n, err := km.SendInput(inputs, inputSize)
+	if err != nil {
+		return fmt.Errorf("SendInput: %w", err)
+	}
+	if int(n) != len(inputs) {
+		return fmt.Errorf("SendInput injected %d of %d events", n, len(inputs))
+	}
+	return nil
+}
+
+// mouseInput builds a mouse INPUT with the given flags and data, writing the
+// MOUSEINPUT into the INPUT union's backing bytes.
+func mouseInput(flags km.MOUSE_EVENT_FLAGS, data uint32) km.INPUT {
+	in := km.INPUT{Type: km.INPUT_MOUSE}
+	mi := (*km.MOUSEINPUT)(unsafe.Pointer(&in.Anonymous))
+	mi.DwFlags = flags
+	mi.MouseData = data
+	return in
+}
+
+// unicodeKeyInput builds a keyboard INPUT that emits a UTF-16 code unit,
+// bypassing keyboard-layout/VK mapping (works for arbitrary text).
+func unicodeKeyInput(unit uint16, keyUp bool) km.INPUT {
+	in := km.INPUT{Type: km.INPUT_KEYBOARD}
+	ki := (*km.KEYBDINPUT)(unsafe.Pointer(&in.Anonymous))
+	ki.WScan = unit
+	ki.DwFlags = km.KEYEVENTF_UNICODE
+	if keyUp {
+		ki.DwFlags |= km.KEYEVENTF_KEYUP
+	}
+	return in
+}
+
+// vkeyInput builds a keyboard INPUT for a virtual key.
+func vkeyInput(vk km.VIRTUAL_KEY, keyUp bool) km.INPUT {
+	in := km.INPUT{Type: km.INPUT_KEYBOARD}
+	ki := (*km.KEYBDINPUT)(unsafe.Pointer(&in.Anonymous))
+	ki.WVk = vk
+	if keyUp {
+		ki.DwFlags = km.KEYEVENTF_KEYUP
+	}
+	return in
+}
+
+// Click moves the cursor to (x,y) and clicks. button is "left", "right", or
+// "middle"; clicks of 0 hovers (move only), 1 single-clicks, 2 double-clicks.
+func (d *Desktop) Click(x, y int, button string, clicks int) error {
+	if d.overlay != nil && clicks > 0 {
+		d.overlay.flashClick(x, y)
+	}
+	return d.Do(func() error {
+		if err := wm.SetCursorPos(int32(x), int32(y)); err != nil {
+			return fmt.Errorf("SetCursorPos: %w", err)
+		}
+		if clicks <= 0 {
+			return nil // hover only
+		}
+		time.Sleep(10 * time.Millisecond)
+
+		var down, up km.MOUSE_EVENT_FLAGS
+		switch button {
+		case "right":
+			down, up = km.MOUSEEVENTF_RIGHTDOWN, km.MOUSEEVENTF_RIGHTUP
+		case "middle":
+			down, up = km.MOUSEEVENTF_MIDDLEDOWN, km.MOUSEEVENTF_MIDDLEUP
+		default:
+			down, up = km.MOUSEEVENTF_LEFTDOWN, km.MOUSEEVENTF_LEFTUP
+		}
+		for i := range clicks {
+			if err := sendInputs([]km.INPUT{mouseInput(down, 0), mouseInput(up, 0)}); err != nil {
+				return err
+			}
+			if i < clicks-1 {
+				time.Sleep(60 * time.Millisecond)
+			}
+		}
+		return nil
+	})
+}
+
+// ClickMany left-clicks a series of points in order. When holdCtrl is true,
+// Ctrl is held down for the whole sequence (multi-select).
+func (d *Desktop) ClickMany(points [][2]int, holdCtrl bool) error {
+	if len(points) == 0 {
+		return nil
+	}
+	if d.overlay != nil {
+		for _, p := range points {
+			d.overlay.flashClick(p[0], p[1])
+		}
+	}
+	return d.Do(func() error {
+		if holdCtrl {
+			if err := sendInputs([]km.INPUT{vkeyInput(km.VK_CONTROL, false)}); err != nil {
+				return err
+			}
+			defer func() { _ = sendInputs([]km.INPUT{vkeyInput(km.VK_CONTROL, true)}) }()
+		}
+		for i, p := range points {
+			if err := wm.SetCursorPos(int32(p[0]), int32(p[1])); err != nil {
+				return fmt.Errorf("SetCursorPos: %w", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+			if err := sendInputs([]km.INPUT{
+				mouseInput(km.MOUSEEVENTF_LEFTDOWN, 0),
+				mouseInput(km.MOUSEEVENTF_LEFTUP, 0),
+			}); err != nil {
+				return err
+			}
+			if i < len(points)-1 {
+				time.Sleep(80 * time.Millisecond)
+			}
+		}
+		return nil
+	})
+}
+
+// MoveCursor moves the cursor to (x,y) without clicking.
+func (d *Desktop) MoveCursor(x, y int) error {
+	return d.Do(func() error {
+		if err := wm.SetCursorPos(int32(x), int32(y)); err != nil {
+			return fmt.Errorf("SetCursorPos: %w", err)
+		}
+		return nil
+	})
+}
+
+// TypeText types Unicode text at the current focus. Newlines and tabs are sent
+// as Enter and Tab virtual keys; all other characters are sent as Unicode
+// keystrokes so no keyboard-layout mapping is needed.
+func (d *Desktop) TypeText(text string) error {
+	return d.Do(func() error {
+		for _, r := range text {
+			switch r {
+			case '\n':
+				if err := sendInputs([]km.INPUT{vkeyInput(km.VK_RETURN, false), vkeyInput(km.VK_RETURN, true)}); err != nil {
+					return err
+				}
+			case '\t':
+				if err := sendInputs([]km.INPUT{vkeyInput(km.VK_TAB, false), vkeyInput(km.VK_TAB, true)}); err != nil {
+					return err
+				}
+			case '\r':
+				// ignore; handled by \n
+			default:
+				for _, u := range utf16.Encode([]rune{r}) {
+					if err := sendInputs([]km.INPUT{unicodeKeyInput(u, false), unicodeKeyInput(u, true)}); err != nil {
+						return err
+					}
+				}
+			}
+			time.Sleep(3 * time.Millisecond)
+		}
+		return nil
+	})
+}
+
+// Scroll moves the cursor to (x,y) and scrolls the wheel. direction is "up",
+// "down", "left", or "right"; wheelClicks is the number of wheel notches.
+// Horizontal scrolling is emulated by holding Shift over the vertical wheel,
+// matching the Python implementation.
+func (d *Desktop) Scroll(x, y, wheelClicks int, direction string) error {
+	if wheelClicks < 1 {
+		wheelClicks = 1
+	}
+	return d.Do(func() error {
+		if err := wm.SetCursorPos(int32(x), int32(y)); err != nil {
+			return fmt.Errorf("SetCursorPos: %w", err)
+		}
+		const wheelDelta = 120
+		var delta int32
+		var horizontal bool
+		switch direction {
+		case "up":
+			delta = wheelDelta * int32(wheelClicks)
+		case "down":
+			delta = -wheelDelta * int32(wheelClicks)
+		case "right":
+			delta, horizontal = wheelDelta*int32(wheelClicks), true
+		case "left":
+			delta, horizontal = -wheelDelta*int32(wheelClicks), true
+		default:
+			delta = -wheelDelta * int32(wheelClicks)
+		}
+
+		if horizontal {
+			if err := sendInputs([]km.INPUT{vkeyInput(km.VK_SHIFT, false)}); err != nil {
+				return err
+			}
+			defer func() { _ = sendInputs([]km.INPUT{vkeyInput(km.VK_SHIFT, true)}) }()
+		}
+		for range wheelClicks {
+			unit := int32(wheelDelta)
+			if delta < 0 {
+				unit = -wheelDelta
+			}
+			if err := sendInputs([]km.INPUT{mouseInput(km.MOUSEEVENTF_WHEEL, uint32(unit))}); err != nil {
+				return err
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return nil
+	})
+}
+
+// SendShortcut presses a key chord, e.g. []string{"ctrl","shift","esc"}. Keys
+// are pressed in order and released in reverse.
+func (d *Desktop) SendShortcut(keys []string) error {
+	vks := make([]km.VIRTUAL_KEY, 0, len(keys))
+	for _, k := range keys {
+		vk, ok := keyNameToVK(k)
+		if !ok {
+			return fmt.Errorf("unknown key %q", k)
+		}
+		vks = append(vks, vk)
+	}
+	if len(vks) == 0 {
+		return fmt.Errorf("no keys given")
+	}
+	return d.Do(func() error {
+		inputs := make([]km.INPUT, 0, len(vks)*2)
+		for _, vk := range vks {
+			inputs = append(inputs, vkeyInput(vk, false))
+		}
+		for i := len(vks) - 1; i >= 0; i-- {
+			inputs = append(inputs, vkeyInput(vks[i], true))
+		}
+		return sendInputs(inputs)
+	})
+}
+
+// namedKeys maps key names to virtual-key codes.
+var namedKeys = map[string]km.VIRTUAL_KEY{
+	"ctrl": km.VK_CONTROL, "control": km.VK_CONTROL,
+	"alt": km.VK_MENU, "option": km.VK_MENU,
+	"shift":     km.VK_SHIFT,
+	"win":       km.VK_LWIN,
+	"windows":   km.VK_LWIN,
+	"super":     km.VK_LWIN,
+	"cmd":       km.VK_LWIN,
+	"meta":      km.VK_LWIN,
+	"enter":     km.VK_RETURN,
+	"return":    km.VK_RETURN,
+	"tab":       km.VK_TAB,
+	"esc":       km.VK_ESCAPE,
+	"escape":    km.VK_ESCAPE,
+	"space":     km.VK_SPACE,
+	"backspace": km.VK_BACK,
+	"back":      km.VK_BACK,
+	"delete":    km.VK_DELETE,
+	"del":       km.VK_DELETE,
+	"home":      km.VK_HOME,
+	"end":       km.VK_END,
+	"up":        km.VK_UP,
+	"down":      km.VK_DOWN,
+	"left":      km.VK_LEFT,
+	"right":     km.VK_RIGHT,
+}
+
+// keyNameToVK resolves a key name to a virtual-key code. Single letters and
+// digits map to their VK directly; longer names use the namedKeys table.
+func keyNameToVK(name string) (km.VIRTUAL_KEY, bool) {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if vk, ok := namedKeys[n]; ok {
+		return vk, true
+	}
+	if len(n) == 1 {
+		c := n[0]
+		switch {
+		case c >= 'a' && c <= 'z':
+			return km.VIRTUAL_KEY(c - 'a' + 'A'), true // VK_A..VK_Z == 'A'..'Z'
+		case c >= '0' && c <= '9':
+			return km.VIRTUAL_KEY(c), true // VK_0..VK_9 == '0'..'9'
+		}
+	}
+	return 0, false
+}
