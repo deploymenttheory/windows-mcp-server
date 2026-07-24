@@ -61,6 +61,9 @@ func stdioCmd() *cobra.Command {
 				ExcludeTools: splitCSV(v.GetString("exclude-tools")),
 				LogFile:      v.GetString("log-file"),
 				Overlay:      v.GetBool("overlay"),
+				RecordDir:    v.GetString("record-dir"),
+				RecordFPS:    v.GetInt("record-fps"),
+				RecordCodec:  v.GetString("record-codec"),
 			}
 			// Only treat --read-only as set when the flag was explicitly changed,
 			// so a persona's default read-only stance is not overridden by the
@@ -83,6 +86,9 @@ func stdioCmd() *cobra.Command {
 	f.String("persona", "", "Persona preset selecting toolsets and read-only stance (see 'personas' subcommand).")
 	f.String("log-file", "", "Write debug logs to this file (default: info logs to stderr).")
 	f.Bool("overlay", false, "Show visual-feedback overlays: a green hue around the focused window and an orange flash at click points (for screen capture / video).")
+	f.String("record-dir", "", "Record the whole session to a video file in this directory (one file per session), so every session is tracked.")
+	f.Int("record-fps", 4, "Session recording frame rate (frames per second).")
+	f.String("record-codec", "h264", "Session recording codec: h264 or h265 (via ffmpeg if available; smaller files), or mjpeg (pure-Go, no dependency, larger files).")
 	return cmd
 }
 

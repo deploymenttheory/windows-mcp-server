@@ -61,6 +61,10 @@ type Desktop struct {
 	// overlays are disabled.
 	overlay *overlayManager
 
+	// recorder captures the whole session to a video file. Runs on its own
+	// goroutine; nil when recording is disabled.
+	recorder *recorder
+
 	// stateMu guards lastState, the most recent Snapshot. Label-based
 	// interaction (Click/Type by label) resolves against it, so it is read from
 	// caller goroutines as well as written after a snapshot.
@@ -78,6 +82,10 @@ type Options struct {
 	// active window, orange flash at click points) for screen capture and video
 	// recording.
 	Overlay bool
+
+	// Record, when its Dir is set, records the whole session to a video file so
+	// every session is tracked regardless of persona.
+	Record RecorderOptions
 }
 
 // New starts the engine: it spins up the dedicated STA thread, makes the
@@ -108,7 +116,37 @@ func New(logger *slog.Logger, opts Options) (*Desktop, error) {
 			d.overlay = ov
 		}
 	}
+
+	if opts.Record.Dir != "" {
+		rec, err := startRecorder(opts.Record, logger)
+		if err != nil {
+			// Recording is optional; log and continue without it.
+			logger.Warn("session recording disabled: failed to start", "error", err)
+		} else {
+			d.recorder = rec
+			logger.Info("session recording started", "file", rec.videoPath)
+		}
+	}
 	return d, nil
+}
+
+// RecordingStatus returns the session recorder's status and whether recording
+// is active.
+func (d *Desktop) RecordingStatus() (RecordingStatus, bool) {
+	if d.recorder == nil {
+		return RecordingStatus{}, false
+	}
+	return d.recorder.status(), true
+}
+
+// MarkRecording adds a labeled marker to the session recording timeline, if
+// recording is active.
+func (d *Desktop) MarkRecording(label string) bool {
+	if d.recorder == nil {
+		return false
+	}
+	d.recorder.mark(label)
+	return true
 }
 
 // loop runs on the dedicated OS thread for the lifetime of the engine. It
@@ -184,6 +222,9 @@ func (d *Desktop) Do(fn func() error) error {
 
 // Close shuts down the engine thread. After Close, Do returns ErrClosed.
 func (d *Desktop) Close() error {
+	if d.recorder != nil {
+		d.recorder.close()
+	}
 	if d.overlay != nil {
 		d.overlay.close()
 	}

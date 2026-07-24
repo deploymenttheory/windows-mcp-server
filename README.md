@@ -132,7 +132,7 @@ Tools are grouped into **toolsets**. The default configuration enables `screen`,
 
 | Toolset | Default | Tools |
 |---|:---:|---|
-| `screen` | ✓ | `Snapshot`, `Screenshot`, `DisplayInventory` |
+| `screen` | ✓ | `Snapshot`, `Screenshot`, `DisplayInventory`, `Recording` |
 | `interaction` | ✓ | `Click`, `Type`, `Invoke`, `GetText`, `Scroll`, `Move`, `Shortcut`, `Wait`, `WaitFor`, `MultiSelect`, `MultiEdit` |
 | `apps` | ✓ | `App` (launch / launch_executable / switch / resize) |
 | `system` | ✓ | `Clipboard`, `Process`, `Registry`, `Notification` |
@@ -221,6 +221,9 @@ Every flag has a `WINDOWS_MCP_`-prefixed env var (e.g. `--read-only` ↔
 | `--read-only` | Expose only read-only tools |
 | `--persona` | Select a persona preset |
 | `--overlay` | Visual feedback overlays (see below) |
+| `--record-dir` | Record the whole session to a video file in this directory (see Session recording) |
+| `--record-fps` | Recording frame rate (default 4) |
+| `--record-codec` | `h264`/`h265` (via ffmpeg; small files) or `mjpeg` (pure-Go, no dependency) |
 | `--log-file` | Write debug logs to a file (stdout is reserved for the transport) |
 
 ## Visual feedback overlays
@@ -232,6 +235,30 @@ top-most overlays so a viewer can see what the automation is doing:
 - an **orange flash** at each click point.
 
 Overlays never intercept input or take focus.
+
+## Session recording
+
+For audit and playback, `--record-dir <dir>` records the **entire session** to a
+single video file, automatically, for every persona — so all sessions can be
+tracked. Recording starts when the server starts and finalizes on shutdown,
+producing `<dir>/session-<timestamp>.<ext>` plus a `.jsonl` marker log.
+
+- **Codec** (`--record-codec`): `h264` (default) or `h265` use **ffmpeg** when
+  it is on `PATH`, giving small files via temporal compression (H.265 is ~50%
+  smaller than H.264). When ffmpeg is not installed, recording transparently
+  falls back to a **pure-Go MJPEG-AVI** writer — no dependency, but larger files
+  (each frame is an independent JPEG). Set `--record-codec mjpeg` to force it.
+- **Frame rate / size**: `--record-fps` (default 4); frames are downscaled to
+  1280px wide by default to keep files manageable.
+- **Timeline markers**: the `Recording` tool (in the `screen` toolset, so every
+  persona has it) reports status and adds labeled markers to the `.jsonl` log —
+  call `Recording {mode:mark, label:"step name"}` at each journey step so the
+  video timeline aligns with what the agent did.
+
+```sh
+windows-mcp-server.exe stdio --persona qa-test-engineer \
+  --record-dir C:\sessions --record-codec h265 --record-fps 4
+```
 
 ## Architecture
 

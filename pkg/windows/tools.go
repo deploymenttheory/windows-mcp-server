@@ -17,6 +17,7 @@ func AllTools() []inventory.ServerTool {
 		Snapshot(),
 		Screenshot(),
 		DisplayInventory(),
+		Recording(),
 
 		// apps toolset
 		App(),

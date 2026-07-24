@@ -52,6 +52,12 @@ type Config struct {
 	// Overlay enables visual-feedback overlays (green hue around the focused
 	// window, orange flash at click points) for screen capture and video.
 	Overlay bool
+
+	// RecordDir, when set, records the whole session to a video file in this
+	// directory so every session is tracked. RecordFPS and RecordCodec tune it.
+	RecordDir   string
+	RecordFPS   int
+	RecordCodec string
 }
 
 // SetReadOnly records an explicit read-only choice (distinguishing it from the
@@ -70,7 +76,14 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	}
 	defer cleanup()
 
-	dsk, err := desktop.New(logger, desktop.Options{Overlay: cfg.Overlay})
+	dsk, err := desktop.New(logger, desktop.Options{
+		Overlay: cfg.Overlay,
+		Record: desktop.RecorderOptions{
+			Dir:   cfg.RecordDir,
+			FPS:   cfg.RecordFPS,
+			Codec: cfg.RecordCodec,
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to start desktop engine: %w", err)
 	}

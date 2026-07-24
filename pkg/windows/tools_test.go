@@ -51,7 +51,7 @@ func TestAllToolsValid(t *testing.T) {
 
 // TestExpectedToolCount guards against accidental tool loss/addition.
 func TestExpectedToolCount(t *testing.T) {
-	const want = 26
+	const want = 27
 	if got := len(AllTools()); got != want {
 		t.Errorf("tool count = %d, want %d (update this test intentionally)", got, want)
 	}
