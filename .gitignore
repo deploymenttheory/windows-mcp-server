@@ -1,7 +1,7 @@
 # macOS
 .DS_Store
 
-# VSCode
+# Editors / IDEs
 .vs
 .vscode/*
 !.vscode/settings.json
@@ -9,30 +9,35 @@
 !.vscode/launch.json
 !.vscode/extensions.json
 *.code-workspace
+.idea/
 
-# Build and temp files
-/build/
-/tmp/
-*.log
-*.bak
-
-# Windows-specific 
-*.winfile eol=crlf
-
-# Go development
-*.test
-/vendor/
-/bin/
-/dist/
-coverage.out
-coverage.html
-
-# AI instructions
+# AI assistant instructions
 .claude
 .cursor
 
-# Binaries and executables
-*.dll
+# Build output directories
+/bin/
+/dist/
+/build/
+/tmp/
+
+# Compiled binaries (this project builds windows-mcp-server[.exe])
+/windows-mcp-server
+/windows-mcp-server.exe
 *.exe
-*.dylib
+*.dll
 *.so
+*.dylib
+
+# Go tooling artifacts
+*.test
+*.prof
+coverage.out
+coverage.html
+/vendor/
+go.work
+go.work.sum
+
+# Logs and scratch files
+*.log
+*.bak
