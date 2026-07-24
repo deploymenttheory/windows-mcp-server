@@ -224,6 +224,18 @@ Every flag has a `WINDOWS_MCP_`-prefixed env var (e.g. `--read-only` ↔
 | `--record-dir` | Record the whole session to a video file in this directory (see Session recording) |
 | `--record-fps` | Recording frame rate (default 4) |
 | `--record-codec` | `h264`/`h265` (via ffmpeg; small files) or `mjpeg` (pure-Go, no dependency) |
+| `--run-context` | Expected process context: `user` (default) or `system` (see Guardrails) |
+| `--guardrails` | Admission mode: `off` (default), `audit`, or `enforce` |
+| `--enterprise-guardrails` | Alias for `--guardrails=enforce` with the managed-device preset |
+| `--guardrail` | Additional guardrails to require (repeatable): `id` or `id=arg` |
+| `--guardrails-interval` | Continuous re-evaluation interval (default 60s; 0 disables) |
+| `--guardrails-status-addr` | Loopback HTTP address for the status/may-run endpoint |
+| `--guardrails-status-token` | Bearer token required by the status endpoint |
+| `--guardrails-control-dir` | Directory watched for a `kill` sentinel file |
+| `--guardrails-bypass` | Break-glass: skip guardrail checks (logged) |
+| `--circuit-breaker` | Inline destructive-action circuit breaker (auto-on in enforce mode) |
+| `--graph-tenant` / `--graph-client-id` / `--graph-client-secret` | Entra app credentials for the authoritative Entra + Intune compliance checks (Microsoft Graph) |
+| `--remote-policy-token` | Bearer token presented to a `remote-policy=<url>` may-run endpoint |
 | `--log-file` | Write debug logs to a file (stdout is reserved for the transport) |
 
 ## Visual feedback overlays
@@ -260,10 +272,105 @@ windows-mcp-server.exe stdio --persona qa-test-engineer \
   --record-dir C:\sessions --record-codec h265 --record-fps 4
 ```
 
+## Enterprise guardrails
+
+For managed deployments the server can gate itself: validate the device and its
+run context before serving, keep validating during the session, expose its
+posture for polling, and stop itself if things go wrong. It follows a
+policy-decision / policy-enforcement split — a runner evaluates pluggable checks
+into a single **decision document**, and enforcement points act on it.
+
+```sh
+windows-mcp-server.exe stdio --enterprise-guardrails \
+  --guardrail domain-joined --guardrails-status-addr 127.0.0.1:8177 \
+  --guardrails-status-token "$TOKEN" --guardrails-control-dir C:\mcp\control
+```
+
+- **Admission gate.** `--guardrails audit` evaluates and logs but never blocks
+  (for rollout); `--guardrails enforce` refuses to start (exit ≠ 0) if a required
+  check fails. `--enterprise-guardrails` is enforce + the managed-device preset:
+  **MDM-enrolled + Entra-joined + run-context=user** (plus the Graph compliance
+  checks below when Graph is configured). Add checks with `--guardrail`
+  (repeatable): `domain-joined`, `os-enterprise-sku`, `device-allowlist=C:\allow.txt`,
+  `remote-policy=<url>`.
+- **Just-in-time device posture (read live from the OS).** These read the
+  hardware/OS security state directly at evaluation time — no cache, no cloud, no
+  reporting lag — through the win32 and WMI SDKs, and are re-checked by the
+  continuous monitor so drift (Secure Boot turned off, VBS stopped, BitLocker
+  suspended) trips the kill switch within one interval. Opt in per control with
+  `--guardrail`: `secure-boot` (UEFI state from the firmware-backed registry),
+  `tpm-present` / `tpm-attestation-capable` (TPM Base Services — unprivileged),
+  `vbs` / `hvci` / `credential-guard` (`Win32_DeviceGuard`), `bitlocker`
+  (`Win32_EncryptableVolume` — requires elevation; reports rather than silently
+  passes when denied), and `tpm-attested` (a **live, nonce-bound TPM platform
+  quote** — `NCryptCreateClaim` runs a TPM2_Quote over the PCRs with a fresh
+  nonce as qualifying data, signed by a machine-scoped AIK, self-verified with
+  `NCryptVerifyClaim`). A platform quote is a machine operation, so the AIK needs
+  an elevated/SYSTEM context; without elevation `tpm-attested` degrades to the
+  at-source measured-boot TCG log and reports honestly. These are direct
+  measurements — the freshest signal available, with no wait on an Intune sync.
+
+  Run `windows-mcp-server check` to evaluate the guardrail set once and print the
+  decision document (exit 2 if the device is not admitted) — a posture dry-run for
+  operators and CI. Run it elevated to produce and verify the signed TPM quote.
+- **Authoritative device compliance (Microsoft Graph).** Supply an Entra app
+  registration (`--graph-tenant/--graph-client-id/--graph-client-secret`, app
+  permissions `Device.Read.All` + `DeviceManagementManagedDevices.Read.All`) and
+  the server verifies **enrollment and compliance in both Entra and Intune** via
+  Graph (the beta endpoint, for the richer managed-device and attestation
+  fields): `graph-entra-registered`, `graph-entra-compliant`,
+  `graph-intune-enrolled`, `graph-intune-compliant`, and `graph-attested`
+  (Intune's reported Device Health Attestation). Intune's copy is authoritative
+  but lags a sync; the JIT posture checks above read the same underlying state
+  live. Compliance/enrollment checks join the enterprise preset automatically;
+  the device is keyed by its Entra device ID (from `dsregcmd`). Prefer supplying
+  the secret via the environment (`WINDOWS_MCP_GRAPH_CLIENT_SECRET`).
+- **Remote may-run policy.** `--guardrail remote-policy=<url>` POSTs a small
+  `{device, run_context}` request to an external PDP and honors its response —
+  both a flat `{"allow":true}` and an OPA-style `{"result":{"allow":true}}`
+  document. A deny flips admit, and via continuous verification trips the kill
+  switch. `--remote-policy-token` sets the bearer token.
+- **Run context.** `--run-context user` (default) is validated against the
+  process token. `--run-context system` is auto-limited: desktop-automation
+  toolsets are disabled (Session 0 cannot drive the interactive desktop) and a
+  notification is shown — it becomes a diagnostics/guardrail daemon. Personas
+  always require user context.
+- **Continuous verification.** Every `--guardrails-interval` the posture is
+  re-checked; if a previously-passing check now fails (e.g. MDM removed) the
+  session self-terminates.
+- **Circuit breaker.** With `--circuit-breaker` (auto-on in enforce mode) an
+  inline policy runs on every tool call: it rate-limits sensitive tools and
+  trips on destructive tripwires (disabling Defender/BitLocker/firewall, clearing
+  MDM). It runs on the receiving path, independent of the agent, so the LLM
+  cannot bypass it.
+- **Kill switch.** The session can be stopped out-of-band — by posture drift, a
+  `kill` file in `--guardrails-control-dir`, `POST /revoke` on the status
+  endpoint, or the `Kill` MCP tool. A kill finalizes the recording and logs the
+  reason. The authoritative triggers are independent of the agent.
+- **Status / may-run.** The `GuardrailStatus` MCP tool (always available) and the
+  loopback HTTP endpoint (`GET /guardrails`, bearer-token) return the decision
+  document — this is the "may-run" response an orchestrator can poll.
+
+### Trust model — read this
+
+The **tier-1 local** guardrails (`dsregcmd`, registry, WMI) are **auditable
+defense-in-depth, not a hard security boundary** — a local admin can spoof those
+signals and unhook endpoint protection. The **authoritative tier-2** checks are
+remote and TPM-rooted: the Graph `graph-intune-compliant` / `graph-entra-compliant`
+/ `graph-attested` providers read Intune device compliance and Device Health
+Attestation (which a local admin cannot forge), and `remote-policy` defers to an
+external PDP. Configure the Graph credentials (and/or a may-run endpoint) for a
+real boundary — the local checks alone only raise the bar. Either way, pair the
+guardrails with the OS controls you already own — **WDAC/AppLocker**, Conditional
+Access, and **code signing**. The circuit breaker and kill switch contain
+in-session compromise; they do not replace those controls.
+
 ## Architecture
 
 ```
 cmd/windows-mcp-server   Cobra/Viper CLI (stdio transport)
+internal/guardrails      admission/runtime policy: decision doc, providers,
+                         run-context, circuit breaker, kill switch, status
 internal/winmcp          server bootstrap: inventory + MCP server + deps middleware
 internal/desktop         the Windows engine — a dedicated COM STA thread serving
                          UIA traversal, SendInput, GDI screenshots, overlays,

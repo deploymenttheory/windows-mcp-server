@@ -91,6 +91,33 @@ func (d *Desktop) withWMI(fn func(*wmi.Service) error) error {
 	return fnErr
 }
 
+// QueryWMI runs a WQL query against an arbitrary WMI namespace (e.g.
+// root\Microsoft\Windows\DeviceGuard or root\CIMV2\Security\MicrosoftVolumeEncryption)
+// and returns the raw rows. The go-bindings-wmi Service is thread-affine —
+// Connect locks the OS thread and Close unlocks it — so the whole Connect →
+// Query → Close sequence runs on one dedicated goroutine. Used for the
+// just-in-time device-health posture reads outside the long-lived root\cimv2
+// worker.
+func (d *Desktop) QueryWMI(namespace, wql string) ([]wmi.Row, error) {
+	type result struct {
+		rows []wmi.Row
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		svc, err := wmi.Connect(namespace)
+		if err != nil {
+			ch <- result{nil, fmt.Errorf("connect %s: %w", namespace, err)}
+			return
+		}
+		defer svc.Close()
+		rows, err := svc.Query(wql)
+		ch <- result{rows, err}
+	}()
+	r := <-ch
+	return r.rows, r.err
+}
+
 // ProcessInfo summarizes a running process.
 type ProcessInfo struct {
 	PID            uint32
@@ -321,6 +348,42 @@ func (d *Desktop) ControlService(name, action string) (string, error) {
 		return nil
 	})
 	return result, err
+}
+
+// HostFacts is device domain-join, OS-edition, and identity information used by
+// the guardrails layer.
+type HostFacts struct {
+	PartOfDomain bool
+	Domain       string
+	OSSKU        uint32
+	OSCaption    string
+	Hostname     string
+	Serial       string
+}
+
+// DomainAndSKU queries device domain-join, OS SKU, hostname, and BIOS serial via
+// WMI.
+func (d *Desktop) DomainAndSKU() (HostFacts, error) {
+	var out HostFacts
+	err := d.withWMI(func(svc *wmi.Service) error {
+		if cs, e := cimv2.QueryOneWin32ComputerSystem(svc, ""); e == nil && cs != nil {
+			out.PartOfDomain = cs.PartOfDomain
+			out.Domain = cs.Domain
+			out.Hostname = cs.Name
+		}
+		if o, e := cimv2.QueryOneWin32OperatingSystem(svc, ""); e == nil && o != nil {
+			out.OSSKU = uint32(o.OperatingSystemSKU)
+			out.OSCaption = strings.TrimSpace(o.Caption)
+			if out.Hostname == "" {
+				out.Hostname = o.CSName
+			}
+		}
+		if b, e := cimv2.QueryOneWin32BIOS(svc, ""); e == nil && b != nil {
+			out.Serial = strings.TrimSpace(b.SerialNumber)
+		}
+		return nil
+	})
+	return out, err
 }
 
 // closeWMI shuts down the WMI worker if it was started.
