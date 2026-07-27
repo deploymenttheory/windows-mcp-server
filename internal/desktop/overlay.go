@@ -37,6 +37,8 @@ const (
 	clickRingThicknessPx  = 7
 	clickAlpha            = 190
 	clickTTL              = 450 * time.Millisecond
+	bannerHeightPx        = 76
+	bannerFontPx          = 30
 	overlayExLayeredFlags = wm.WS_EX_LAYERED | wm.WS_EX_TRANSPARENT | wm.WS_EX_TOPMOST | wm.WS_EX_TOOLWINDOW | wm.WS_EX_NOACTIVATE
 )
 
@@ -46,20 +48,24 @@ type overlayCmdKind int
 const (
 	cmdClick overlayCmdKind = iota
 	cmdHighlight
+	cmdSecurityBanner
+	cmdDismissBanner
 )
 
 type overlayCmd struct {
 	kind overlayCmdKind
-	rect Rect // highlight: window rect; click: derived from center point
+	rect Rect   // highlight: window rect; click: derived from center point
+	text string // security banner text
 }
 
 // activeOverlay is one on-screen layered window and its GDI backing, tracked so
 // it can be torn down when it expires.
 type activeOverlay struct {
-	hwnd   foundation.HWND
-	dc     gdi.HDC
-	bitmap gdi.HBITMAP
-	expiry time.Time
+	hwnd       foundation.HWND
+	dc         gdi.HDC
+	bitmap     gdi.HBITMAP
+	expiry     time.Time
+	persistent bool // security banner: never expired by expire()
 }
 
 // overlayManager owns the overlay thread and its windows.
@@ -71,6 +77,7 @@ type overlayManager struct {
 	hinstance foundation.HINSTANCE
 	highlight *activeOverlay
 	clicks    []*activeOverlay
+	banner    *activeOverlay
 }
 
 // wndProcCallback is the shared window procedure. Layered windows updated via
@@ -148,7 +155,99 @@ func (m *overlayManager) handle(cmd overlayCmd) {
 		if ov := m.createOverlay(cmd.rect, drawClickRing, clickTTL); ov != nil {
 			m.clicks = append(m.clicks, ov)
 		}
+	case cmdSecurityBanner:
+		if m.banner != nil {
+			m.destroyOverlay(m.banner)
+			m.banner = nil
+		}
+		if ov := m.createBanner(cmd.text); ov != nil {
+			m.banner = ov
+		}
+	case cmdDismissBanner:
+		if m.banner != nil {
+			m.destroyOverlay(m.banner)
+			m.banner = nil
+		}
 	}
+}
+
+// createBanner draws a persistent, opaque full-width red band with centered
+// white text at the top of the primary screen for a security event. GDI text
+// leaves glyph pixels with zero alpha, so after drawing the band is forced fully
+// opaque — the band is a solid rectangle, so uniform alpha is correct.
+func (m *overlayManager) createBanner(text string) *activeOverlay {
+	sw := int(wm.GetSystemMetrics(wm.SM_CXSCREEN))
+	if sw <= 0 {
+		sw = 1280
+	}
+	rect := Rect{Left: 0, Top: 0, Right: sw, Bottom: bannerHeightPx}
+	w, h := rect.Width(), rect.Height()
+
+	hwnd, err := wm.CreateWindowEx(
+		overlayExLayeredFlags,
+		overlayClassName, "",
+		wm.WS_POPUP,
+		int32(rect.Left), int32(rect.Top), int32(w), int32(h),
+		0, 0, m.hinstance, nil,
+	)
+	if err != nil || hwnd == 0 {
+		m.logger.Warn("overlay: banner CreateWindowEx failed", "error", err)
+		return nil
+	}
+	dc, bitmap, bits, ok := m.makeDIB(w, h)
+	if !ok {
+		_ = wm.DestroyWindow(hwnd)
+		return nil
+	}
+
+	// Opaque dark-red background band.
+	bg := premul(200, 25, 25, 255)
+	for i := range bits {
+		bits[i] = bg
+	}
+	// Centered bold white text via GDI.
+	font := gdi.CreateFont(int32(-bannerFontPx), 0, 0, 0, int32(gdi.FW_BOLD), 0, 0, 0,
+		uint32(gdi.DEFAULT_CHARSET), 0, 0, 0, 0, "Segoe UI")
+	if font != 0 {
+		old := gdi.SelectObject(dc, gdi.HGDIOBJ(font))
+		gdi.SetBkMode(dc, int32(gdi.TRANSPARENT))
+		gdi.SetTextColor(dc, foundation.COLORREF(0x00FFFFFF))
+		r := foundation.RECT{Left: 0, Top: 0, Right: int32(w), Bottom: int32(h)}
+		gdi.DrawText(dc, foundation.PWSTR(win32.UTF16Ptr(text)), -1, &r,
+			gdi.DT_CENTER|gdi.DT_VCENTER|gdi.DT_SINGLELINE)
+		gdi.SelectObject(dc, old)
+		gdi.DeleteObject(gdi.HGDIOBJ(font))
+	}
+	// GDI text writes glyph pixels with alpha 0; force the whole band opaque.
+	for i := range bits {
+		bits[i] |= 0xFF000000
+	}
+
+	ptDst := foundation.POINT{X: int32(rect.Left), Y: int32(rect.Top)}
+	size := foundation.SIZE{Cx: int32(w), Cy: int32(h)}
+	ptSrc := foundation.POINT{X: 0, Y: 0}
+	blend := gdi.BLENDFUNCTION{
+		BlendOp:             byte(gdi.AC_SRC_OVER),
+		SourceConstantAlpha: 255,
+		AlphaFormat:         byte(gdi.AC_SRC_ALPHA),
+	}
+	if err := wm.UpdateLayeredWindow(hwnd, 0, &ptDst, &size, dc, &ptSrc, 0, &blend, wm.ULW_ALPHA); err != nil {
+		m.logger.Warn("overlay: banner UpdateLayeredWindow failed", "error", err)
+		gdi.DeleteObject(gdi.HGDIOBJ(bitmap))
+		gdi.DeleteDC(dc)
+		_ = wm.DestroyWindow(hwnd)
+		return nil
+	}
+	wm.ShowWindow(hwnd, wm.SW_SHOWNOACTIVATE)
+	return &activeOverlay{hwnd: hwnd, dc: dc, bitmap: bitmap, persistent: true}
+}
+
+// showBanner / dismissBanner enqueue security-banner commands.
+func (m *overlayManager) showBanner(text string) {
+	m.send(overlayCmd{kind: cmdSecurityBanner, text: text})
+}
+func (m *overlayManager) dismissBanner() {
+	m.send(overlayCmd{kind: cmdDismissBanner})
 }
 
 // drawFunc fills a premultiplied-BGRA pixel buffer (top-down, width w, height h).
@@ -284,6 +383,10 @@ func (m *overlayManager) teardown() {
 		m.destroyOverlay(ov)
 	}
 	m.clicks = nil
+	if m.banner != nil {
+		m.destroyOverlay(m.banner)
+		m.banner = nil
+	}
 	wm.UnregisterClass(overlayClassName, m.hinstance)
 }
 

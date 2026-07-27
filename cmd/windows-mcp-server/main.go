@@ -50,39 +50,122 @@ func rootCmd() *cobra.Command {
 	return root
 }
 
-// guardrailConfigFrom maps the shared guardrail/graph flags to a Config.
+// guardrailConfigFrom maps the four-layer security flags to a Config, shared by
+// `stdio` and `check`.
 func guardrailConfigFrom(v *viper.Viper) winmcp.Config {
 	return winmcp.Config{
-		RunContext:            v.GetString("run-context"),
-		Guardrails:            v.GetString("guardrails"),
-		EnterpriseGuardrails:  v.GetBool("enterprise-guardrails"),
-		Guardrail:             v.GetStringSlice("guardrail"),
-		GuardrailsInterval:    v.GetDuration("guardrails-interval"),
+		// Layer 1: pre-flight
+		Security:            v.GetBool("security"),
+		WithMDM:             v.GetBool("with-mdm"),
+		WithLoggedOnAccount: v.GetString("with-logged-on-account"),
+		WithUserContext:     v.GetBool("with-user-context"),
+		IsNotAdmin:          v.GetBool("is-not-admin"),
+		RunContext:          v.GetString("run-context"),
+		// Layer 2: in-flight
+		GuardrailsInterval:   v.GetDuration("inflight-interval"),
+		GuardrailsControlDir: v.GetString("inflight-control-dir"),
+		// Layer 3: guardrails
+		Guardrails:       v.GetString("guardrails"),
+		Guardrail:        v.GetStringSlice("guardrail"),
+		CircuitBreaker:   v.GetBool("circuit-breaker"),
+		CircuitWindow:    v.GetDuration("circuit-window"),
+		CircuitThreshold: v.GetInt("circuit-threshold"),
+		// Layer 4: transparency
+		WithVideoSessionRecording: v.GetString("with-video-session-recording"),
+		WithLogging:               v.GetString("with-logging"),
+		HeartbeatInterval:         v.GetDuration("heartbeat-interval"),
+		// Kill switch — triggers
+		WithKillSwitch:     v.GetBool("with-kill-switch"),
+		KillOnPostureDrift: v.GetBool("kill-on-posture-drift"),
+		KillOnCircuitTrip:  v.GetBool("kill-on-circuit-trip"),
+		KillOnRugpull:      v.GetBool("kill-on-rugpull"),
+		KillOnHeartbeatGap: v.GetBool("kill-on-heartbeat-gap"),
+		// Kill switch — actions
+		KillActionIsolate:       v.GetBool("kill-action-isolate"),
+		KillActionKillProcs:     v.GetBool("kill-action-kill-procs"),
+		KillActionProcNames:     v.GetStringSlice("kill-action-proc-names"),
+		KillActionLock:          v.GetBool("kill-action-lock"),
+		KillActionShutdown:      v.GetBool("kill-action-shutdown"),
+		KillActionShutdownDelay: v.GetDuration("kill-action-shutdown-delay"),
+		// Status + legacy
 		GuardrailsStatusAddr:  v.GetString("guardrails-status-addr"),
 		GuardrailsStatusToken: v.GetString("guardrails-status-token"),
-		GuardrailsControlDir:  v.GetString("guardrails-control-dir"),
 		GuardrailsBypass:      v.GetBool("guardrails-bypass"),
-		CircuitBreaker:        v.GetBool("circuit-breaker"),
-		GraphTenant:           v.GetString("graph-tenant"),
-		GraphClientID:         v.GetString("graph-client-id"),
-		GraphClientSecret:     v.GetString("graph-client-secret"),
-		RemotePolicyToken:     v.GetString("remote-policy-token"),
+		EnterpriseGuardrails:  v.GetBool("enterprise-guardrails"),
+		// Tier-2 (parked)
+		EnableTier2:       v.GetBool("enable-tier2"),
+		GraphTenant:       v.GetString("graph-tenant"),
+		GraphClientID:     v.GetString("graph-client-id"),
+		GraphClientSecret: v.GetString("graph-client-secret"),
+		RemotePolicyToken: v.GetString("remote-policy-token"),
 	}
 }
 
-// addGuardrailFlags registers the guardrail/admission and tier-2 remote flags on
-// a command, shared by `stdio` and `check`.
+// addGuardrailFlags registers the four-layer security flags, grouped, shared by
+// `stdio` and `check`. All bind to WINDOWS_MCP_* env vars via viperFor.
 func addGuardrailFlags(f *pflag.FlagSet) {
-	f.String("run-context", "user", "Expected process context: 'user' (default) or 'system'. Validated against the token; personas require user. SYSTEM disables desktop-automation tools.")
-	f.String("guardrails", "off", "Guardrail mode: off, audit (evaluate + log only), or enforce (refuse to run if policy fails).")
-	f.Bool("enterprise-guardrails", false, "Shortcut for --guardrails=enforce with the enterprise preset (MDM-enrolled + Entra-joined + run-context=user).")
+	addPreflightFlags(f)
+	addInflightFlags(f)
+	addGuardrailPolicyFlags(f)
+	addTransparencyFlags(f)
+	addKillSwitchFlags(f)
+	addTier2Flags(f)
+}
+
+// addPreflightFlags — Layer 1: checks evaluated once at startup.
+func addPreflightFlags(f *pflag.FlagSet) {
+	f.Bool("security", false, "Master switch: enforce pre-flight checks and force-on all transparency services (audit log, heartbeat, rug-pull detection, on-screen banner, recording).")
+	f.Bool("with-mdm", false, "Pre-flight: require the device to be MDM-enrolled.")
+	f.String("with-logged-on-account", "", "Pre-flight: require the interactive user to match this regex.")
+	f.Bool("with-user-context", false, "Pre-flight: require an interactive user context (not SYSTEM / Session 0).")
+	f.Bool("is-not-admin", false, "Pre-flight: require the interactive user to NOT be a local administrator.")
+	f.String("run-context", "user", "Expected process context: 'user' (default) or 'system'. SYSTEM disables desktop-automation tools.")
+}
+
+// addInflightFlags — Layer 2: continuous polling (status/heartbeat/rug-pull are force-on).
+func addInflightFlags(f *pflag.FlagSet) {
+	f.Duration("inflight-interval", 60*time.Second, "In-flight posture re-evaluation cadence; posture drift self-terminates the session (0 disables drift re-eval).")
+	f.String("inflight-control-dir", "", "Directory watched for a 'kill' sentinel file that stops the session. Empty disables.")
+}
+
+// addGuardrailPolicyFlags — Layer 3: inline tool-call policy.
+func addGuardrailPolicyFlags(f *pflag.FlagSet) {
+	f.String("guardrails", "off", "Guardrail mode: off, audit (log only), or enforce (block on failure). Forced to enforce by --security or any pre-flight check.")
 	f.StringSlice("guardrail", nil, "Additional guardrails to require, repeatable: id or id=arg (e.g. secure-boot, bitlocker, vbs, device-allowlist=C:\\allow.txt).")
-	f.Duration("guardrails-interval", 60*time.Second, "Continuous re-evaluation interval; if posture fails the session self-terminates (0 disables).")
-	f.String("guardrails-status-addr", "", "Loopback HTTP address for the guardrail status/may-run endpoint (e.g. 127.0.0.1:8177). Empty disables.")
+	f.Bool("circuit-breaker", false, "Inline destructive-action circuit breaker (auto-on in enforce mode).")
+	f.Duration("circuit-window", 0, "Circuit-breaker sliding window (0 = default 10s).")
+	f.Int("circuit-threshold", 0, "Sensitive tool calls within the window before tripping (0 = default 3).")
+}
+
+// addTransparencyFlags — Layer 4: always-on transparency (forced on by --security).
+func addTransparencyFlags(f *pflag.FlagSet) {
+	f.String("with-video-session-recording", "", "Record the session to a video file in this directory (implies recording capture).")
+	f.String("with-logging", "", "Audit-log sink target: empty/'stderr' for stderr JSONL, or a file path for append-only hash-chained JSONL.")
+	f.Duration("heartbeat-interval", 30*time.Second, "Heartbeat cadence written to the audit chain (also the gap watchdog basis).")
+	f.String("guardrails-status-addr", "", "Loopback HTTP address for the always-on status/may-run endpoint (e.g. 127.0.0.1:8177). Empty disables.")
 	f.String("guardrails-status-token", "", "Bearer token required by the status endpoint.")
-	f.String("guardrails-control-dir", "", "Directory watched for a 'kill' sentinel file that stops the session. Empty disables.")
-	f.Bool("guardrails-bypass", false, "Break-glass: skip guardrail checks (logged prominently).")
-	f.Bool("circuit-breaker", false, "Enable the inline destructive-action circuit breaker (auto-on in enforce mode).")
+	f.Bool("guardrails-bypass", false, "Break-glass: skip pre-flight checks (logged prominently).")
+	f.Bool("enterprise-guardrails", false, "Legacy alias: enforce mode + the enterprise preset.")
+}
+
+// addKillSwitchFlags — kill switch triggers and (opt-in) actions, configured separately.
+func addKillSwitchFlags(f *pflag.FlagSet) {
+	f.Bool("with-kill-switch", false, "Arm the kill switch.")
+	f.Bool("kill-on-posture-drift", true, "Trigger: kill on in-flight posture drift.")
+	f.Bool("kill-on-circuit-trip", true, "Trigger: kill when the circuit breaker trips.")
+	f.Bool("kill-on-rugpull", true, "Trigger: kill on tool-manifest mutation (rug pull).")
+	f.Bool("kill-on-heartbeat-gap", true, "Trigger: kill on a heartbeat gap.")
+	f.Bool("kill-action-isolate", true, "Action: isolate the device (firewall block-all) on kill. Requires elevation.")
+	f.Bool("kill-action-kill-procs", false, "Action: terminate --kill-action-proc-names on kill. Requires elevation.")
+	f.StringSlice("kill-action-proc-names", nil, "Process image names to terminate when --kill-action-kill-procs is set.")
+	f.Bool("kill-action-lock", false, "Action: lock the workstation on kill.")
+	f.Bool("kill-action-shutdown", false, "Action: shut the device down on kill. Requires elevation.")
+	f.Duration("kill-action-shutdown-delay", 0, "Delay before shutdown when --kill-action-shutdown is set.")
+}
+
+// addTier2Flags — parked authoritative remote checks (not wired unless --enable-tier2).
+func addTier2Flags(f *pflag.FlagSet) {
+	f.Bool("enable-tier2", false, "Wire the parked tier-2 remote checks (Graph / remote may-run PDP).")
 	f.String("graph-tenant", "", "Entra tenant ID for Graph device-compliance checks (Entra + Intune).")
 	f.String("graph-client-id", "", "Entra app (client) ID with Device.Read.All + DeviceManagementManagedDevices.Read.All.")
 	f.String("graph-client-secret", "", "Client secret for the Graph app registration (prefer the environment/vault).")

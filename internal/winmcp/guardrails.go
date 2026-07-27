@@ -56,6 +56,8 @@ func (p *systemProbe) DomainSKU() (guardrails.DomainSKU, error) {
 
 func (p *systemProbe) RunContext() guardrails.RunContext { return guardrails.DetectRunContext() }
 
+func (p *systemProbe) IsAdmin() bool { return guardrails.CurrentUserIsAdmin() }
+
 func (p *systemProbe) DeviceIdentity() guardrails.DeviceIdentity {
 	p.load()
 	return guardrails.DeviceIdentity{
@@ -81,30 +83,74 @@ func newGuardrailRegistry(cfg Config, logger *slog.Logger) *guardrails.Registry 
 	reg := guardrails.NewRegistry()
 	guardrails.RegisterBuiltins(reg)
 	guardrails.RegisterHealth(reg) // JIT at-source device-posture checks
-	if gc := (guardrails.GraphConfig{TenantID: cfg.GraphTenant, ClientID: cfg.GraphClientID, ClientSecret: cfg.GraphClientSecret}); gc.Configured() {
-		guardrails.RegisterGraph(reg, guardrails.NewGraphClient(gc))
-		if logger != nil {
-			logger.Info("authoritative Graph guardrails enabled (Entra + Intune compliance)")
+	// Tier-2 (Graph / remote may-run PDP) is SET ASIDE: only wired when the
+	// operator explicitly opts in, which the four-layer core never does.
+	if cfg.EnableTier2 {
+		if gc := (guardrails.GraphConfig{TenantID: cfg.GraphTenant, ClientID: cfg.GraphClientID, ClientSecret: cfg.GraphClientSecret}); gc.Configured() {
+			guardrails.RegisterGraph(reg, guardrails.NewGraphClient(gc))
+			if logger != nil {
+				logger.Info("authoritative Graph guardrails enabled (Entra + Intune compliance)")
+			}
 		}
-	}
-	if cfg.RemotePolicyToken != "" {
-		guardrails.RegisterRemotePolicy(reg, cfg.RemotePolicyToken)
+		if cfg.RemotePolicyToken != "" {
+			guardrails.RegisterRemotePolicy(reg, cfg.RemotePolicyToken)
+		}
 	}
 	return reg
 }
 
-// guardrailConfig maps the server Config to a guardrails.Config.
-func guardrailConfig(cfg Config) guardrails.Config {
+// preflightExtras maps the Layer-1 With* flags to guardrail selection specs.
+func preflightExtras(cfg Config) []string {
+	extra := append([]string(nil), cfg.Guardrail...)
+	if cfg.WithMDM {
+		extra = append(extra, "mdm-enrolled")
+	}
+	if cfg.WithUserContext {
+		extra = append(extra, "run-context")
+	}
+	if cfg.IsNotAdmin {
+		extra = append(extra, "not-admin")
+	}
+	if cfg.WithLoggedOnAccount != "" {
+		extra = append(extra, "logged-on-account="+cfg.WithLoggedOnAccount)
+	}
+	return extra
+}
+
+// effectiveMode resolves the guardrail mode. --security and any explicit
+// pre-flight check imply enforce (the whole point is to gate); otherwise the
+// mode comes from --guardrails (with the legacy enterprise alias).
+func effectiveMode(cfg Config) guardrails.Mode {
 	mode := guardrails.ParseMode(cfg.Guardrails)
-	if cfg.EnterpriseGuardrails && mode == guardrails.ModeOff {
+	preflightSet := cfg.WithMDM || cfg.WithUserContext || cfg.IsNotAdmin || cfg.WithLoggedOnAccount != ""
+	if (cfg.Security || cfg.EnterpriseGuardrails || preflightSet) && mode == guardrails.ModeOff {
 		mode = guardrails.ModeEnforce
 	}
+	return mode
+}
+
+// guardrailConfig maps the server Config to a guardrails.Config.
+func guardrailConfig(cfg Config) guardrails.Config {
 	return guardrails.Config{
-		Mode:       mode,
+		Mode:       effectiveMode(cfg),
 		Enterprise: cfg.EnterpriseGuardrails,
-		Extra:      cfg.Guardrail,
+		Extra:      preflightExtras(cfg),
 		Bypass:     cfg.GuardrailsBypass,
 		BypassNote: "operator --guardrails-bypass",
+	}
+}
+
+// killActionConfig maps the Config kill-action flags to the executor config.
+// The default (kill switch armed with no explicit actions) is isolate + abort,
+// which the --kill-action-isolate flag defaults to true.
+func killActionConfig(cfg Config) guardrails.KillActionConfig {
+	return guardrails.KillActionConfig{
+		Isolate:       cfg.KillActionIsolate,
+		KillProcs:     cfg.KillActionKillProcs,
+		Lock:          cfg.KillActionLock,
+		Shutdown:      cfg.KillActionShutdown,
+		ProcNames:     cfg.KillActionProcNames,
+		ShutdownDelay: cfg.KillActionShutdownDelay,
 	}
 }
 

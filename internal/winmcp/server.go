@@ -51,35 +51,62 @@ type Config struct {
 	// logs go to stderr. stdout is reserved for the MCP stdio transport.
 	LogFile string
 
-	// Overlay enables visual-feedback overlays (green hue around the focused
-	// window, orange flash at click points) for screen capture and video.
-	Overlay bool
+	// Security is the master switch for the four-layer security architecture. It
+	// forces enforce mode, the always-on transparency services (audit log,
+	// heartbeat, rug-pull detection, status), and auto-enables the overlay +
+	// recording so the security banner is shown and captured.
+	Security bool
 
-	// RecordDir, when set, records the whole session to a video file in this
-	// directory so every session is tracked. RecordFPS and RecordCodec tune it.
-	RecordDir   string
-	RecordFPS   int
-	RecordCodec string
+	// --- Layer 1: pre-flight checks (evaluated once at startup) ---
+	WithMDM             bool   // device is MDM-enrolled (local dsregcmd MdmUrl)
+	WithLoggedOnAccount string // regex the interactive user must match
+	WithUserContext     bool   // require an interactive user (not SYSTEM/Session 0)
+	IsNotAdmin          bool   // interactive user must NOT be a local admin
+	RunContext          string // legacy: expected context "user"|"system"
 
-	// RunContext declares the expected process context ("user" default, or
-	// "system"). It is validated against the actual token; personas force user.
-	RunContext string
+	// --- Layer 2: in-flight polling ---
+	GuardrailsInterval   time.Duration // posture re-eval cadence (0 = default)
+	GuardrailsControlDir string        // local "kill" sentinel dir (empty disables)
 
-	// Guardrails configuration.
-	Guardrails            string        // mode: off|audit|enforce
-	EnterpriseGuardrails  bool          // alias ⇒ enforce + enterprise preset
-	Guardrail             []string      // additive guardrails: "id" or "id=arg"
-	GuardrailsInterval    time.Duration // periodic re-eval (0 disables)
-	GuardrailsStatusAddr  string        // loopback HTTP status endpoint (empty disables)
-	GuardrailsStatusToken string        // bearer token for the status endpoint
-	GuardrailsControlDir  string        // local sentinel dir (empty disables)
-	GuardrailsBypass      bool          // break-glass (logged)
-	CircuitBreaker        bool          // inline destructive-action circuit breaker
+	// --- Layer 3: guardrails (inline tool-call policy) ---
+	Guardrails       string        // mode: off|audit|enforce
+	Guardrail        []string      // additive guardrails: "id" or "id=arg"
+	CircuitBreaker   bool          // inline destructive-action circuit breaker
+	CircuitWindow    time.Duration // sliding window (0 = default 10s)
+	CircuitThreshold int           // sensitive calls before tripping (0 = default 3)
 
-	// Authoritative (tier-2) remote checks. GraphTenant/ClientID/ClientSecret
-	// enable the Entra + Intune compliance guardrails via Microsoft Graph.
-	// RemotePolicyToken is the bearer token presented to a remote-policy=<url>
-	// may-run endpoint.
+	// --- Layer 4: transparency / always-on ---
+	WithVideoSessionRecording string        // record path (implies recording)
+	WithLogging               string        // audit-log sink target ("" = stderr)
+	HeartbeatInterval         time.Duration // heartbeat cadence (0 = default)
+	Overlay                   bool          // decorative overlays
+	RecordDir                 string        // legacy recording dir
+	RecordFPS                 int
+	RecordCodec               string
+
+	// --- Kill switch: triggers (separate from actions) ---
+	WithKillSwitch     bool
+	KillOnPostureDrift bool
+	KillOnCircuitTrip  bool
+	KillOnRugpull      bool
+	KillOnHeartbeatGap bool
+
+	// --- Kill switch: actions (opt-in, applied in order) ---
+	KillActionIsolate       bool
+	KillActionKillProcs     bool
+	KillActionProcNames     []string
+	KillActionLock          bool
+	KillActionShutdown      bool
+	KillActionShutdownDelay time.Duration
+
+	GuardrailsStatusAddr  string // loopback HTTP status endpoint (empty disables)
+	GuardrailsStatusToken string // bearer token for the status endpoint
+	GuardrailsBypass      bool   // break-glass (logged)
+	EnterpriseGuardrails  bool   // legacy alias ⇒ enforce + enterprise preset
+
+	// Tier-2 (SET ASIDE): only wired when EnableTier2 is true, which the
+	// four-layer core never sets. Kept for later re-integration.
+	EnableTier2       bool
 	GraphTenant       string
 	GraphClientID     string
 	GraphClientSecret string
@@ -102,20 +129,32 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	}
 	defer cleanup()
 
+	// --- Layer 4a: hash-chained audit log (built first so startup is recorded) ---
+	sink, err := guardrails.NewSink(cfg.WithLogging)
+	if err != nil {
+		return fmt.Errorf("audit log: %w", err)
+	}
+	audit := guardrails.NewAuditLog(sink)
+	defer func() { _ = audit.Close() }()
+	_, _ = audit.Append("server.start", map[string]any{"version": cfg.Version})
+
+	// Under --security, force transparency capture: overlay (for the banner) and
+	// recording, even if the decorative --overlay flag is off.
+	recordDir := cfg.RecordDir
+	if cfg.WithVideoSessionRecording != "" {
+		recordDir = cfg.WithVideoSessionRecording
+	}
 	dsk, err := desktop.New(logger, desktop.Options{
-		Overlay: cfg.Overlay,
-		Record: desktop.RecorderOptions{
-			Dir:   cfg.RecordDir,
-			FPS:   cfg.RecordFPS,
-			Codec: cfg.RecordCodec,
-		},
+		Overlay:         cfg.Overlay || cfg.Security,
+		SecurityOverlay: cfg.Security,
+		Record:          desktop.RecorderOptions{Dir: recordDir, FPS: cfg.RecordFPS, Codec: cfg.RecordCodec},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to start desktop engine: %w", err)
 	}
 	defer func() { _ = dsk.Close() }()
 
-	// --- Guardrails: run context + startup admission (PEP #1) ---
+	// --- Layer 1: pre-flight admission gate ---
 	reg := newGuardrailRegistry(cfg, logger)
 	gcfg := guardrailConfig(cfg)
 	runner := guardrails.NewRunner(reg, gcfg, logger)
@@ -123,9 +162,9 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		logger.Warn("unknown guardrail requested", "guardrail", u)
 	}
 	holder := &decisionHolder{}
-
 	decision := runner.Evaluate(ctx, guardrailEnv(dsk, logger))
 	holder.set(decision)
+	_, _ = audit.Append("preflight.decision", decision)
 
 	requestedSystem := strings.EqualFold(cfg.RunContext, "system")
 	autoLimit := requestedSystem || decision.RunContext.IsSystem
@@ -139,6 +178,9 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	if gcfg.Active() {
 		if runner.Blocks(decision) {
 			guardrails.LogDecision(logger, "deny", decision)
+			_, _ = audit.Append("preflight.deny", decision.Reasons)
+			_ = audit.Flush()
+			dsk.ShowSecurityBanner("STARTUP BLOCKED — device did not meet policy")
 			dsk.Notify("Windows MCP: startup blocked", "Device did not meet policy: "+strings.Join(decision.Reasons, "; "))
 			return fmt.Errorf("guardrails denied startup: %s", strings.Join(decision.Reasons, "; "))
 		}
@@ -163,43 +205,66 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		Version: cfg.Version,
 	}, &mcp.ServerOptions{
 		Instructions: combineInstructions(personaInstructions, inv.Instructions()),
+		// Suppress silent tools/list_changed so a mutated manifest cannot be
+		// re-advertised quietly; rug-pull detection catches any drift.
+		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
 	})
 
-	// --- Kill switch: cancel the server context (out-of-band from the agent) ---
+	// --- Out-of-band kill switch + tiered action executor ---
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	kill := guardrails.NewKillSwitch(func(reason string) {
-		logger.Error("guardrail.kill", "reason", reason)
-		dsk.MarkRecording("KILL: " + reason)
-		// Cancel slightly deferred so any in-flight tool response (the Kill
-		// tool's own reply, or a circuit-breaker block message) flushes to the
-		// client before the transport closes.
-		time.AfterFunc(300*time.Millisecond, func() {
-			cancel(fmt.Errorf("guardrail kill: %s", reason))
-		})
+	startedAt := time.Now()
+	actuator := guardrails.NewSystemActuator(logger)
+	executor := guardrails.NewKillExecutor(guardrails.KillExecutorDeps{
+		Config:   killActionConfig(cfg),
+		Actuator: actuator,
+		Audit:    audit,
+		Logger:   logger,
+		Banner:   dsk.ShowSecurityBanner,
+		Finalize: func() { _ = dsk.Close() }, // finalize recording synchronously (idempotent)
+		Abort: func(cause error) {
+			// Deferred so an in-flight reply (Kill tool / circuit-breaker block)
+			// flushes to the client before the transport closes.
+			time.AfterFunc(300*time.Millisecond, func() { cancel(cause) })
+		},
 	})
+	kill := guardrails.NewKillSwitch(executor.OnTrip)
+	defer func() { _ = executor.Restore() }() // undo firewall isolation on exit
+
+	// --- Layer 4d: rug-pull detector (baseline pinned after all AddTool) ---
+	heartbeat := guardrails.NewHeartbeat(audit)
+	rugpull := guardrails.NewRugPull(kill.Trip, audit)
 
 	deps := windows.NewBaseDeps(dsk, logger, nil)
+	// Receiving middleware (outermost first): inject deps, audit, rug-pull, policy.
 	server.AddReceivingMiddleware(windows.InjectDepsMiddleware(deps))
+	server.AddReceivingMiddleware(audit.Middleware())
+	server.AddReceivingMiddleware(rugpull.Middleware())
 
-	// --- PEP #2: inline tool-call policy + circuit breaker ---
+	// --- Layer 3: inline tool-call policy + circuit breaker ---
 	circuitEnabled := cfg.CircuitBreaker || runner.Mode() == guardrails.ModeEnforce
 	server.AddReceivingMiddleware(guardrails.ToolPolicyMiddleware(guardrails.CircuitConfig{
-		Enabled: circuitEnabled,
-		Logger:  logger,
-		OnTrip:  kill.Trip,
+		Enabled:   circuitEnabled,
+		Window:    cfg.CircuitWindow,
+		Threshold: cfg.CircuitThreshold,
+		Logger:    logger,
+		OnTrip:    kill.Trip,
 	}))
 
 	inv.RegisterTools(runCtx, server, deps)
 
-	// Guardrail tools are registered unconditionally so every session can be
-	// queried and stopped regardless of persona/toolset selection.
-	statusTool, statusHandler := guardrails.StatusTool(holder.get, kill)
+	// Guardrail tools registered unconditionally (present under any persona).
+	statusTool, statusHandler := guardrails.StatusTool(holder.get, snapshotFn(startedAt, rugpull, heartbeat, audit, kill), kill)
 	server.AddTool(statusTool, statusHandler)
 	killTool, killHandler := guardrails.KillTool(kill)
 	server.AddTool(killTool, killHandler)
 
-	// --- Continuous verification + local sentinel ---
+	// Pin the rug-pull baseline over the full served manifest.
+	baselineTools := append(invMCPTools(runCtx, inv), statusTool, killTool)
+	baseHash := rugpull.SetBaseline(baselineTools)
+	_, _ = audit.Append("tools.baseline", map[string]any{"hash": baseHash, "count": len(baselineTools)})
+
+	// --- Layer 2: in-flight polling — posture drift, sentinel, always-on verifiers ---
 	guardrails.StartMonitor(runCtx, guardrails.MonitorConfig{
 		Interval:   cfg.GuardrailsInterval,
 		ControlDir: cfg.GuardrailsControlDir,
@@ -210,16 +275,23 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			holder.set(d)
 			return d
 		},
+		Verify: monitorVerifiers(cfg, heartbeat, rugpull, func() []*mcp.Tool {
+			return baselineTools
+		}),
 	})
+	if cfg.WithKillSwitch && cfg.KillOnHeartbeatGap && cfg.HeartbeatInterval > 0 {
+		heartbeat.StartWatchdog(runCtx, 3*cfg.HeartbeatInterval, kill.Trip)
+	}
 
-	// --- Status endpoint for external polling / revoke ---
+	// --- Status endpoint (always-on when an address is configured) ---
 	if cfg.GuardrailsStatusAddr != "" {
 		ss := &guardrails.StatusServer{
-			Addr:    cfg.GuardrailsStatusAddr,
-			Token:   cfg.GuardrailsStatusToken,
-			Current: holder.get,
-			Kill:    kill,
-			Logger:  logger,
+			Addr:     cfg.GuardrailsStatusAddr,
+			Token:    cfg.GuardrailsStatusToken,
+			Current:  holder.get,
+			Snapshot: snapshotFn(startedAt, rugpull, heartbeat, audit, kill),
+			Kill:     kill,
+			Logger:   logger,
 		}
 		if err := ss.Start(runCtx); err != nil {
 			logger.Warn("guardrails status endpoint disabled", "error", err)
@@ -229,6 +301,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	logger.Info("starting windows-mcp-server over stdio",
 		"version", cfg.Version,
 		"enabled_toolsets", toolsetIDs(inv.EnabledToolsets()),
+		"security", cfg.Security,
 		"guardrails", string(runner.Mode()),
 		"circuit_breaker", circuitEnabled,
 	)
@@ -242,6 +315,46 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("server run: %w", err)
 	}
 	return nil
+}
+
+// snapshotFn builds the always-on server-status snapshot provider.
+func snapshotFn(startedAt time.Time, rp *guardrails.RugPull, hb *guardrails.Heartbeat, audit *guardrails.AuditLog, kill *guardrails.KillSwitch) guardrails.SnapshotProvider {
+	return func() guardrails.ServerStatus {
+		beats, age := hb.Snapshot()
+		seq, head := audit.Head()
+		tripped, reason := kill.Tripped()
+		return guardrails.ServerStatus{
+			UptimeSec:        time.Since(startedAt).Seconds(),
+			ToolManifestHash: rp.Baseline(),
+			HeartbeatSeq:     beats,
+			HeartbeatAgeSec:  age.Seconds(),
+			AuditSeq:         seq,
+			AuditChainHead:   head,
+			Killed:           tripped,
+			KillReason:       reason,
+		}
+	}
+}
+
+// invMCPTools returns the registered tool definitions as []*mcp.Tool for
+// fingerprinting.
+func invMCPTools(ctx context.Context, inv *inventory.Inventory) []*mcp.Tool {
+	sts := inv.AvailableTools(ctx)
+	out := make([]*mcp.Tool, 0, len(sts))
+	for i := range sts {
+		t := sts[i].Tool
+		out = append(out, &t)
+	}
+	return out
+}
+
+// monitorVerifiers assembles the always-on in-flight checks (heartbeat + rug-pull
+// recheck). They run on every monitor tick and are not agent-disableable.
+func monitorVerifiers(cfg Config, hb *guardrails.Heartbeat, rp *guardrails.RugPull, tools func() []*mcp.Tool) []guardrails.VerifyFunc {
+	return []guardrails.VerifyFunc{
+		{Name: "heartbeat", Run: hb.Beat},
+		{Name: "rug-pull", Run: func(context.Context) error { return rp.Recheck(tools()) }},
+	}
 }
 
 // EvaluateGuardrails runs the guardrail set once against the live device and

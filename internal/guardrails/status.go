@@ -17,15 +17,34 @@ import (
 // StatusProvider returns the current decision document (the "may-run" posture).
 type StatusProvider func() Decision
 
+// ServerStatus is the always-on server + device snapshot exposed for external
+// polling. It lets a watcher confirm liveness (heartbeat), integrity (audit
+// chain head, tool-manifest hash for rug-pull), and kill state — none of which
+// the agent can disable.
+type ServerStatus struct {
+	UptimeSec        float64 `json:"uptime_sec"`
+	ToolManifestHash string  `json:"tool_manifest_hash,omitempty"`
+	HeartbeatSeq     uint64  `json:"heartbeat_seq"`
+	HeartbeatAgeSec  float64 `json:"heartbeat_age_sec"`
+	AuditSeq         uint64  `json:"audit_seq"`
+	AuditChainHead   string  `json:"audit_chain_head,omitempty"`
+	Killed           bool    `json:"killed"`
+	KillReason       string  `json:"kill_reason,omitempty"`
+}
+
+// SnapshotProvider returns the current server/device status snapshot.
+type SnapshotProvider func() ServerStatus
+
 // StatusServer serves the guardrail posture for external polling and accepts a
 // revoke command. It is loopback-bound and bearer-token protected per MCP
 // security best practices (no sessions-for-auth; validate inbound).
 type StatusServer struct {
-	Addr    string
-	Token   string
-	Current StatusProvider
-	Kill    *KillSwitch
-	Logger  *slog.Logger
+	Addr     string
+	Token    string
+	Current  StatusProvider
+	Snapshot SnapshotProvider
+	Kill     *KillSwitch
+	Logger   *slog.Logger
 }
 
 // Start binds and serves until ctx is cancelled. It returns an error if the
@@ -73,11 +92,16 @@ func (s *StatusServer) auth(h http.HandlerFunc) http.HandlerFunc {
 func (s *StatusServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	d := s.Current()
 	tripped, reason := s.Kill.Tripped()
+	var snap ServerStatus
+	if s.Snapshot != nil {
+		snap = s.Snapshot()
+	}
 	body := struct {
 		Decision
-		Killed     bool   `json:"killed"`
-		KillReason string `json:"kill_reason,omitempty"`
-	}{Decision: d, Killed: tripped, KillReason: reason}
+		Server     ServerStatus `json:"server"`
+		Killed     bool         `json:"killed"`
+		KillReason string       `json:"kill_reason,omitempty"`
+	}{Decision: d, Server: snap, Killed: tripped, KillReason: reason}
 	w.Header().Set("Content-Type", "application/json")
 	if !d.Admit || tripped {
 		w.WriteHeader(http.StatusForbidden) // may-run = no
@@ -97,21 +121,26 @@ func (s *StatusServer) handleRevoke(w http.ResponseWriter, r *http.Request) {
 
 // StatusTool returns the GuardrailStatus MCP tool (read-only) reporting the
 // current posture to the connected client.
-func StatusTool(current StatusProvider, kill *KillSwitch) (*mcp.Tool, mcp.ToolHandler) {
+func StatusTool(current StatusProvider, snapshot SnapshotProvider, kill *KillSwitch) (*mcp.Tool, mcp.ToolHandler) {
 	tool := &mcp.Tool{
 		Name:        "GuardrailStatus",
-		Description: "Report the current guardrail posture (the may-run decision): mode, run context, per-check results, whether the session is admitted, and whether a kill has been triggered. Read-only.",
+		Description: "Report the current guardrail posture (the may-run decision): mode, run context, per-check results, the always-on server/device snapshot (uptime, tool-manifest hash, heartbeat, audit chain head), whether the session is admitted, and whether a kill has been triggered. Read-only.",
 		Annotations: &mcp.ToolAnnotations{Title: "Guardrail status", ReadOnlyHint: true},
 		InputSchema: map[string]any{"type": "object"},
 	}
 	handler := func(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		d := current()
 		tripped, reason := kill.Tripped()
+		var snap ServerStatus
+		if snapshot != nil {
+			snap = snapshot()
+		}
 		payload := struct {
 			Decision
-			Killed     bool   `json:"killed"`
-			KillReason string `json:"kill_reason,omitempty"`
-		}{Decision: d, Killed: tripped, KillReason: reason}
+			Server     ServerStatus `json:"server"`
+			Killed     bool         `json:"killed"`
+			KillReason string       `json:"kill_reason,omitempty"`
+		}{Decision: d, Server: snap, Killed: tripped, KillReason: reason}
 		b, _ := json.MarshalIndent(payload, "", "  ")
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, nil
 	}

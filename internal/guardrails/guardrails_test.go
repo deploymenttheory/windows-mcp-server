@@ -13,6 +13,7 @@ type fakeProbe struct {
 	dsreg  string
 	domain DomainSKU
 	id     DeviceIdentity
+	admin  bool
 	err    error
 }
 
@@ -20,6 +21,7 @@ func (f fakeProbe) RunShell(context.Context, string) (string, error) { return f.
 func (f fakeProbe) DomainSKU() (DomainSKU, error)                    { return f.domain, nil }
 func (f fakeProbe) RunContext() RunContext                           { return f.rc }
 func (f fakeProbe) DeviceIdentity() DeviceIdentity                   { return f.id }
+func (f fakeProbe) IsAdmin() bool                                    { return f.admin }
 
 const dsregCompliant = `
              Device State

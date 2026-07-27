@@ -77,6 +77,10 @@ type SystemProbe interface {
 	RunContext() RunContext
 	// DeviceIdentity returns host identity facts.
 	DeviceIdentity() DeviceIdentity
+	// IsAdmin reports whether the interactive user is a member of the local
+	// Administrators group (distinct from RunContext.Elevated, which is whether
+	// the process currently holds an elevated token).
+	IsAdmin() bool
 }
 
 // Env is passed to each guardrail check.
