@@ -224,18 +224,28 @@ Every flag has a `WINDOWS_MCP_`-prefixed env var (e.g. `--read-only` ↔
 | `--record-dir` | Record the whole session to a video file in this directory (see Session recording) |
 | `--record-fps` | Recording frame rate (default 4) |
 | `--record-codec` | `h264`/`h265` (via ffmpeg; small files) or `mjpeg` (pure-Go, no dependency) |
-| `--run-context` | Expected process context: `user` (default) or `system` (see Guardrails) |
-| `--guardrails` | Admission mode: `off` (default), `audit`, or `enforce` |
-| `--enterprise-guardrails` | Alias for `--guardrails=enforce` with the managed-device preset |
+| `--security` | Master security switch: enforce pre-flight + force-on all transparency services (see below) |
+| `--with-mdm` | Pre-flight: require the device to be MDM-enrolled |
+| `--with-logged-on-account` | Pre-flight: require the interactive user to match a regex |
+| `--with-user-context` | Pre-flight: require an interactive user (not SYSTEM / Session 0) |
+| `--is-not-admin` | Pre-flight: require the interactive user to NOT be a local admin |
+| `--run-context` | Expected process context: `user` (default) or `system` |
+| `--inflight-interval` | In-flight posture re-evaluation cadence (default 60s; 0 disables drift re-eval) |
+| `--inflight-control-dir` | Directory watched for a `kill` sentinel file |
+| `--guardrails` | Guardrail mode: `off`, `audit`, `enforce` (forced to enforce by `--security`/pre-flight) |
 | `--guardrail` | Additional guardrails to require (repeatable): `id` or `id=arg` |
-| `--guardrails-interval` | Continuous re-evaluation interval (default 60s; 0 disables) |
-| `--guardrails-status-addr` | Loopback HTTP address for the status/may-run endpoint |
-| `--guardrails-status-token` | Bearer token required by the status endpoint |
-| `--guardrails-control-dir` | Directory watched for a `kill` sentinel file |
-| `--guardrails-bypass` | Break-glass: skip guardrail checks (logged) |
-| `--circuit-breaker` | Inline destructive-action circuit breaker (auto-on in enforce mode) |
-| `--graph-tenant` / `--graph-client-id` / `--graph-client-secret` | Entra app credentials for the authoritative Entra + Intune compliance checks (Microsoft Graph) |
-| `--remote-policy-token` | Bearer token presented to a `remote-policy=<url>` may-run endpoint |
+| `--circuit-breaker` / `--circuit-window` / `--circuit-threshold` | Inline destructive-action circuit breaker + tuning |
+| `--with-video-session-recording` | Record the session to a video file in this directory |
+| `--with-logging` | Audit-log sink: empty/`stderr` for stderr JSONL, or a file path for hash-chained JSONL |
+| `--heartbeat-interval` | Heartbeat cadence written to the audit chain (default 30s) |
+| `--guardrails-status-addr` / `--guardrails-status-token` | Loopback HTTP status/may-run endpoint + bearer token |
+| `--with-kill-switch` | Arm the kill switch |
+| `--kill-on-posture-drift` / `--kill-on-circuit-trip` / `--kill-on-rugpull` / `--kill-on-heartbeat-gap` | Kill triggers (all default on) |
+| `--kill-action-isolate` | Kill action: firewall isolate the device (default on; requires elevation) |
+| `--kill-action-kill-procs` / `--kill-action-proc-names` | Kill action: terminate named processes (requires elevation) |
+| `--kill-action-lock` / `--kill-action-shutdown` / `--kill-action-shutdown-delay` | Kill actions: lock / shut down (requires elevation) |
+| `--guardrails-bypass` | Break-glass: skip pre-flight checks (logged) |
+| `--enable-tier2` + `--graph-*` / `--remote-policy-token` | Opt into the parked tier-2 remote checks (Graph / may-run PDP) |
 | `--log-file` | Write debug logs to a file (stdout is reserved for the transport) |
 
 ## Visual feedback overlays
@@ -272,98 +282,91 @@ windows-mcp-server.exe stdio --persona qa-test-engineer \
   --record-dir C:\sessions --record-codec h265 --record-fps 4
 ```
 
-## Enterprise guardrails
+## Security — four layers
 
-For managed deployments the server can gate itself: validate the device and its
-run context before serving, keep validating during the session, expose its
-posture for polling, and stop itself if things go wrong. It follows a
-policy-decision / policy-enforcement split — a runner evaluates pluggable checks
-into a single **decision document**, and enforcement points act on it.
+For managed deployments the server gates and contains itself. Turn the whole
+model on with `--security`, then opt into specific checks and kill actions:
 
 ```sh
-windows-mcp-server.exe stdio --enterprise-guardrails \
-  --guardrail domain-joined --guardrails-status-addr 127.0.0.1:8177 \
-  --guardrails-status-token "$TOKEN" --guardrails-control-dir C:\mcp\control
+windows-mcp-server.exe stdio --security \
+  --with-mdm --is-not-admin --with-logged-on-account "^CONTOSO\\svc-rpa\d+$" \
+  --with-logging C:\mcp\audit.jsonl --guardrails-status-addr 127.0.0.1:8177 \
+  --guardrails-status-token "$TOKEN" --with-kill-switch --kill-action-isolate
 ```
 
-- **Admission gate.** `--guardrails audit` evaluates and logs but never blocks
-  (for rollout); `--guardrails enforce` refuses to start (exit ≠ 0) if a required
-  check fails. `--enterprise-guardrails` is enforce + the managed-device preset:
-  **MDM-enrolled + Entra-joined + run-context=user** (plus the Graph compliance
-  checks below when Graph is configured). Add checks with `--guardrail`
-  (repeatable): `domain-joined`, `os-enterprise-sku`, `device-allowlist=C:\allow.txt`,
-  `remote-policy=<url>`.
-- **Just-in-time device posture (read live from the OS).** These read the
-  hardware/OS security state directly at evaluation time — no cache, no cloud, no
-  reporting lag — through the win32 and WMI SDKs, and are re-checked by the
-  continuous monitor so drift (Secure Boot turned off, VBS stopped, BitLocker
-  suspended) trips the kill switch within one interval. Opt in per control with
-  `--guardrail`: `secure-boot` (UEFI state from the firmware-backed registry),
-  `tpm-present` / `tpm-attestation-capable` (TPM Base Services — unprivileged),
-  `vbs` / `hvci` / `credential-guard` (`Win32_DeviceGuard`), `bitlocker`
-  (`Win32_EncryptableVolume` — requires elevation; reports rather than silently
-  passes when denied), and `tpm-attested` (a **live, nonce-bound TPM platform
-  quote** — `NCryptCreateClaim` runs a TPM2_Quote over the PCRs with a fresh
-  nonce as qualifying data, signed by a machine-scoped AIK, self-verified with
-  `NCryptVerifyClaim`). A platform quote is a machine operation, so the AIK needs
-  an elevated/SYSTEM context; without elevation `tpm-attested` degrades to the
-  at-source measured-boot TCG log and reports honestly. These are direct
-  measurements — the freshest signal available, with no wait on an Intune sync.
+`--security` forces enforce mode and force-on the transparency services (audit
+log, heartbeat, rug-pull detection, on-screen banner, recording capture). The
+model has four layers:
 
-  Run `windows-mcp-server check` to evaluate the guardrail set once and print the
-  decision document (exit 2 if the device is not admitted) — a posture dry-run for
-  operators and CI. Run it elevated to produce and verify the signed TPM quote.
-- **Authoritative device compliance (Microsoft Graph).** Supply an Entra app
-  registration (`--graph-tenant/--graph-client-id/--graph-client-secret`, app
-  permissions `Device.Read.All` + `DeviceManagementManagedDevices.Read.All`) and
-  the server verifies **enrollment and compliance in both Entra and Intune** via
-  Graph (the beta endpoint, for the richer managed-device and attestation
-  fields): `graph-entra-registered`, `graph-entra-compliant`,
-  `graph-intune-enrolled`, `graph-intune-compliant`, and `graph-attested`
-  (Intune's reported Device Health Attestation). Intune's copy is authoritative
-  but lags a sync; the JIT posture checks above read the same underlying state
-  live. Compliance/enrollment checks join the enterprise preset automatically;
-  the device is keyed by its Entra device ID (from `dsregcmd`). Prefer supplying
-  the secret via the environment (`WINDOWS_MCP_GRAPH_CLIENT_SECRET`).
-- **Remote may-run policy.** `--guardrail remote-policy=<url>` POSTs a small
-  `{device, run_context}` request to an external PDP and honors its response —
-  both a flat `{"allow":true}` and an OPA-style `{"result":{"allow":true}}`
-  document. A deny flips admit, and via continuous verification trips the kill
-  switch. `--remote-policy-token` sets the bearer token.
-- **Run context.** `--run-context user` (default) is validated against the
-  process token. `--run-context system` is auto-limited: desktop-automation
-  toolsets are disabled (Session 0 cannot drive the interactive desktop) and a
-  notification is shown — it becomes a diagnostics/guardrail daemon. Personas
-  always require user context.
-- **Continuous verification.** Every `--guardrails-interval` the posture is
-  re-checked; if a previously-passing check now fails (e.g. MDM removed) the
-  session self-terminates.
-- **Circuit breaker.** With `--circuit-breaker` (auto-on in enforce mode) an
-  inline policy runs on every tool call: it rate-limits sensitive tools and
-  trips on destructive tripwires (disabling Defender/BitLocker/firewall, clearing
-  MDM). It runs on the receiving path, independent of the agent, so the LLM
-  cannot bypass it.
-- **Kill switch.** The session can be stopped out-of-band — by posture drift, a
-  `kill` file in `--guardrails-control-dir`, `POST /revoke` on the status
-  endpoint, or the `Kill` MCP tool. A kill finalizes the recording and logs the
-  reason. The authoritative triggers are independent of the agent.
-- **Status / may-run.** The `GuardrailStatus` MCP tool (always available) and the
-  loopback HTTP endpoint (`GET /guardrails`, bearer-token) return the decision
-  document — this is the "may-run" response an orchestrator can poll.
+**1 — Pre-flight (must pass before the LLM can do anything).** Opt-in, evaluated
+once at startup; a failure refuses to start (exit ≠ 0). `--with-mdm` (device is
+MDM-enrolled), `--with-logged-on-account=<regex>` (interactive user matches),
+`--with-user-context` (interactive user, not SYSTEM/Session 0), `--is-not-admin`
+(user is not a local administrator). Add more with `--guardrail` (repeatable):
+`secure-boot`, `tpm-present`, `vbs`/`hvci`/`credential-guard`, `bitlocker`,
+`domain-joined`, `os-enterprise-sku`, `device-allowlist=<path>`. Run
+`windows-mcp-server check` to evaluate once and print the decision (exit 2 if
+not admitted) — a posture dry-run for operators and CI.
+
+**2 — In-flight polling.** Every `--inflight-interval` the posture is
+re-evaluated and a `kill` sentinel file (`--inflight-control-dir`) is watched;
+the server + device status stay pollable and the agent cannot disable them.
+
+**3 — Guardrails (inline tool-call policy).** `--circuit-breaker` (auto-on in
+enforce) runs on every tool call on the receiving path — the agent cannot bypass
+it — rate-limiting sensitive tools and tripping on destructive tripwires
+(disabling Defender/BitLocker/firewall, clearing MDM enrollment).
+
+**4 — Transparency / always-on (agent cannot switch off).**
+- **On-screen security banner** — any security event raises a persistent red
+  banner, drawn on-screen and captured by the session recording, so a human sees
+  it and it is on the video.
+- **Hash-chained audit log** (`--with-logging`) — every action and security
+  event is an append-only, tamper-evident entry that commits to the previous
+  entry's hash; any edit/insert/delete/reorder breaks the chain. Tool calls log
+  the tool name and an **argument digest**, never the raw arguments.
+- **Heartbeat** — periodic chained entries so an external watcher (or the
+  in-process watchdog) detects a stall.
+- **Rug-pull detection** — the tool manifest is fingerprinted at startup; if the
+  advertised tools mutate afterwards (added/removed/renamed tools, changed
+  descriptions or schemas — a "rug pull"), the served `tools/list` and the
+  periodic monitor both catch it and trip the kill switch.
+
+**Kill switch — tiered, out-of-band.** Triggers (`--with-kill-switch`,
+`--kill-on-posture-drift`/`-circuit-trip`/`-rugpull`/`-heartbeat-gap`, a sentinel
+file, `POST /revoke`, or the `Kill` MCP tool) are configured separately from
+actions. On any trip the switch **always** raises the banner, seals the audit
+log, finalizes the recording, and aborts the session. Opt-in escalations run in
+order: `--kill-action-isolate` (firewall block-all; loopback stays exempt so the
+status endpoint survives — default on), `--kill-action-kill-procs`
+(`--kill-action-proc-names`), `--kill-action-lock`, `--kill-action-shutdown`.
+The **default is isolate + abort, no shutdown.**
+
+**Privilege model — best-effort degrade.** The server runs in the (non-admin)
+user context. The elevation-only actions (isolate / kill-procs / shutdown) run
+only when the process is actually elevated; otherwise they are skipped and
+audited (`killaction.skip … not elevated`) while the banner, log-seal,
+recording-finalize, and abort still happen.
+
+### Threats this addresses
+
+- **Dynamic rug pulls** — tool-manifest fingerprint + `tools/list` interception +
+  periodic recheck (silent `tools/list_changed` is suppressed).
+- **Indirect prompt injection / data-exfil loops** — the circuit breaker escalates
+  to network isolation, cutting the exfil channel, then aborts.
+- **Out-of-band control** — the status endpoint, audit log, heartbeat, monitor,
+  and kill switch are not exposed as tools; the only agent-facing tools are the
+  read-only `GuardrailStatus` and the trigger-only `Kill`.
 
 ### Trust model — read this
 
-The **tier-1 local** guardrails (`dsregcmd`, registry, WMI) are **auditable
-defense-in-depth, not a hard security boundary** — a local admin can spoof those
-signals and unhook endpoint protection. The **authoritative tier-2** checks are
-remote and TPM-rooted: the Graph `graph-intune-compliant` / `graph-entra-compliant`
-/ `graph-attested` providers read Intune device compliance and Device Health
-Attestation (which a local admin cannot forge), and `remote-policy` defers to an
-external PDP. Configure the Graph credentials (and/or a may-run endpoint) for a
-real boundary — the local checks alone only raise the bar. Either way, pair the
-guardrails with the OS controls you already own — **WDAC/AppLocker**, Conditional
-Access, and **code signing**. The circuit breaker and kill switch contain
-in-session compromise; they do not replace those controls.
+The local pre-flight/posture checks (`dsregcmd`, registry, WMI) are **auditable
+defense-in-depth, not a hard boundary** — a local admin can spoof those signals.
+The containment layers raise the cost of, and record, in-session compromise but
+do not replace the OS controls you already own — pair them with **WDAC/AppLocker**,
+Conditional Access, and **code signing**. The authoritative remote tier
+(Microsoft Graph device compliance, TPM attestation, external may-run PDP) is
+**parked** behind `--enable-tier2` for later re-integration.
 
 ## Architecture
 

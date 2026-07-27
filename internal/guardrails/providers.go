@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -20,6 +22,8 @@ func RegisterBuiltins(reg *Registry) {
 	reg.Register(Guardrail{ID: "domain-joined", Description: "Device is joined to an AD domain", Check: checkDomainJoined})
 	reg.Register(Guardrail{ID: "os-enterprise-sku", Description: "OS is an Enterprise edition", Check: checkEnterpriseSKU})
 	reg.Register(Guardrail{ID: "device-allowlist", Description: "Device serial/hostname/Entra-id is on the allowlist (arg=path)", Check: checkAllowlist})
+	reg.Register(Guardrail{ID: "not-admin", Description: "Interactive user is NOT a local administrator", Check: checkNotAdmin})
+	reg.Register(Guardrail{ID: "logged-on-account", Description: "Logged-on user matches a regex (arg=regex)", Check: checkLoggedOnAccount})
 	// remote-policy is live but token-less by default; RegisterRemotePolicy
 	// overrides it with a bearer token when one is configured.
 	reg.Register(Guardrail{ID: "remote-policy", Description: "External may-run policy authorizes this device (arg=url)", Check: remotePolicyCheck("")})
@@ -85,6 +89,29 @@ func checkEntraJoined(ctx context.Context, env *Env) Result {
 		return pass("entra-joined", "Entra/Azure-AD joined (tenant "+m["TenantName"]+")")
 	}
 	return fail("entra-joined", "device is not Entra/Azure-AD joined")
+}
+
+func checkNotAdmin(_ context.Context, env *Env) Result {
+	if env.Sys.IsAdmin() {
+		return fail("not-admin", "interactive user is a member of the local Administrators group")
+	}
+	return pass("not-admin", "interactive user is not a local administrator")
+}
+
+func checkLoggedOnAccount(_ context.Context, env *Env) Result {
+	pattern := env.Arg
+	if pattern == "" {
+		return errf("logged-on-account", "no pattern (use logged-on-account=<regex>)")
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return errf("logged-on-account", "invalid regex "+strconv.Quote(pattern)+": "+err.Error())
+	}
+	user := env.Sys.RunContext().User
+	if re.MatchString(user) {
+		return pass("logged-on-account", "logged-on user "+strconv.Quote(user)+" matches "+strconv.Quote(pattern))
+	}
+	return fail("logged-on-account", "logged-on user "+strconv.Quote(user)+" does not match "+strconv.Quote(pattern))
 }
 
 func checkDomainJoined(_ context.Context, env *Env) Result {

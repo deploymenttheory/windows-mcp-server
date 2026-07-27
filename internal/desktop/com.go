@@ -74,6 +74,10 @@ type Desktop struct {
 	// wmi is the lazily-initialized WMI worker (own thread), guarded by wmiMu.
 	wmiMu sync.Mutex
 	wmi   *wmiWorker
+
+	// closeOnce makes Close idempotent: the kill executor finalizes the engine
+	// synchronously on a trip, and RunStdio also defers Close.
+	closeOnce sync.Once
 }
 
 // Options configures the engine.
@@ -82,6 +86,11 @@ type Options struct {
 	// active window, orange flash at click points) for screen capture and video
 	// recording.
 	Overlay bool
+
+	// SecurityOverlay starts the overlay manager even when Overlay is false, so
+	// the security-event banner can be shown regardless of the decorative
+	// overlay setting. Set by the security layer.
+	SecurityOverlay bool
 
 	// Record, when its Dir is set, records the whole session to a video file so
 	// every session is tracked regardless of persona.
@@ -107,7 +116,7 @@ func New(logger *slog.Logger, opts Options) (*Desktop, error) {
 		return nil, err
 	}
 
-	if opts.Overlay {
+	if opts.Overlay || opts.SecurityOverlay {
 		ov, err := newOverlayManager(logger)
 		if err != nil {
 			// Overlays are optional decoration; log and continue without them.
@@ -147,6 +156,23 @@ func (d *Desktop) MarkRecording(label string) bool {
 	}
 	d.recorder.mark(label)
 	return true
+}
+
+// ShowSecurityBanner raises a persistent, human-visible on-screen banner for a
+// security event and marks the recording timeline so the event is captured on
+// video. Best-effort: a no-op if the overlay manager is unavailable.
+func (d *Desktop) ShowSecurityBanner(text string) {
+	d.MarkRecording("SECURITY: " + text)
+	if d.overlay != nil {
+		d.overlay.showBanner(text)
+	}
+}
+
+// DismissSecurityBanner removes the security banner if shown.
+func (d *Desktop) DismissSecurityBanner() {
+	if d.overlay != nil {
+		d.overlay.dismissBanner()
+	}
 }
 
 // loop runs on the dedicated OS thread for the lifetime of the engine. It
@@ -220,21 +246,24 @@ func (d *Desktop) Do(fn func() error) error {
 	}
 }
 
-// Close shuts down the engine thread. After Close, Do returns ErrClosed.
+// Close shuts down the engine thread. After Close, Do returns ErrClosed. It is
+// idempotent (finalizes the recording before tearing down the overlay, so the
+// security banner is captured on the final frames).
 func (d *Desktop) Close() error {
-	if d.recorder != nil {
-		d.recorder.close()
-	}
-	if d.overlay != nil {
-		d.overlay.close()
-	}
-	d.closeWMI()
-	select {
-	case <-d.quit:
-		// already closed
-	default:
-		close(d.quit)
-	}
+	d.closeOnce.Do(func() {
+		if d.recorder != nil {
+			d.recorder.close()
+		}
+		if d.overlay != nil {
+			d.overlay.close()
+		}
+		d.closeWMI()
+		select {
+		case <-d.quit:
+		default:
+			close(d.quit)
+		}
+	})
 	return nil
 }
 
