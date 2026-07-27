@@ -1,0 +1,374 @@
+# Security Architecture
+
+`windows-mcp-server` hands a non-deterministic LLM real control over a Windows
+desktop — UI automation, PowerShell, the registry, processes, the filesystem.
+For managed use it therefore **gates and contains itself**. The security model
+is organized into **four layers** plus an out-of-band **kill switch**, all
+enforced on the server's *receiving* path so the agent cannot bypass or disable
+them.
+
+Turn the whole model on with `--security`; then opt into specific checks, kill
+triggers, and kill actions. `--security` forces `enforce` mode and force-enables
+every transparency service.
+
+> **Scope.** This document describes the design. For the flag reference and a
+> quick start, see the [Security section of the README](../README.md#security--four-layers).
+> The local checks are **auditable defense-in-depth, not a hard boundary** — see
+> [Trust model](#trust-model).
+
+---
+
+## The four layers at a glance
+
+```mermaid
+flowchart TB
+    Client["MCP Client / LLM"]
+
+    subgraph L1["Layer 1 — Pre-flight (once, at startup)"]
+        direction TB
+        PF["Runner.Evaluate → Decision document<br/>with-mdm · with-user-context<br/>is-not-admin · logged-on-account · run-context"]
+        GATE{"admit?"}
+        PF --> GATE
+    end
+
+    subgraph L3["Layer 3 — Guardrails (every tool call, receiving path)"]
+        direction TB
+        MW["Middleware chain:<br/>inject-deps → audit → rug-pull → circuit-breaker"]
+    end
+
+    subgraph L2["Layer 2 — In-flight polling (every tick)"]
+        direction TB
+        MON["Monitor loop:<br/>posture re-eval · sentinel file<br/>+ force-on verifiers (heartbeat, rug-pull recheck)"]
+    end
+
+    subgraph L4["Layer 4 — Transparency / always-on (agent cannot disable)"]
+        direction TB
+        AUD["Hash-chained audit log"]
+        HB["Heartbeat"]
+        RP["Rug-pull detector"]
+        BAN["On-screen security banner"]
+    end
+
+    KILL(["Kill switch<br/>(out-of-band)"])
+    STATUS["Status surface<br/>GuardrailStatus tool · loopback HTTP"]
+
+    Client -->|"initialize"| GATE
+    GATE -->|"deny → banner + exit≠0"| STOP["Refuse to start"]
+    GATE -->|"admit"| L3
+    Client -->|"tools/call · tools/list"| MW
+    MW --> Handler["Tool handler"]
+
+    MW -. "tripwire / rate / rug-pull" .-> KILL
+    MON -. "posture drift / sentinel / heartbeat gap" .-> KILL
+    Client -. "Kill tool" .-> KILL
+    STATUS -. "POST /revoke" .-> KILL
+
+    L3 --> AUD
+    MON --> HB
+    MON --> RP
+    KILL --> BAN
+    AUD --> STATUS
+    HB --> STATUS
+    RP --> STATUS
+
+    classDef kill fill:#7a1f1f,stroke:#e33,color:#fff;
+    class KILL,BAN kill;
+```
+
+**Policy-decision / policy-enforcement split (PDP/PEP).** A `Runner` (the PDP)
+evaluates pluggable checks into a single **decision document**. Enforcement
+points (the PEPs) act on it: the startup gate (Layer 1), the tool-call
+middleware (Layer 3), and the periodic monitor (Layer 2).
+
+---
+
+## Layer 1 — Pre-flight (startup admission)
+
+Pre-flight checks are evaluated **once**, before the MCP server serves anything.
+A failure in `enforce` mode refuses to start (exit ≠ 0) — the LLM never gets a
+usable server. Any pre-flight flag implies `enforce`.
+
+| Check | Flag | Passes when |
+|---|---|---|
+| MDM enrolled | `--with-mdm` | `dsregcmd` reports an `MdmUrl` |
+| Interactive user | `--with-user-context` | not SYSTEM and not Session 0 |
+| Not a local admin | `--is-not-admin` | `IsUserAnAdmin()` is false |
+| Logged-on account | `--with-logged-on-account=<regex>` | the interactive user matches the regex |
+| Extra posture | `--guardrail <id[=arg]>` | e.g. `secure-boot`, `bitlocker`, `vbs`, `device-allowlist=<path>` |
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Op as Operator
+    participant Srv as RunStdio
+    participant Reg as Registry + Runner (PDP)
+    participant Dev as Device (dsregcmd / token / WMI)
+    participant Aud as Audit log
+    participant Dsk as Desktop (banner)
+
+    Op->>Srv: start --security --with-mdm --is-not-admin ...
+    Srv->>Aud: append "server.start" (genesis)
+    Srv->>Reg: Evaluate(env)
+    Reg->>Dev: read live posture (JIT, no cache)
+    Dev-->>Reg: facts
+    Reg-->>Srv: Decision {results, admit, reasons}
+    Srv->>Aud: append "preflight.decision"
+    alt admit == false (enforce)
+        Srv->>Aud: append "preflight.deny" + Flush (seal)
+        Srv->>Dsk: ShowSecurityBanner("STARTUP BLOCKED")
+        Srv-->>Op: exit ≠ 0 (LLM gets no server)
+    else admit == true
+        Srv->>Srv: build inventory, register tools, serve
+    end
+```
+
+`windows-mcp-server check` runs exactly this evaluation once and prints the
+decision document (exit 2 if not admitted) — a posture dry-run for operators and
+CI.
+
+---
+
+## Layer 2 — In-flight polling
+
+Continuous verification: on every tick the monitor re-evaluates device posture,
+watches a `kill` sentinel file, and runs the **force-on verifiers** (heartbeat +
+rug-pull recheck). None of it is exposed as an agent-controllable tool; the
+interval only tunes cadence (5 s floor).
+
+```mermaid
+flowchart LR
+    T(["tick — every inflight-interval / 5s floor"]) --> S{"sentinel<br/>kill file?"}
+    S -- yes --> K["Kill.Trip"]
+    S -- no --> V["run force-on verifiers"]
+    V --> HB["heartbeat.Beat → audit chain"]
+    V --> RP["rug-pull recheck"]
+    V --> P{"posture<br/>re-eval admit?"}
+    HB -->|error| K
+    RP -->|drift| K
+    P -- "no (drift)" --> K
+    P -- yes --> T
+
+    classDef kill fill:#7a1f1f,stroke:#e33,color:#fff;
+    class K kill;
+```
+
+---
+
+## Layer 3 — Guardrails (inline tool-call policy)
+
+Every `tools/call` and `tools/list` passes through receiving middleware, applied
+outermost-first. Because it runs on the server's receiving path, the agent
+cannot remove it.
+
+```mermaid
+flowchart LR
+    Req["tools/call"] --> D["inject-deps"]
+    D --> A["audit<br/>(name + args digest)"]
+    A --> R["rug-pull<br/>(tools/list only)"]
+    R --> C{"circuit breaker<br/>tripwire? rate?"}
+    C -- "clean" --> H["tool handler"]
+    C -- "tripwire / N-in-window" --> B["block (isError)"]
+    C -. "OnTrip" .-> K(["Kill switch"])
+
+    classDef kill fill:#7a1f1f,stroke:#e33,color:#fff;
+    class K kill;
+```
+
+The circuit breaker (`--circuit-breaker`, auto-on in `enforce`) rate-limits
+sensitive tools (PowerShell/Registry/Process/Service/FileSystem/App) over a
+sliding window and trips immediately on **destructive tripwires** — attempts to
+disable Defender, the firewall, or BitLocker, or to clear MDM enrollment.
+
+---
+
+## Layer 4 — Transparency / always-on
+
+These services are force-on under `--security` and are **never exposed as
+tools**, so a "bout of madness" cannot switch them off.
+
+### Hash-chained audit log
+
+Every action and security event is an append-only entry that commits to the
+previous entry's hash. Any edit, insertion, deletion, or reorder breaks the
+chain and is caught by `VerifyChain`. Tool calls record the tool name and a
+**SHA-256 digest of the arguments** — never the raw arguments, which may carry
+secrets.
+
+```mermaid
+flowchart LR
+    G["#0 server.start<br/>prev=∅"] --> E1["#1 preflight.decision<br/>prev=H0"]
+    E1 --> E2["#2 tools.baseline<br/>prev=H1"]
+    E2 --> E3["#3 tool.call<br/>prev=H2"]
+    E3 --> E4["#… killswitch.trip<br/>prev=H3"]
+
+    note["entry_hash = SHA-256( seq · ts · event · payload · prev_hash )"]
+```
+
+`--with-logging` selects the sink: empty/`stderr` → JSON lines on stderr; a path
+→ append-only JSONL, fsync-ed on flush (so the chain survives an abrupt kill).
+
+### Heartbeat
+
+Periodic chained entries (`--heartbeat-interval`) prove liveness. An external
+watcher polling the status snapshot, or an in-process watchdog independent of the
+monitor loop, detects a gap and can trigger a kill.
+
+### Rug-pull detection
+
+A "rug pull" is an approved server mutating its advertised tools after deployment
+— adding/removing/renaming tools, or silently changing descriptions or schemas —
+to smuggle unauthorized behavior past the initial approval.
+
+```mermaid
+flowchart TB
+    Start["startup: register all tools"] --> Base["HashTools(sorted manifest)<br/>→ baseline fingerprint"]
+    Base --> Serve["serve"]
+
+    Serve --> Live1["client tools/list"]
+    Live1 --> Cmp1{"hash == baseline?"}
+    Cmp1 -- yes --> OK1["ok"]
+    Cmp1 -- "no (mutated)" --> Trip["Kill.Trip + audit rugpull.detected"]
+
+    Serve --> Live2["monitor recheck (out-of-band)"]
+    Live2 --> Cmp2{"hash == baseline?"}
+    Cmp2 -- yes --> OK2["ok"]
+    Cmp2 -- no --> Trip
+
+    classDef kill fill:#7a1f1f,stroke:#e33,color:#fff;
+    class Trip kill;
+```
+
+The server also sets `Capabilities.Tools = {}` so a silent
+`notifications/tools/list_changed` cannot quietly re-advertise a mutated set.
+
+### On-screen security banner
+
+Any security event raises a persistent, full-width red banner drawn on-screen
+(GDI text on a layered window) — visible to a human and **captured by the
+session recording**, so the event is on the video timeline.
+
+---
+
+## Kill switch — tiered, out-of-band
+
+Triggers are configured **separately** from actions. Regardless of which
+escalations are enabled, every trip **always** raises the banner, seals the audit
+log, finalizes the recording, and aborts the session. The order is deliberate:
+seal and finalize the forensic trail **before** any shutdown.
+
+```mermaid
+flowchart TB
+    subgraph TRIG["Triggers (any one fires OnTrip once)"]
+        direction LR
+        t1["posture drift"]
+        t2["circuit breaker"]
+        t3["rug pull"]
+        t4["heartbeat gap"]
+        t5["sentinel file"]
+        t6["POST /revoke"]
+        t7["Kill tool"]
+    end
+
+    TRIG --> OT["KillExecutor.OnTrip(reason)"]
+
+    OT --> A1["audit: killswitch.trip"]
+    A1 --> A2["ALWAYS: raise banner"]
+    A2 --> A3["ALWAYS: seal audit log (flush+fsync)"]
+    A3 --> E1{"isolate?"}
+    E1 -->|"opt-in + elevated"| I["firewall block-all<br/>(loopback exempt)"]
+    E1 -->|"not elevated"| Sk1["skip + audit"]
+    I --> E2{"kill procs?"}
+    Sk1 --> E2
+    E2 -->|"opt-in + elevated"| KP["TerminateProcess by name"]
+    E2 -->|"not elevated"| Sk2["skip + audit"]
+    KP --> E3{"lock?"}
+    Sk2 --> E3
+    E3 -->|"opt-in"| LK["LockWorkStation"]
+    E3 --> F["ALWAYS: finalize recording"]
+    LK --> F
+    F --> E4{"shutdown?"}
+    E4 -->|"opt-in + elevated"| SD["InitiateSystemShutdownEx"]
+    E4 -->|"not elevated"| Sk3["skip + audit"]
+    SD --> AB["ALWAYS: abort session (deferred cancel)"]
+    Sk3 --> AB
+
+    classDef always fill:#1f4d7a,stroke:#4af,color:#fff;
+    classDef kill fill:#7a1f1f,stroke:#e33,color:#fff;
+    class A2,A3,F,AB always;
+    class OT kill;
+```
+
+**Default = isolate + abort, no shutdown.** On exit, network isolation is undone
+(the executor keeps a `restore` handle).
+
+### Privilege model — best-effort degrade
+
+The server runs in the (non-admin) user context. The elevation-only actions
+(isolate / kill-procs / shutdown) run only when the process is actually elevated;
+otherwise they are **skipped and audited** (`killaction.skip … not elevated`)
+while the banner, log-seal, recording-finalize, and abort still happen.
+
+```mermaid
+flowchart LR
+    Act["escalation requested"] --> Q{"Elevated()?"}
+    Q -- yes --> Run["perform action"]
+    Q -- no --> Skip["skip + audit<br/>'not elevated'"]
+    Run --> Cont["continue tier ladder"]
+    Skip --> Cont
+```
+
+---
+
+## Threat model mapping
+
+| Threat | Mechanism |
+|---|---|
+| **Dynamic rug pull** — approved server mutates its tool set post-deploy | Manifest fingerprint pinned at startup + `tools/list` interception + monitor recheck; silent `list_changed` suppressed → banner + isolate + abort |
+| **Indirect prompt injection / data-exfil loops** | Circuit breaker rate/tripwire → escalates to **network isolation** (cuts the exfil channel) → abort; audit records the call sequence with arg digests |
+| **Out-of-band control / agent tampering** | Status, audit, heartbeat, monitor, and kill switch are constructed in the server, not exposed as tools; middleware runs on the receiving path — unbypassable. The only agent-facing tools are read-only `GuardrailStatus` and trigger-only `Kill` |
+| **Silent posture drift** (Secure Boot off, BitLocker suspended, MDM removed mid-session) | In-flight monitor re-evaluates live posture every interval → kill on drift |
+| **Log tampering / gaps** | Hash-chained append-only audit + heartbeat; `VerifyChain` detects any break |
+
+---
+
+## Trust model
+
+The local pre-flight and posture checks (`dsregcmd`, registry, WMI,
+`IsUserAnAdmin`) are **auditable defense-in-depth, not a hard boundary** — a
+local administrator can spoof those signals. The containment layers (circuit
+breaker, kill switch, isolation) raise the cost of, and record, in-session
+compromise, but they do **not** replace the OS controls you already own. Pair
+this with **WDAC / AppLocker**, Conditional Access, and **code signing**.
+
+The authoritative remote tier — Microsoft Graph device compliance (Entra +
+Intune), TPM-backed attestation, and an external may-run PDP — is **parked**
+behind `--enable-tier2` for later re-integration; the four-layer core never
+enables it.
+
+---
+
+## Component / file map
+
+| Concern | Package / file |
+|---|---|
+| PDP: runner, registry, decision, checks | `internal/guardrails/{runner,registry,decision,guardrail,providers,health}.go` |
+| Pre-flight providers (`not-admin`, `logged-on-account`) | `internal/guardrails/providers.go` |
+| Audit log (hash chain, sink, middleware) | `internal/guardrails/audit.go` |
+| Heartbeat + watchdog | `internal/guardrails/heartbeat.go` |
+| Rug-pull detector | `internal/guardrails/rugpull.go` |
+| Circuit breaker (inline policy) | `internal/guardrails/policy.go` |
+| In-flight monitor | `internal/guardrails/monitor.go` |
+| Kill switch + tiered executor | `internal/guardrails/{killswitch,killaction}.go` |
+| System actuator (Windows / stub) | `internal/guardrails/actuator_{windows,stub}.go` |
+| Firewall isolator (`INetFwPolicy2`) | `internal/guardrails/firewall_windows.go` |
+| Run-context detection | `internal/guardrails/runcontext_windows.go` |
+| Status surface (tool + HTTP snapshot) | `internal/guardrails/status.go` |
+| On-screen security banner | `internal/desktop/overlay.go`, `com.go` |
+| Wiring (RunStdio, config groups) | `internal/winmcp/{server,guardrails}.go` |
+| CLI flag groups | `cmd/windows-mcp-server/main.go` |
+| Tier-2 (parked) | `internal/guardrails/{graph,remote,attestation_windows}.go` |
+
+The platform-agnostic core (audit, heartbeat, rug-pull, kill-action logic,
+providers) builds and unit-tests on Linux via the `!windows` actuator stub; only
+the OS-touching pieces (firewall, process kill, shutdown, token, overlay, WMI)
+are Windows-tagged.
