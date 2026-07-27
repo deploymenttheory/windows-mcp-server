@@ -284,6 +284,10 @@ windows-mcp-server.exe stdio --persona qa-test-engineer \
 
 ## Security — four layers
 
+> 📐 **Full architecture with diagrams:** [docs/security-architecture.md](docs/security-architecture.md)
+> (layer overview, startup admission, middleware chain, in-flight monitor, audit
+> hash chain, rug-pull detection, and the tiered kill-switch ladder, all in Mermaid).
+
 For managed deployments the server gates and contains itself. Turn the whole
 model on with `--security`, then opt into specific checks and kill actions:
 
