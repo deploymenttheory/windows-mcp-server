@@ -229,11 +229,35 @@ func aadDeviceID(ctx context.Context, env *Env) (string, error) {
 // spoof. The compliance/enrollment checks join the --enterprise-guardrails
 // preset (Enterprise: true); attestation is opt-in.
 func RegisterGraph(reg *Registry, c *GraphClient) {
-	reg.Register(Guardrail{ID: "graph-entra-registered", Description: "Device is registered and enabled in Entra ID (Graph)", Enterprise: true, Check: c.checkEntraRegistered})
-	reg.Register(Guardrail{ID: "graph-entra-compliant", Description: "Entra ID reports the device compliant (Graph)", Enterprise: true, Check: c.checkEntraCompliant})
-	reg.Register(Guardrail{ID: "graph-intune-enrolled", Description: "Device is enrolled in Intune (Graph)", Enterprise: true, Check: c.checkIntuneEnrolled})
-	reg.Register(Guardrail{ID: "graph-intune-compliant", Description: "Intune reports the device compliant (Graph)", Enterprise: true, Check: c.checkIntuneCompliant})
-	reg.Register(Guardrail{ID: "graph-attested", Description: "Intune device health attestation is healthy (Graph, TPM/DHA)", Check: c.checkAttested})
+	reg.Register(Guardrail{
+		ID:          "graph-entra-registered",
+		Description: "Device is registered and enabled in Entra ID (Graph)",
+		Enterprise:  true,
+		Check:       c.checkEntraRegistered,
+	})
+	reg.Register(Guardrail{
+		ID:          "graph-entra-compliant",
+		Description: "Entra ID reports the device compliant (Graph)",
+		Enterprise:  true,
+		Check:       c.checkEntraCompliant,
+	})
+	reg.Register(Guardrail{
+		ID:          "graph-intune-enrolled",
+		Description: "Device is enrolled in Intune (Graph)",
+		Enterprise:  true,
+		Check:       c.checkIntuneEnrolled,
+	})
+	reg.Register(Guardrail{
+		ID:          "graph-intune-compliant",
+		Description: "Intune reports the device compliant (Graph)",
+		Enterprise:  true,
+		Check:       c.checkIntuneCompliant,
+	})
+	reg.Register(Guardrail{
+		ID:          "graph-attested",
+		Description: "Intune device health attestation is healthy (Graph, TPM/DHA)",
+		Check:       c.checkAttested,
+	})
 }
 
 func (c *GraphClient) checkEntraRegistered(ctx context.Context, env *Env) Result {
@@ -338,7 +362,8 @@ func (c *GraphClient) checkAttested(ctx context.Context, env *Env) Result {
 	if att.SecureBoot != "" && !strings.EqualFold(att.SecureBoot, "enabled") {
 		problems = append(problems, "secure boot "+att.SecureBoot)
 	}
-	if att.BitLockerStatus != "" && !strings.EqualFold(att.BitLockerStatus, "enabled") && !strings.EqualFold(att.BitLockerStatus, "on") {
+	if att.BitLockerStatus != "" && !strings.EqualFold(att.BitLockerStatus, "enabled") &&
+		!strings.EqualFold(att.BitLockerStatus, "on") {
 		problems = append(problems, "BitLocker "+att.BitLockerStatus)
 	}
 	if !isNull(att.HealthStatusMismatchInfo) {
@@ -347,5 +372,8 @@ func (c *GraphClient) checkAttested(ctx context.Context, env *Env) Result {
 	if len(problems) > 0 {
 		return fail("graph-attested", "attestation problems: "+strings.Join(problems, "; "))
 	}
-	return pass("graph-attested", fmt.Sprintf("attestation healthy (secure boot=%s, BitLocker=%s)", att.SecureBoot, att.BitLockerStatus))
+	return pass(
+		"graph-attested",
+		fmt.Sprintf("attestation healthy (secure boot=%s, BitLocker=%s)", att.SecureBoot, att.BitLockerStatus),
+	)
 }

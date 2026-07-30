@@ -51,11 +51,19 @@ func (d *Desktop) RunPowerShell(ctx context.Context, command string, timeout tim
 // RunWindowsPowerShell runs a command specifically under Windows PowerShell 5.1
 // (powershell.exe), required for WinRT APIs such as toast notifications that
 // PowerShell 7 (pwsh) does not expose.
-func (d *Desktop) RunWindowsPowerShell(ctx context.Context, command string, timeout time.Duration) (PowerShellResult, error) {
+func (d *Desktop) RunWindowsPowerShell(
+	ctx context.Context,
+	command string,
+	timeout time.Duration,
+) (PowerShellResult, error) {
 	return d.runPowerShell(ctx, resolveWindowsPowerShellExe(), command, timeout)
 }
 
-func (d *Desktop) runPowerShell(ctx context.Context, exe, command string, timeout time.Duration) (PowerShellResult, error) {
+func (d *Desktop) runPowerShell(
+	ctx context.Context,
+	exe, command string,
+	timeout time.Duration,
+) (PowerShellResult, error) {
 	if command == "" {
 		return PowerShellResult{}, errors.New("empty command")
 	}

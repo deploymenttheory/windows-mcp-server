@@ -72,14 +72,42 @@ type Attestation struct {
 // the enterprise preset) so operators mandate exactly the hardware controls they
 // require: e.g. --guardrail secure-boot --guardrail bitlocker --guardrail vbs.
 func RegisterHealth(reg *Registry) {
-	reg.Register(Guardrail{ID: "secure-boot", Description: "UEFI Secure Boot is enabled (read live from the OS)", Check: checkSecureBoot})
-	reg.Register(Guardrail{ID: "tpm-present", Description: "A ready TPM 2.0 is present (read live from the OS)", Check: checkTPMPresent})
-	reg.Register(Guardrail{ID: "tpm-attestation-capable", Description: "TPM is attestation-capable with non-vulnerable firmware", Check: checkTPMAttestationCapable})
-	reg.Register(Guardrail{ID: "vbs", Description: "Virtualization-Based Security is running (read live from the OS)", Check: checkVBS})
+	reg.Register(Guardrail{
+		ID:          "secure-boot",
+		Description: "UEFI Secure Boot is enabled (read live from the OS)",
+		Check:       checkSecureBoot,
+	})
+	reg.Register(Guardrail{
+		ID:          "tpm-present",
+		Description: "A ready TPM 2.0 is present (read live from the OS)",
+		Check:       checkTPMPresent,
+	})
+	reg.Register(Guardrail{
+		ID:          "tpm-attestation-capable",
+		Description: "TPM is attestation-capable with non-vulnerable firmware",
+		Check:       checkTPMAttestationCapable,
+	})
+	reg.Register(Guardrail{
+		ID:          "vbs",
+		Description: "Virtualization-Based Security is running (read live from the OS)",
+		Check:       checkVBS,
+	})
 	reg.Register(Guardrail{ID: "hvci", Description: "Memory integrity / HVCI is running", Check: checkHVCI})
-	reg.Register(Guardrail{ID: "credential-guard", Description: "Credential Guard is running", Check: checkCredentialGuard})
-	reg.Register(Guardrail{ID: "bitlocker", Description: "All fixed volumes are BitLocker-protected (read live from the OS)", Check: checkBitLocker})
-	reg.Register(Guardrail{ID: "tpm-attested", Description: "Live nonce-fresh TPM platform attestation validates", Check: checkTPMAttested})
+	reg.Register(Guardrail{
+		ID:          "credential-guard",
+		Description: "Credential Guard is running",
+		Check:       checkCredentialGuard,
+	})
+	reg.Register(Guardrail{
+		ID:          "bitlocker",
+		Description: "All fixed volumes are BitLocker-protected (read live from the OS)",
+		Check:       checkBitLocker,
+	})
+	reg.Register(Guardrail{
+		ID:          "tpm-attested",
+		Description: "Live nonce-fresh TPM platform attestation validates",
+		Check:       checkTPMAttested,
+	})
 }
 
 // health returns env.Health or nil.

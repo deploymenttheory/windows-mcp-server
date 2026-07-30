@@ -36,7 +36,12 @@ func (d *Desktop) elementForLabel(label int) *accessibility.IUIAutomationElement
 
 // withPattern resolves the labeled element's pattern and passes the pattern
 // object to fn, releasing it afterwards. It runs on the engine STA thread.
-func (d *Desktop) withPattern(label int, patternID accessibility.UIA_PATTERN_ID, name string, fn func(*systemcom.IUnknown) error) error {
+func (d *Desktop) withPattern(
+	label int,
+	patternID accessibility.UIA_PATTERN_ID,
+	name string,
+	fn func(*systemcom.IUnknown) error,
+) error {
 	return d.Do(func() error {
 		el := d.elementForLabel(label)
 		if el == nil {
@@ -86,26 +91,41 @@ func (d *Desktop) ToggleLabel(label int) error {
 // SelectLabel selects the labeled item via the SelectionItem pattern (list
 // items, radio buttons, tabs).
 func (d *Desktop) SelectLabel(label int) error {
-	return d.withPattern(label, accessibility.UIA_SelectionItemPatternId, "Select", func(unk *systemcom.IUnknown) error {
-		pat := (*accessibility.IUIAutomationSelectionItemPattern)(unsafe.Pointer(unk))
-		return pat.Select()
-	})
+	return d.withPattern(
+		label,
+		accessibility.UIA_SelectionItemPatternId,
+		"Select",
+		func(unk *systemcom.IUnknown) error {
+			pat := (*accessibility.IUIAutomationSelectionItemPattern)(unsafe.Pointer(unk))
+			return pat.Select()
+		},
+	)
 }
 
 // ExpandLabel / CollapseLabel operate the ExpandCollapse pattern (combo boxes,
 // tree items, expanders).
 func (d *Desktop) ExpandLabel(label int) error {
-	return d.withPattern(label, accessibility.UIA_ExpandCollapsePatternId, "Expand", func(unk *systemcom.IUnknown) error {
-		pat := (*accessibility.IUIAutomationExpandCollapsePattern)(unsafe.Pointer(unk))
-		return pat.Expand()
-	})
+	return d.withPattern(
+		label,
+		accessibility.UIA_ExpandCollapsePatternId,
+		"Expand",
+		func(unk *systemcom.IUnknown) error {
+			pat := (*accessibility.IUIAutomationExpandCollapsePattern)(unsafe.Pointer(unk))
+			return pat.Expand()
+		},
+	)
 }
 
 func (d *Desktop) CollapseLabel(label int) error {
-	return d.withPattern(label, accessibility.UIA_ExpandCollapsePatternId, "Collapse", func(unk *systemcom.IUnknown) error {
-		pat := (*accessibility.IUIAutomationExpandCollapsePattern)(unsafe.Pointer(unk))
-		return pat.Collapse()
-	})
+	return d.withPattern(
+		label,
+		accessibility.UIA_ExpandCollapsePatternId,
+		"Collapse",
+		func(unk *systemcom.IUnknown) error {
+			pat := (*accessibility.IUIAutomationExpandCollapsePattern)(unsafe.Pointer(unk))
+			return pat.Collapse()
+		},
+	)
 }
 
 // ReadLabel returns the labeled element's current name and value (via the Value

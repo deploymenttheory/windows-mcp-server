@@ -229,7 +229,11 @@ func TestCurrencyHalvesPerRevisionBehind(t *testing.T) {
 	}{
 		{"d", 100}, {"c", 50}, {"b", 25}, {"a", 12},
 	} {
-		r := &Report{NegotiatedVersion: tc.negotiated, NewestPublished: m.Newest(), RevisionsBehind: m.RevisionsBehind(tc.negotiated)}
+		r := &Report{
+			NegotiatedVersion: tc.negotiated,
+			NewestPublished:   m.Newest(),
+			RevisionsBehind:   m.RevisionsBehind(tc.negotiated),
+		}
 		if got := currencyDimension(r); got.Score != tc.want {
 			t.Errorf("negotiated %q: score = %d, want %d", tc.negotiated, got.Score, tc.want)
 		}
@@ -251,7 +255,9 @@ func TestCoverageDoesNotAffectConformance(t *testing.T) {
 	}
 
 	base := Input{
-		ToolsListResult:   json.RawMessage(`{"tools":[{"name":"Ping","description":"d","inputSchema":{"type":"object"}}]}`),
+		ToolsListResult: json.RawMessage(
+			`{"tools":[{"name":"Ping","description":"d","inputSchema":{"type":"object"}}]}`,
+		),
 		NegotiatedVersion: m.Newest(),
 		Manifest:          m,
 	}

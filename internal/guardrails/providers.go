@@ -16,17 +16,55 @@ import (
 // a hard boundary. The authoritative tier-2 checks are wired separately:
 // RegisterGraph (Entra + Intune compliance) and RegisterRemotePolicy (may-run).
 func RegisterBuiltins(reg *Registry) {
-	reg.Register(Guardrail{ID: "run-context", Description: "Process runs as an interactive user (not SYSTEM, not Session 0)", Check: checkRunContext})
-	reg.Register(Guardrail{ID: "mdm-enrolled", Description: "Device is MDM-enrolled", Enterprise: true, Check: checkMDMEnrolled})
-	reg.Register(Guardrail{ID: "entra-joined", Description: "Device is Entra/Azure-AD joined", Enterprise: true, Check: checkEntraJoined})
-	reg.Register(Guardrail{ID: "domain-joined", Description: "Device is joined to an AD domain", Check: checkDomainJoined})
-	reg.Register(Guardrail{ID: "os-enterprise-sku", Description: "OS is an Enterprise edition", Check: checkEnterpriseSKU})
-	reg.Register(Guardrail{ID: "device-allowlist", Description: "Device serial/hostname/Entra-id is on the allowlist (arg=path)", Check: checkAllowlist})
-	reg.Register(Guardrail{ID: "not-admin", Description: "Interactive user is NOT a local administrator", Check: checkNotAdmin})
-	reg.Register(Guardrail{ID: "logged-on-account", Description: "Logged-on user matches a regex (arg=regex)", Check: checkLoggedOnAccount})
+	reg.Register(Guardrail{
+		ID:          "run-context",
+		Description: "Process runs as an interactive user (not SYSTEM, not Session 0)",
+		Check:       checkRunContext,
+	})
+	reg.Register(Guardrail{
+		ID:          "mdm-enrolled",
+		Description: "Device is MDM-enrolled",
+		Enterprise:  true,
+		Check:       checkMDMEnrolled,
+	})
+	reg.Register(Guardrail{
+		ID:          "entra-joined",
+		Description: "Device is Entra/Azure-AD joined",
+		Enterprise:  true,
+		Check:       checkEntraJoined,
+	})
+	reg.Register(Guardrail{
+		ID:          "domain-joined",
+		Description: "Device is joined to an AD domain",
+		Check:       checkDomainJoined,
+	})
+	reg.Register(Guardrail{
+		ID:          "os-enterprise-sku",
+		Description: "OS is an Enterprise edition",
+		Check:       checkEnterpriseSKU,
+	})
+	reg.Register(Guardrail{
+		ID:          "device-allowlist",
+		Description: "Device serial/hostname/Entra-id is on the allowlist (arg=path)",
+		Check:       checkAllowlist,
+	})
+	reg.Register(Guardrail{
+		ID:          "not-admin",
+		Description: "Interactive user is NOT a local administrator",
+		Check:       checkNotAdmin,
+	})
+	reg.Register(Guardrail{
+		ID:          "logged-on-account",
+		Description: "Logged-on user matches a regex (arg=regex)",
+		Check:       checkLoggedOnAccount,
+	})
 	// remote-policy is live but token-less by default; RegisterRemotePolicy
 	// overrides it with a bearer token when one is configured.
-	reg.Register(Guardrail{ID: "remote-policy", Description: "External may-run policy authorizes this device (arg=url)", Check: remotePolicyCheck("")})
+	reg.Register(Guardrail{
+		ID:          "remote-policy",
+		Description: "External may-run policy authorizes this device (arg=url)",
+		Check:       remotePolicyCheck(""),
+	})
 }
 
 func checkRunContext(_ context.Context, env *Env) Result {
@@ -125,9 +163,10 @@ func checkDomainJoined(_ context.Context, env *Env) Result {
 	return fail("domain-joined", "device is not joined to an AD domain")
 }
 
-// enterpriseSKUs are OperatingSystemSKU values for Enterprise editions.
+// enterpriseSKUs are OperatingSystemSKU values for Enterprise editions:
+// Enterprise, EnterpriseN, EnterpriseE, EnterpriseEval, EnterpriseNEval, EnterpriseS.
 var enterpriseSKUs = map[uint32]bool{
-	4: true, 27: true, 70: true, 72: true, 84: true, 125: true, // Enterprise, EnterpriseN, EnterpriseE, EnterpriseEval, EnterpriseNEval, EnterpriseS
+	4: true, 27: true, 70: true, 72: true, 84: true, 125: true,
 }
 
 func checkEnterpriseSKU(_ context.Context, env *Env) Result {
