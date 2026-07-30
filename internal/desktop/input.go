@@ -3,7 +3,9 @@
 package desktop
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -15,6 +17,48 @@ import (
 
 // inputSize is the size of one INPUT record, passed to SendInput.
 var inputSize = int32(unsafe.Sizeof(km.INPUT{}))
+
+// ErrCoordinateOutOfRange reports a coordinate that cannot be represented in the
+// display coordinate space.
+var ErrCoordinateOutOfRange = errors.New("coordinate is outside the display coordinate space")
+
+// screenCoord narrows a caller-supplied coordinate to the int32 the Win32 input
+// APIs take, rejecting values that do not fit instead of silently wrapping.
+//
+// These coordinates arrive from tool arguments — i.e. from the agent — and are
+// not otherwise range-checked. A bare int32(v) on a 64-bit build wraps:
+// int32(1<<32 + 100) is 100, so an absurd coordinate would quietly act on a real
+// point on screen rather than failing. Negative values are deliberately allowed:
+// a multi-monitor virtual desktop legitimately has a negative origin.
+func screenCoord(v int, name string) (int32, error) {
+	if v < math.MinInt32 || v > math.MaxInt32 {
+		return 0, fmt.Errorf("%w: %s %d", ErrCoordinateOutOfRange, name, v)
+	}
+	return int32(v), nil
+}
+
+// screenPoint validates an (x, y) pair.
+func screenPoint(x, y int) (ix, iy int32, err error) {
+	if ix, err = screenCoord(x, "x coordinate"); err != nil {
+		return 0, 0, err
+	}
+	if iy, err = screenCoord(y, "y coordinate"); err != nil {
+		return 0, 0, err
+	}
+	return ix, iy, nil
+}
+
+// setCursor validates a point and moves the cursor to it.
+func setCursor(x, y int) error {
+	ix, iy, err := screenPoint(x, y)
+	if err != nil {
+		return err
+	}
+	if err := wm.SetCursorPos(ix, iy); err != nil {
+		return fmt.Errorf("SetCursorPos: %w", err)
+	}
+	return nil
+}
 
 // sendInputs injects a batch of synthesized input events.
 func sendInputs(inputs []km.INPUT) error {
@@ -72,8 +116,8 @@ func (d *Desktop) Click(x, y int, button string, clicks int) error {
 		d.overlay.flashClick(x, y)
 	}
 	return d.Do(func() error {
-		if err := wm.SetCursorPos(int32(x), int32(y)); err != nil {
-			return fmt.Errorf("SetCursorPos: %w", err)
+		if err := setCursor(x, y); err != nil {
+			return err
 		}
 		if clicks <= 0 {
 			return nil // hover only
@@ -107,8 +151,8 @@ func (d *Desktop) Click(x, y int, button string, clicks int) error {
 // within another Do job because Click wraps itself in Do, and the job channel is
 // unbuffered — re-entering would deadlock the engine thread.
 func leftClickAt(x, y int) error {
-	if err := wm.SetCursorPos(int32(x), int32(y)); err != nil {
-		return fmt.Errorf("SetCursorPos: %w", err)
+	if err := setCursor(x, y); err != nil {
+		return err
 	}
 	time.Sleep(10 * time.Millisecond) // let the target window register the move
 	return sendInputs([]km.INPUT{
@@ -136,8 +180,8 @@ func (d *Desktop) ClickMany(points [][2]int, holdCtrl bool) error {
 			defer func() { _ = sendInputs([]km.INPUT{vkeyInput(km.VK_CONTROL, true)}) }()
 		}
 		for i, p := range points {
-			if err := wm.SetCursorPos(int32(p[0]), int32(p[1])); err != nil {
-				return fmt.Errorf("SetCursorPos: %w", err)
+			if err := setCursor(p[0], p[1]); err != nil {
+				return err
 			}
 			time.Sleep(10 * time.Millisecond)
 			if err := sendInputs([]km.INPUT{
@@ -157,8 +201,8 @@ func (d *Desktop) ClickMany(points [][2]int, holdCtrl bool) error {
 // MoveCursor moves the cursor to (x,y) without clicking.
 func (d *Desktop) MoveCursor(x, y int) error {
 	return d.Do(func() error {
-		if err := wm.SetCursorPos(int32(x), int32(y)); err != nil {
-			return fmt.Errorf("SetCursorPos: %w", err)
+		if err := setCursor(x, y); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -172,18 +216,24 @@ func (d *Desktop) TypeText(text string) error {
 		for _, r := range text {
 			switch r {
 			case '\n':
-				if err := sendInputs([]km.INPUT{vkeyInput(km.VK_RETURN, false), vkeyInput(km.VK_RETURN, true)}); err != nil {
+				if err := sendInputs(
+					[]km.INPUT{vkeyInput(km.VK_RETURN, false), vkeyInput(km.VK_RETURN, true)},
+				); err != nil {
 					return err
 				}
 			case '\t':
-				if err := sendInputs([]km.INPUT{vkeyInput(km.VK_TAB, false), vkeyInput(km.VK_TAB, true)}); err != nil {
+				if err := sendInputs(
+					[]km.INPUT{vkeyInput(km.VK_TAB, false), vkeyInput(km.VK_TAB, true)},
+				); err != nil {
 					return err
 				}
 			case '\r':
 				// ignore; handled by \n
 			default:
 				for _, u := range utf16.Encode([]rune{r}) {
-					if err := sendInputs([]km.INPUT{unicodeKeyInput(u, false), unicodeKeyInput(u, true)}); err != nil {
+					if err := sendInputs(
+						[]km.INPUT{unicodeKeyInput(u, false), unicodeKeyInput(u, true)},
+					); err != nil {
 						return err
 					}
 				}
@@ -203,8 +253,8 @@ func (d *Desktop) Scroll(x, y, wheelClicks int, direction string) error {
 		wheelClicks = 1
 	}
 	return d.Do(func() error {
-		if err := wm.SetCursorPos(int32(x), int32(y)); err != nil {
-			return fmt.Errorf("SetCursorPos: %w", err)
+		if err := setCursor(x, y); err != nil {
+			return err
 		}
 		const wheelDelta = 120
 		var delta int32
@@ -233,7 +283,15 @@ func (d *Desktop) Scroll(x, y, wheelClicks int, direction string) error {
 			if delta < 0 {
 				unit = -wheelDelta
 			}
-			if err := sendInputs([]km.INPUT{mouseInput(km.MOUSEEVENTF_WHEEL, uint32(unit))}); err != nil {
+			// The wheel delta is a *signed* value carried in an unsigned mouseData
+			// field: scrolling down is -120, which Windows expects as the
+			// two's-complement bit pattern 0xFFFFFF88. The conversion is a
+			// deliberate reinterpretation, not a range error.
+			if err := sendInputs(
+				[]km.INPUT{
+					mouseInput(km.MOUSEEVENTF_WHEEL, uint32(unit)),
+				}, //nolint:gosec // signed wheel delta reinterpreted into the unsigned mouseData field
+			); err != nil {
 				return err
 			}
 			time.Sleep(10 * time.Millisecond)
