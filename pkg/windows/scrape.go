@@ -60,7 +60,7 @@ func Scrape() inventory.ServerTool {
 				maxChars = 100
 			}
 
-			if err := validateScrapeURL(rawURL); err != nil {
+			if err := validateScrapeURL(rawURL, deps.EnforceHTTPS()); err != nil {
 				return NewToolResultErrorFromErr("invalid URL", err), nil
 			}
 
@@ -76,15 +76,22 @@ func Scrape() inventory.ServerTool {
 	)
 }
 
-// validateScrapeURL enforces http(s) and blocks obvious SSRF targets (loopback,
-// private, and link-local addresses).
-func validateScrapeURL(rawURL string) error {
+// validateScrapeURL enforces http(s), applies the Enforce HTTPS setting, and
+// blocks obvious SSRF targets (loopback, private, and link-local addresses).
+func validateScrapeURL(rawURL string, enforceHTTPS bool) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return err
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
+	// Compare case-insensitively: url.Parse keeps the caller's case, and
+	// "HTTP://host" is a valid equivalent URL.
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	default:
 		return fmt.Errorf("only http and https are allowed")
+	}
+	if err := enforceHTTPSScheme(u, enforceHTTPS); err != nil {
+		return err
 	}
 	host := u.Hostname()
 	if host == "" {

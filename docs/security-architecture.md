@@ -427,6 +427,7 @@ defence against a compromised host.
 | **Silent posture drift** (Secure Boot off, BitLocker suspended, MDM removed mid-session) | In-flight monitor re-evaluates live posture every interval → audited always, kill on drift when armed |
 | **Log tampering / gaps** | Hash-chained append-only audit + heartbeat; `VerifyChain` detects any break |
 | **Credential disclosure to the model** | The `Credentials` tool has no read mode and no engine function returns a secret; `inject` types it and returns only a character count. Secrets never reach argv, tool results, or the audit chain |
+| **Data exposure over plaintext HTTP** | `--enforce-https` (forced on by `--security`) refuses `http://` for `Scrape`, for a URL-shaped `App` launch that would open the browser, and for the may-run endpoint. Scheme matching is case-insensitive. Does **not** intercept navigation inside an already-open browser — that needs a device proxy |
 
 ---
 
@@ -460,6 +461,7 @@ enables it.
 | Heartbeat + watchdog | `internal/guardrails/heartbeat.go` |
 | Rug-pull detector | `internal/guardrails/rugpull.go` |
 | Circuit breaker (inline policy) | `internal/guardrails/policy.go` |
+| Enforce HTTPS (URL scheme policy) | `pkg/windows/urlpolicy.go`, `internal/guardrails/remote.go` |
 | In-flight monitor | `internal/guardrails/monitor.go` |
 | Kill switch + tiered executor + graceful stop | `internal/guardrails/{killswitch,killaction}.go` |
 | Per-trigger arming gate (`tripFunc`) | `internal/winmcp/guardrails.go` |

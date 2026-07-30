@@ -71,10 +71,14 @@ func (p *systemProbe) DeviceIdentity() guardrails.DeviceIdentity {
 // guardrailEnv builds a fresh evaluation environment. The same systemProbe backs
 // both the SystemProbe and HealthProbe surfaces (it reads live OS/hardware state
 // on every call), so posture is measured just-in-time on each evaluation.
-func guardrailEnv(dsk *desktop.Desktop, logger *slog.Logger) *guardrails.Env {
+func guardrailEnv(cfg Config, dsk *desktop.Desktop, logger *slog.Logger) *guardrails.Env {
 	p := &systemProbe{dsk: dsk}
-	return &guardrails.Env{Sys: p, Health: p, Logger: logger}
+	return &guardrails.Env{Sys: p, Health: p, Logger: logger, EnforceHTTPS: enforceHTTPS(cfg)}
 }
+
+// enforceHTTPS resolves the Enforce HTTPS setting. --security force-enables it,
+// matching how the master switch force-enables the transparency services.
+func enforceHTTPS(cfg Config) bool { return cfg.EnforceHTTPS || cfg.Security }
 
 // newGuardrailRegistry builds the guardrail registry: tier-1 local checks, the
 // JIT at-source device-posture checks, and (when configured) the authoritative

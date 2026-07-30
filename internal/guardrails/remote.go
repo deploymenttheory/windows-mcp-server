@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -66,6 +68,20 @@ func remotePolicyCheck(token string) CheckFunc {
 		endpoint := env.Arg
 		if endpoint == "" {
 			return skip("remote-policy", "no may-run endpoint configured")
+		}
+		// The may-run request carries device identity and usually a bearer token, so
+		// a plaintext endpoint discloses both. Fail rather than skip: skipping would
+		// let a misconfigured endpoint silently stop being a control.
+		if env.EnforceHTTPS {
+			u, err := url.Parse(endpoint)
+			if err != nil {
+				return errf("remote-policy", "bad may-run endpoint: "+err.Error())
+			}
+			if strings.EqualFold(u.Scheme, "http") {
+				return fail("remote-policy",
+					"may-run endpoint is plaintext http:// and Enforce HTTPS is on; "+
+						"it would disclose device identity and the bearer token")
+			}
 		}
 		id := env.Sys.DeviceIdentity()
 		body, _ := json.Marshal(mayRunRequest{Device: id, RunContext: env.Sys.RunContext(), Hostname: id.Hostname})

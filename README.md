@@ -250,6 +250,7 @@ Every flag has a `WINDOWS_MCP_`-prefixed env var (e.g. `--read-only` ↔
 | `--guardrails` | Guardrail mode: `off`, `audit`, `enforce` (forced to enforce by `--security`/pre-flight) |
 | `--guardrail` | Additional guardrails to require (repeatable): `id` or `id=arg` |
 | `--circuit-breaker` / `--circuit-window` / `--circuit-threshold` | Inline destructive-action circuit breaker + tuning |
+| `--enforce-https` | Enforce HTTPS: refuse plaintext `http://` targets (see below). Forced on by `--security` |
 | `--with-video-session-recording` | Record the session to a video file in this directory |
 | `--with-logging` | Audit-log sink: empty/`stderr` for stderr JSONL, or a file path for hash-chained JSONL |
 | `--heartbeat-interval` | Heartbeat cadence written to the audit chain (default 30s) |
@@ -262,6 +263,47 @@ Every flag has a `WINDOWS_MCP_`-prefixed env var (e.g. `--read-only` ↔
 | `--guardrails-bypass` | Break-glass: skip pre-flight checks (logged) |
 | `--enable-tier2` + `--graph-*` / `--remote-policy-token` | Opt into the parked tier-2 remote checks (Graph / may-run PDP) |
 | `--log-file` | Write debug logs to a file (stdout is reserved for the transport) |
+
+## Enforce HTTPS
+
+Turn on Enforce HTTPS so computer use only works with HTTPS websites. When it is
+on, plaintext `http://` targets are refused, which helps protect against data
+exposure over the network:
+
+```sh
+./windows-mcp-server.exe stdio --enforce-https
+```
+
+Off by default, so existing behaviour is unchanged. `--security` force-enables it,
+the same way the master switch force-enables the transparency services.
+
+### What it covers
+
+| Entry point | Behaviour when on |
+|---|---|
+| `Scrape` | An `http://` URL is refused before any request is made. Exact: the server makes this request itself. |
+| `App` `mode=launch` | A URL-shaped name is a navigation — `Start-Process http://example.com` hands it to the default browser — so a plaintext URL is refused. An ordinary name like `notepad` is untouched. |
+| `remote-policy` guardrail | A plaintext may-run endpoint **fails** the guardrail rather than skipping it: the request carries device identity and a bearer token, so plaintext would disclose both. |
+
+Scheme comparison is case-insensitive, so `HTTP://` and `HtTp://` cannot bypass
+it. Blocked results tell the agent to retry over `https://` so it can self-correct
+rather than repeating the call.
+
+### What it does not cover
+
+**Browser navigation is not intercepted.** If a browser is already open, the agent
+can click a link, use the address bar, or follow a redirect to an `http://` site
+without any tool call passing through the server. Enforce HTTPS constrains the
+URLs the *server* fetches or opens, not where a browser subsequently goes.
+
+Closing that gap needs enforcement below the tool layer — a device proxy that
+filters egress by scheme and host, so it applies however the browser got there.
+That is not implemented here.
+
+Also unaffected: the loopback guardrail status endpoint (`--guardrails-status-addr`)
+is an inbound HTTP listener bound to localhost and protected by a bearer token,
+not a website computer use interacts with. Microsoft Graph URLs are `https://`
+constants in the code and are not operator-overridable.
 
 ## Credentials
 

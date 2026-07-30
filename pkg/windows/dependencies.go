@@ -48,6 +48,10 @@ type ToolDependencies interface {
 	// a secret — the plaintext never leaves the desktop engine, so no tool handler
 	// is able to return one.
 	Credentials() []desktop.CredentialInfo
+
+	// EnforceHTTPS reports whether the Enforce HTTPS setting is on. Tools that
+	// fetch or navigate to a URL must refuse plaintext http:// when it is.
+	EnforceHTTPS() bool
 }
 
 // BaseDeps is the standard ToolDependencies implementation for the local
@@ -57,6 +61,7 @@ type BaseDeps struct {
 	logger         *slog.Logger
 	featureChecker inventory.FeatureFlagChecker
 	credentials    []desktop.CredentialInfo
+	enforceHTTPS   bool
 }
 
 // Compile-time assertion that BaseDeps satisfies ToolDependencies.
@@ -77,11 +82,21 @@ func (d *BaseDeps) WithCredentials(creds []desktop.CredentialInfo) *BaseDeps {
 	return d
 }
 
+// WithEnforceHTTPS turns the Enforce HTTPS setting on for tools that reach a URL.
+// Returns the receiver for chaining.
+func (d *BaseDeps) WithEnforceHTTPS(on bool) *BaseDeps {
+	d.enforceHTTPS = on
+	return d
+}
+
 // Desktop implements ToolDependencies.
 func (d *BaseDeps) Desktop() *desktop.Desktop { return d.desktop }
 
 // Credentials implements ToolDependencies.
 func (d *BaseDeps) Credentials() []desktop.CredentialInfo { return d.credentials }
+
+// EnforceHTTPS implements ToolDependencies.
+func (d *BaseDeps) EnforceHTTPS() bool { return d.enforceHTTPS }
 
 // Logger implements ToolDependencies.
 func (d *BaseDeps) Logger(_ context.Context) *slog.Logger { return d.logger }

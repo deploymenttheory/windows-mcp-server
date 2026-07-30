@@ -216,6 +216,37 @@ Note `leftClickAt` (`input.go`): STA-only, for use *inside* a `Do` job. Don't ca
 `Click` from within a `Do` job — it wraps itself in `Do` and would deadlock on the
 unbuffered job channel.
 
+## Enforce HTTPS
+
+`--enforce-https` (forced on by `--security`) refuses plaintext `http://` targets.
+`pkg/windows/urlpolicy.go` owns the tool-layer policy; `internal/guardrails/remote.go`
+applies it to the may-run endpoint via `Env.EnforceHTTPS`.
+
+Two traps to preserve:
+
+- **Compare schemes case-insensitively.** `url.Parse` keeps the caller's case and
+  `HTTP://host` is a valid equivalent URL, so a `==` comparison is a trivial
+  bypass. Use `strings.EqualFold` / `strings.ToLower`.
+- **A URL-shaped value is a navigation.** `App`'s `name` is normally something like
+  `notepad`, but `Start-Process http://example.com` opens the default browser.
+  `urlSchemeIfURL` exists to spot that, and requires an explicit `://` so a bare
+  `example.com` or a file path is not mistaken for a URL.
+
+When adding another URL entry point, gate it through `enforceHTTPSScheme` and add
+it to the coverage table in the README's Enforce HTTPS section.
+
+### Testing tool handlers: a nil engine is not a safety net
+
+`fakeDeps` in `pkg/windows/urlpolicy_test.go` returns a nil `*desktop.Desktop`.
+That is **only** safe for paths that return before touching the engine. Several
+engine methods never dereference their receiver — `LaunchApp` shells out through
+`RunPowerShell`, which just builds an `exec.Cmd` — so a handler reaching the
+engine with a nil `*Desktop` really performs the action instead of panicking. An
+earlier version of these tests opened a browser tab this way.
+
+Assert the blocked path through the handler; assert the allowed path against the
+gate helpers directly.
+
 ## MCP spec compliance
 
 `internal/mcpspec` scores the served surface against the vendored schemas. Two

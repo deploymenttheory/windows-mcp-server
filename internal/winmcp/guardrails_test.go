@@ -44,6 +44,39 @@ func TestPreflightExtrasMapping(t *testing.T) {
 	}
 }
 
+// TestEnforceHTTPSResolution pins the toggle's resolution, including that the
+// --security master switch force-enables it the same way it force-enables the
+// transparency services.
+func TestEnforceHTTPSResolution(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cfg  Config
+		want bool
+	}{
+		"off by default":            {Config{}, false},
+		"explicit flag":             {Config{EnforceHTTPS: true}, true},
+		"forced by --security":      {Config{Security: true}, true},
+		"both":                      {Config{EnforceHTTPS: true, Security: true}, true},
+		"unrelated flag leaves off": {Config{CircuitBreaker: true}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := enforceHTTPS(tc.cfg); got != tc.want {
+				t.Errorf("enforceHTTPS = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGuardrailEnvCarriesEnforceHTTPS proves the setting actually reaches the
+// guardrail checks, which is what lets remote-policy refuse a plaintext endpoint.
+func TestGuardrailEnvCarriesEnforceHTTPS(t *testing.T) {
+	if env := guardrailEnv(Config{EnforceHTTPS: true}, nil, nil); !env.EnforceHTTPS {
+		t.Error("guardrailEnv must propagate EnforceHTTPS")
+	}
+	if env := guardrailEnv(Config{}, nil, nil); env.EnforceHTTPS {
+		t.Error("guardrailEnv must not set EnforceHTTPS when off")
+	}
+}
+
 func TestKillActionConfigDefaultIsolate(t *testing.T) {
 	kc := killActionConfig(Config{KillActionIsolate: true})
 	if !kc.Isolate || kc.Shutdown || kc.KillProcs || kc.Lock {
