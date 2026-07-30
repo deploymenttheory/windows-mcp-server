@@ -240,10 +240,9 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		Title:   "Windows MCP Server",
 		Version: cfg.Version,
 	}, &mcp.ServerOptions{
-		Instructions: combineInstructions(personaInstructions, inv.Instructions()),
-		// Suppress silent tools/list_changed so a mutated manifest cannot be
-		// re-advertised quietly; rug-pull detection catches any drift.
-		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
+		Instructions:      combineInstructions(personaInstructions, inv.Instructions()),
+		Capabilities:      pinnedCapabilities(),
+		CompletionHandler: completionHandler(inv),
 	})
 
 	// --- Out-of-band kill switch + tiered action executor ---
@@ -293,6 +292,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	server.AddReceivingMiddleware(windows.InjectDepsMiddleware(deps))
 	server.AddReceivingMiddleware(audit.Middleware())
 	server.AddReceivingMiddleware(rugpull.Middleware())
+	server.AddReceivingMiddleware(rugpull.PromptMiddleware())
+	server.AddReceivingMiddleware(rugpull.ResourceMiddleware())
 
 	// --- Layer 3: inline tool-call policy + circuit breaker ---
 	circuitEnabled := cfg.CircuitBreaker || runner.Mode() == guardrails.ModeEnforce
@@ -304,7 +305,11 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		OnTrip:    tripCircuit,
 	}))
 
-	inv.RegisterTools(runCtx, server, deps)
+	// RegisterAll rather than RegisterTools: resources and prompts are part of the
+	// served surface too. Note RegisterResources (fixed URIs) and
+	// RegisterResourceTemplates populate disjoint SDK collections — resources/list
+	// returns only the former.
+	inv.RegisterAll(runCtx, server, deps)
 
 	// Guardrail tools registered unconditionally (present under any persona).
 	statusTool, statusHandler := guardrails.StatusTool(holder.get, snapshotFn(startedAt, rugpull, heartbeat, audit, kill), kill)
@@ -318,10 +323,21 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	killTool, killHandler := guardrails.KillTool(stopSession)
 	server.AddTool(killTool, killHandler)
 
-	// Pin the rug-pull baseline over the full served manifest.
+	// Pin the rug-pull baselines over the full served surface. Prompts and
+	// resources are pinned too: a mutated prompt changes the instructions the
+	// model follows, and a mutated resource URI changes what it reads, so both are
+	// rug-pull vectors as much as a mutated tool is.
 	baselineTools := append(invMCPTools(runCtx, inv), statusTool, killTool)
 	baseHash := rugpull.SetBaseline(baselineTools)
 	_, _ = audit.Append("tools.baseline", map[string]any{"hash": baseHash, "count": len(baselineTools)})
+
+	basePrompts := invMCPPrompts(runCtx, inv)
+	promptHash := rugpull.SetPromptBaseline(basePrompts)
+	_, _ = audit.Append("prompts.baseline", map[string]any{"hash": promptHash, "count": len(basePrompts)})
+
+	baseResources := invMCPResources(runCtx, inv)
+	resourceHash := rugpull.SetResourceBaseline(baseResources)
+	_, _ = audit.Append("resources.baseline", map[string]any{"hash": resourceHash, "count": len(baseResources)})
 
 	// --- Layer 2: in-flight polling — posture drift, sentinel, always-on verifiers ---
 	guardrails.StartMonitor(runCtx, guardrails.MonitorConfig{
@@ -413,6 +429,29 @@ func invMCPTools(ctx context.Context, inv *inventory.Inventory) []*mcp.Tool {
 	for i := range sts {
 		t := sts[i].Tool
 		out = append(out, &t)
+	}
+	return out
+}
+
+// invMCPPrompts returns the registered prompts as []*mcp.Prompt for fingerprinting.
+func invMCPPrompts(ctx context.Context, inv *inventory.Inventory) []*mcp.Prompt {
+	sps := inv.AvailablePrompts(ctx)
+	out := make([]*mcp.Prompt, 0, len(sps))
+	for i := range sps {
+		p := sps[i].Prompt
+		out = append(out, &p)
+	}
+	return out
+}
+
+// invMCPResources returns the registered fixed-URI resources as []*mcp.Resource
+// for fingerprinting.
+func invMCPResources(ctx context.Context, inv *inventory.Inventory) []*mcp.Resource {
+	srs := inv.AvailableResources(ctx)
+	out := make([]*mcp.Resource, 0, len(srs))
+	for i := range srs {
+		res := srs[i].Resource
+		out = append(out, &res)
 	}
 	return out
 }

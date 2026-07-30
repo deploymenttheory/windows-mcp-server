@@ -160,3 +160,99 @@ func TestCredentialsToolNeverReturnsSecrets(t *testing.T) {
 		t.Error("Credentials description must state that secrets cannot be read")
 	}
 }
+
+// TestAllResourcesValid mirrors TestAllToolsValid for the resource manifest.
+func TestAllResourcesValid(t *testing.T) {
+	seen := map[string]bool{}
+	uris := map[string]bool{}
+	for _, r := range AllResources() {
+		switch {
+		case r.Resource.Name == "":
+			t.Error("resource with empty name")
+		case r.Resource.URI == "":
+			t.Errorf("resource %q has no URI", r.Resource.Name)
+		case r.Resource.Description == "":
+			t.Errorf("resource %q has no description", r.Resource.Name)
+		case r.Toolset.ID == "":
+			t.Errorf("resource %q has no toolset", r.Resource.Name)
+		case !r.HasHandler():
+			t.Errorf("resource %q has no handler", r.Resource.Name)
+		}
+		if seen[r.Resource.Name] {
+			t.Errorf("duplicate resource name %q", r.Resource.Name)
+		}
+		if uris[r.Resource.URI] {
+			t.Errorf("duplicate resource URI %q", r.Resource.URI)
+		}
+		seen[r.Resource.Name], uris[r.Resource.URI] = true, true
+
+		if !strings.HasPrefix(r.Resource.URI, "windows://") {
+			t.Errorf("resource %q URI %q should use the windows:// scheme", r.Resource.Name, r.Resource.URI)
+		}
+	}
+}
+
+// TestAllPromptsValid mirrors it for prompts, and checks required arguments are
+// declared so a client can prompt the user for them.
+func TestAllPromptsValid(t *testing.T) {
+	seen := map[string]bool{}
+	for _, p := range AllPrompts() {
+		switch {
+		case p.Prompt.Name == "":
+			t.Error("prompt with empty name")
+		case p.Prompt.Description == "":
+			t.Errorf("prompt %q has no description", p.Prompt.Name)
+		case p.Toolset.ID == "":
+			t.Errorf("prompt %q has no toolset", p.Prompt.Name)
+		case p.Handler == nil:
+			t.Errorf("prompt %q has no handler", p.Prompt.Name)
+		}
+		if seen[p.Prompt.Name] {
+			t.Errorf("duplicate prompt name %q", p.Prompt.Name)
+		}
+		seen[p.Prompt.Name] = true
+
+		for _, a := range p.Prompt.Arguments {
+			if a.Name == "" {
+				t.Errorf("prompt %q has an unnamed argument", p.Prompt.Name)
+			}
+			if a.Description == "" {
+				t.Errorf("prompt %q argument %q has no description", p.Prompt.Name, a.Name)
+			}
+		}
+	}
+}
+
+// TestResourcesAndPromptsUseToolBearingToolsets guards a subtle inventory trap:
+// AvailableToolsets, EnabledToolsets and the instructions generator all iterate
+// tools only, so a toolset introduced solely by a resource or prompt would be
+// invisible to them.
+func TestResourcesAndPromptsUseToolBearingToolsets(t *testing.T) {
+	withTools := map[inventory.ToolsetID]bool{}
+	for _, st := range AllTools() {
+		withTools[st.Toolset.ID] = true
+	}
+	for _, r := range AllResources() {
+		if !withTools[r.Toolset.ID] {
+			t.Errorf("resource %q uses toolset %q which contains no tools; it would be "+
+				"invisible to AvailableToolsets/EnabledToolsets", r.Resource.Name, r.Toolset.ID)
+		}
+	}
+	for _, p := range AllPrompts() {
+		if !withTools[p.Toolset.ID] {
+			t.Errorf("prompt %q uses toolset %q which contains no tools", p.Prompt.Name, p.Toolset.ID)
+		}
+	}
+}
+
+// TestPromptsReusePersonaGuidance pins the single-source-of-truth rule: prompt
+// text is built from Personas[...].Instructions rather than restating it, so the
+// two cannot drift.
+func TestPromptsReusePersonaGuidance(t *testing.T) {
+	if got := personaGuidance("business-user"); got == "" {
+		t.Fatal("personaGuidance returned empty for a real persona")
+	}
+	if got := personaGuidance("no-such-persona"); got != "" {
+		t.Errorf("unknown persona should yield empty guidance, got %q", got)
+	}
+}

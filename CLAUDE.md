@@ -263,6 +263,19 @@ things to preserve:
   favour of `DiscoverResult`. Use `Spec.FirstPresent(...)` and let a missing
   definition *skip* the dimension — skipped weight leaves the denominator, so a
   removed feature cannot depress the score.
+- **Conformance and coverage are separate, deliberately.** Conformance answers
+  "does what we serve validate?" and is the number CI gates on. Coverage is
+  optional-feature breadth, and MCP does not require prompts/resources/completions
+  — a tools-only server is fully conformant. Never fold coverage back into the
+  headline: it makes a product decision read as a compliance failure.
+- **Don't score a revision-shaped payload against the wrong revision.** The
+  handshake's shape follows the negotiated revision, so `dimSpec.revisionShaped`
+  skips it when scoring anything else. Without that, a 2026-07-28 `DiscoverResult`
+  scored against 2025-11-25's `InitializeResult` reports a failure for a server
+  that is in fact backward compatible.
+- **Capture the wire, not the SDK's view.** `ClientSession.InitializeResult()` is a
+  *synthesized legacy view* on the new protocol. `recordtransport.go` records real
+  `jsonrpc.Message` frames; use `frameLog.ResultFor(method)`.
 
 Server method coverage is derived from the schema's `ClientRequest` union (the
 requests a client sends), which is why client-side methods like
@@ -274,6 +287,42 @@ After changing the tool manifest, regenerate the committed report:
 go run ./cmd/windows-mcp-server spec-check --spec-version all --format json --out schema/compliance.json
 go run ./cmd/windows-mcp-server spec-check --spec-version all --format markdown --out docs/mcp-compliance.md
 ```
+
+## Resources and prompts
+
+Added alongside tools; four rules keep them safe and visible.
+
+- **Fixed resources and resource *templates* are disjoint in the SDK.**
+  `resources/list` paginates only fixed resources, `resources/templates/list` only
+  templates. Registering templates alone yields an **empty** `resources/list`.
+  `inventory.ServerResource` + `RegisterResources` exist for the fixed case; use
+  `SetFixedResources` in `NewInventory()`.
+- **Attach them to toolsets that already contain tools.** `AvailableToolsets`,
+  `EnabledToolsets` and `generateInstructions` iterate `r.tools` only, so a toolset
+  introduced solely by a resource or prompt is invisible to all three.
+  `TestResourcesAndPromptsUseToolBearingToolsets` enforces this.
+- **Prompts have no deps argument.** `inventory.ServerPrompt.Handler` is a bare
+  `mcp.PromptHandler`, so a prompt needing the engine must read it from the
+  context — which works because `InjectDepsMiddleware` covers every method.
+- **Prompt text reuses `Personas[...].Instructions`** via `personaGuidance`, so
+  `--persona` and the prompts share one source of truth.
+
+### Capabilities must stay pinned
+
+`Server.capabilities()` *infers* any capability left nil, filling
+Prompts/Resources with `ListChanged: true` the moment one is registered. That
+re-opens the silent re-advertisement channel rug-pull detection exists to close.
+`pinnedCapabilities()` declares all four explicitly with `ListChanged` false —
+keep it that way, in `server.go` **and** `speccheck.go`.
+
+### Guardrails cover the new methods
+
+`resources/read` and `prompts/get` are data-egress paths, so they are audited
+(`resource.read`, `prompt.get`, arguments digested never raw), `resources/read`
+counts against the circuit breaker's window *shared with tools* (so alternating
+between a tool and an equivalent resource cannot evade the limit), and both
+manifests are rug-pull fingerprinted via `HashPrompts`/`HashResources`. A surface
+with no pinned baseline is skipped rather than treated as drift.
 
 ## Build tags
 

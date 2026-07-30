@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -153,11 +154,11 @@ func TestEvaluateScoresAndSkips(t *testing.T) {
 		Manifest:             m,
 	})
 
-	if rep.Score <= 0 || rep.Score > 100 {
-		t.Fatalf("score out of range: %d", rep.Score)
+	if rep.ConformanceScore <= 0 || rep.ConformanceScore > 100 {
+		t.Fatalf("score out of range: %d", rep.ConformanceScore)
 	}
-	if rep.ApplicableWeight <= 0 || rep.ApplicableWeight > 100 {
-		t.Errorf("applicable weight out of range: %d", rep.ApplicableWeight)
+	if rep.ConformanceWeight <= 0 || rep.ConformanceWeight > 100 {
+		t.Errorf("applicable weight out of range: %d", rep.ConformanceWeight)
 	}
 	if rep.RevisionsBehind != 0 {
 		t.Errorf("negotiating newest should be 0 behind, got %d", rep.RevisionsBehind)
@@ -180,8 +181,8 @@ func TestEvaluateScoresAndSkips(t *testing.T) {
 		}
 	}
 	// Skipped weight must be excluded from the denominator.
-	if rep.ApplicableWeight != weightToolSchema+weightListToolsResult+weightMethodSurface+weightCurrency {
-		t.Errorf("applicable weight should exclude skipped dimensions, got %d", rep.ApplicableWeight)
+	if rep.ConformanceWeight != weightToolSchema+weightListToolsResult+weightCurrency {
+		t.Errorf("conformance weight should exclude skipped and coverage dimensions, got %d", rep.ConformanceWeight)
 	}
 	if rep.Markdown() == "" {
 		t.Error("Markdown() returned empty")
@@ -231,6 +232,126 @@ func TestCurrencyHalvesPerRevisionBehind(t *testing.T) {
 		r := &Report{NegotiatedVersion: tc.negotiated, NewestPublished: m.Newest(), RevisionsBehind: m.RevisionsBehind(tc.negotiated)}
 		if got := currencyDimension(r); got.Score != tc.want {
 			t.Errorf("negotiated %q: score = %d, want %d", tc.negotiated, got.Score, tc.want)
+		}
+	}
+}
+
+// TestCoverageDoesNotAffectConformance is the point of the split: a server that
+// legitimately implements only tools must be able to score 100 on conformance.
+// MCP does not require prompts, resources or completions, so their absence is a
+// product decision, not a compliance failure.
+func TestCoverageDoesNotAffectConformance(t *testing.T) {
+	m, err := LoadManifest(schemaDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := Load(schemaDir(), m.Newest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := Input{
+		ToolsListResult:   json.RawMessage(`{"tools":[{"name":"Ping","description":"d","inputSchema":{"type":"object"}}]}`),
+		NegotiatedVersion: m.Newest(),
+		Manifest:          m,
+	}
+
+	// Identical surfaces except for optional-feature breadth.
+	toolsOnly := base
+	toolsOnly.ImplementedMethods = []string{"tools/list", "tools/call"}
+	everything := base
+	everything.ImplementedMethods = append(spec.ServerMethods(), "tools/list", "tools/call")
+
+	lean := Evaluate(spec, toolsOnly)
+	full := Evaluate(spec, everything)
+
+	if lean.ConformanceScore != full.ConformanceScore {
+		t.Errorf("optional-feature breadth changed the conformance score: %d vs %d",
+			lean.ConformanceScore, full.ConformanceScore)
+	}
+	if lean.Coverage.MethodsPct >= full.Coverage.MethodsPct {
+		t.Errorf("coverage should differ: lean=%d%% full=%d%%",
+			lean.Coverage.MethodsPct, full.Coverage.MethodsPct)
+	}
+	if full.Coverage.MethodsPct != 100 {
+		t.Errorf("implementing every defined method should be 100%% coverage, got %d%%", full.Coverage.MethodsPct)
+	}
+
+	// The coverage dimension must be listed but carry no conformance weight.
+	for _, d := range lean.Dimensions {
+		if d.Kind != KindCoverage {
+			continue
+		}
+		if d.Weight != 0 {
+			t.Errorf("coverage dimension %q must carry zero conformance weight, got %d", d.ID, d.Weight)
+		}
+	}
+}
+
+// TestConformanceWeightsSumTo100 guards the reweighting after the split.
+func TestConformanceWeightsSumTo100(t *testing.T) {
+	if got := weightToolSchema + weightListToolsResult + weightHandshake + weightCapabilities + weightCurrency; got != 100 {
+		t.Errorf("conformance weights sum to %d, want 100", got)
+	}
+}
+
+// TestHandshakeSkippedAcrossRevisions guards against a false failure. The
+// handshake's shape is decided by the revision the session negotiated: a
+// 2026-07-28 session yields a DiscoverResult, which legitimately lacks the
+// protocolVersion/serverInfo an older InitializeResult requires. Scoring one
+// against the other reported non-conformance for a server that does serve a
+// correct initialize when a client asks for it.
+func TestHandshakeSkippedAcrossRevisions(t *testing.T) {
+	m, err := LoadManifest(schemaDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newest := m.Newest()
+	older := m.Versions[0]
+
+	// A discover-shaped handshake, as captured from a newest-revision session.
+	handshake := json.RawMessage(`{"resultType":"complete","cacheScope":"public","ttlMs":0,
+		"supportedVersions":["` + newest + `"],"capabilities":{"tools":{}}}`)
+
+	in := Input{
+		ToolsListResult:   json.RawMessage(`{"tools":[]}`),
+		HandshakeResult:   handshake,
+		NegotiatedVersion: newest,
+		Manifest:          m,
+	}
+
+	oldSpec, err := Load(schemaDir(), older)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep := Evaluate(oldSpec, in)
+	var handshakeDim Dimension
+	for _, d := range rep.Dimensions {
+		if d.ID == "handshake-result" {
+			handshakeDim = d
+		}
+	}
+	if !handshakeDim.Skipped {
+		t.Errorf("handshake captured under %s must be skipped when scoring %s, got score %d",
+			newest, older, handshakeDim.Score)
+	}
+	if !strings.Contains(handshakeDim.SkipReason, "not comparable") {
+		t.Errorf("skip reason should explain why: %q", handshakeDim.SkipReason)
+	}
+	for _, f := range rep.Findings {
+		if f.Dimension == "handshake-result" {
+			t.Errorf("a skipped handshake must not produce a finding: %s", f.Problem)
+		}
+	}
+
+	// Scored against its own revision it is judged normally, not skipped.
+	newSpec, err := Load(schemaDir(), newest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range Evaluate(newSpec, in).Dimensions {
+		if d.ID == "handshake-result" && d.Skipped {
+			t.Error("handshake must be scored against the revision it was captured under")
 		}
 	}
 }

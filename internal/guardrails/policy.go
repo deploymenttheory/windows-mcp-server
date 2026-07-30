@@ -63,6 +63,18 @@ func ToolPolicyMiddleware(cfg CircuitConfig) mcp.Middleware {
 
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			// resources/read returns desktop and system state to the caller, so it is
+			// a data-egress path and belongs under the same rate limit as a sensitive
+			// tool. Without this it would be an unthrottled way to pull the same
+			// information the Snapshot and SystemInfo tools are throttled for.
+			if method == "resources/read" {
+				if p, ok := req.GetParams().(*mcp.ReadResourceParams); ok {
+					if blocked := countSensitive(&mu, &hits, cfg, "resource:"+p.URI); blocked != nil {
+						return blocked, nil
+					}
+				}
+				return next(ctx, method, req)
+			}
 			if method != "tools/call" {
 				return next(ctx, method, req)
 			}
@@ -81,33 +93,47 @@ func ToolPolicyMiddleware(cfg CircuitConfig) mcp.Middleware {
 
 			// Rate-based circuit breaker over sensitive tools.
 			if sensitiveTools[name] {
-				mu.Lock()
-				now := time.Now()
-				cutoff := now.Add(-cfg.Window)
-				kept := hits[:0]
-				for _, t := range hits {
-					if t.After(cutoff) {
-						kept = append(kept, t)
-					}
-				}
-				kept = append(kept, now)
-				hits = kept
-				count := len(hits)
-				mu.Unlock()
-
-				cfg.Logger.Info("guardrail.sensitive_call", "tool", name, "window_count", count)
-				if cfg.Enabled && count >= cfg.Threshold {
-					cfg.Logger.Error("guardrail.circuit_trip", "reason", "rate", "tool", name, "count", count, "window", cfg.Window.String())
-					if cfg.OnTrip != nil {
-						cfg.OnTrip(fmt.Sprintf("circuit breaker: %d sensitive tool calls within %s", count, cfg.Window))
-					}
-					return blockedResult(fmt.Sprintf("too many sensitive actions (%d within %s)", count, cfg.Window)), nil
+				if blocked := countSensitive(&mu, &hits, cfg, name); blocked != nil {
+					return blocked, nil
 				}
 			}
 
 			return next(ctx, method, req)
 		}
 	}
+}
+
+// countSensitive records one sensitive invocation in the sliding window and
+// returns a blocked result when the threshold is reached, or nil to proceed.
+//
+// Shared by the tools/call and resources/read paths so both are counted against
+// the *same* window: an agent must not be able to stay under the limit by
+// alternating between a tool and a resource that expose the same data.
+func countSensitive(mu *sync.Mutex, hits *[]time.Time, cfg CircuitConfig, subject string) mcp.Result {
+	mu.Lock()
+	now := time.Now()
+	cutoff := now.Add(-cfg.Window)
+	kept := (*hits)[:0]
+	for _, t := range *hits {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	kept = append(kept, now)
+	*hits = kept
+	count := len(kept)
+	mu.Unlock()
+
+	cfg.Logger.Info("guardrail.sensitive_call", "subject", subject, "window_count", count)
+	if cfg.Enabled && count >= cfg.Threshold {
+		cfg.Logger.Error("guardrail.circuit_trip", "reason", "rate", "subject", subject,
+			"count", count, "window", cfg.Window.String())
+		if cfg.OnTrip != nil {
+			cfg.OnTrip(fmt.Sprintf("circuit breaker: %d sensitive calls within %s", count, cfg.Window))
+		}
+		return blockedResult(fmt.Sprintf("too many sensitive actions (%d within %s)", count, cfg.Window))
+	}
+	return nil
 }
 
 func toolNameArgs(req mcp.Request) (name, args string) {

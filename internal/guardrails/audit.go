@@ -1,12 +1,14 @@
 package guardrails
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -193,14 +195,20 @@ func VerifyChain(entries []AuditEntry) error {
 	return nil
 }
 
-// Middleware records every tools/call in the audit chain. It logs the tool name
-// and a SHA-256 digest of the raw arguments — never the raw arguments
-// themselves, which may carry secrets. It always calls next (audit never
-// blocks; blocking is the circuit breaker's job).
+// Middleware records every invocation that can move data in the audit chain:
+// tools/call, resources/read and prompts/get.
+//
+// Resources and prompts are audited for the same reason tools are — a resource
+// read returns desktop or system state to the caller, so it is a data-egress path
+// and an unaudited one would be a hole in the chain. Arguments are recorded as a
+// SHA-256 digest, never raw, since they may carry secrets.
+//
+// It always calls next: audit never blocks, blocking is the circuit breaker's job.
 func (a *AuditLog) Middleware() mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			if method == "tools/call" {
+			switch method {
+			case "tools/call":
 				if p, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok {
 					_, _ = a.Append("tool.call", map[string]any{
 						"tool":        p.Name,
@@ -208,10 +216,42 @@ func (a *AuditLog) Middleware() mcp.Middleware {
 						"args_len":    len(p.Arguments),
 					})
 				}
+			case "resources/read":
+				if p, ok := req.GetParams().(*mcp.ReadResourceParams); ok {
+					_, _ = a.Append("resource.read", map[string]any{"uri": p.URI})
+				}
+			case "prompts/get":
+				if p, ok := req.GetParams().(*mcp.GetPromptParams); ok {
+					_, _ = a.Append("prompt.get", map[string]any{
+						"prompt":      p.Name,
+						"args_sha256": digestBytes(promptArgsBytes(p.Arguments)),
+					})
+				}
 			}
 			return next(ctx, method, req)
 		}
 	}
+}
+
+// promptArgsBytes renders prompt arguments deterministically for digesting. Keys
+// are sorted so the same arguments always produce the same digest.
+func promptArgsBytes(args map[string]string) []byte {
+	if len(args) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b bytes.Buffer
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(args[k])
+		b.WriteByte('\n')
+	}
+	return b.Bytes()
 }
 
 func digestBytes(b []byte) string {

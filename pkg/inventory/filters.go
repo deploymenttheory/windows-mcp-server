@@ -64,6 +64,13 @@ func sortTools(tools []ServerTool) {
 	)
 }
 
+// sortResources orders fixed-URI resources deterministically by toolset then name.
+func sortResources(resources []ServerResource) {
+	sortByToolsetThenName(resources,
+		func(r ServerResource) ToolsetID { return r.Toolset.ID },
+		func(r ServerResource) string { return r.Resource.Name })
+}
+
 func sortResourceTemplates(rts []ServerResourceTemplate) {
 	sortByToolsetThenName(rts,
 		func(r ServerResourceTemplate) ToolsetID { return r.Toolset.ID },

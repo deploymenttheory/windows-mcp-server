@@ -66,5 +66,8 @@ func AllTools() []inventory.ServerTool {
 // NewInventory builds an inventory Builder seeded with the full tool manifest.
 // Callers apply persona/toolset/read-only configuration and call Build.
 func NewInventory() *inventory.Builder {
-	return inventory.NewBuilder().SetTools(AllTools())
+	return inventory.NewBuilder().
+		SetTools(AllTools()).
+		SetFixedResources(AllResources()).
+		SetPrompts(AllPrompts())
 }

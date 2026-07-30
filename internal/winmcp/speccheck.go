@@ -51,13 +51,14 @@ func CaptureSurface(ctx context.Context, cfg Config) (mcpspec.Input, error) {
 		Title:   "Windows MCP Server",
 		Version: cfg.Version,
 	}, &mcp.ServerOptions{
-		Instructions: combineInstructions(personaInstructions, inv.Instructions()),
-		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
+		Instructions:      combineInstructions(personaInstructions, inv.Instructions()),
+		Capabilities:      pinnedCapabilities(),
+		CompletionHandler: completionHandler(inv),
 	})
 
 	deps := windows.NewBaseDeps(nil, logger, nil)
 	server.AddReceivingMiddleware(windows.InjectDepsMiddleware(deps))
-	inv.RegisterTools(ctx, server, deps)
+	inv.RegisterAll(ctx, server, deps)
 
 	// The two guardrail tools are registered unconditionally by RunStdio, so they
 	// are part of the served manifest and must be scored too.
@@ -74,7 +75,12 @@ func CaptureSurface(ctx context.Context, cfg Config) (mcpspec.Input, error) {
 	ctx, cancel := context.WithTimeout(ctx, captureTimeout)
 	defer cancel()
 
-	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverTransport, rawClientTransport := mcp.NewInMemoryTransports()
+	// Record the client side of the wire so the handshake can be validated as the
+	// server actually sent it, not as the SDK normalizes it for legacy callers.
+	frames := newFrameLog()
+	clientTransport := &recordingTransport{inner: rawClientTransport, frames: frames}
+
 	ss, err := server.Connect(ctx, serverTransport, nil)
 	if err != nil {
 		return in, fmt.Errorf("connect server: %w", err)
@@ -98,7 +104,16 @@ func CaptureSurface(ctx context.Context, cfg Config) (mcpspec.Input, error) {
 		return in, fmt.Errorf("list tools: %w", err)
 	}
 
-	if in.HandshakeResult, err = json.Marshal(initResult); err != nil {
+	// Prefer the recorded wire result. On 2026-07-28 the handshake is
+	// server/discover, whose result carries resultType/cacheScope/ttlMs/
+	// supportedVersions; ClientSession.InitializeResult() is a synthesized legacy
+	// view without them, so validating it would misreport the server. Fall back to
+	// the synthesized view only for older revisions that really do use initialize.
+	if raw, ok := frames.ResultFor(methodDiscover); ok {
+		in.HandshakeResult = raw
+	} else if raw, ok := frames.ResultFor(methodInitialize); ok {
+		in.HandshakeResult = raw
+	} else if in.HandshakeResult, err = json.Marshal(initResult); err != nil {
 		return in, fmt.Errorf("marshal handshake result: %w", err)
 	}
 	if initResult.Capabilities != nil {
@@ -137,6 +152,19 @@ func declaredCapabilities(raw json.RawMessage) []string {
 	return out
 }
 
+// Protocol method names used for wire-frame lookup and unconditional coverage.
+const (
+	methodDiscover            = "server/discover"
+	methodInitialize          = "initialize"
+	methodSubscriptionsListen = "subscriptions/listen"
+)
+
+// alwaysServedMethods are registered in the SDK's server dispatch table
+// unconditionally, with no capability gate — so they are implemented regardless of
+// what the server advertises. Deriving the method surface purely from declared
+// capabilities under-reports them.
+var alwaysServedMethods = []string{methodDiscover, methodSubscriptionsListen}
+
 // capabilityMethods maps a declared server capability to the JSON-RPC methods it
 // obliges the server to serve. Used to derive the implemented method surface from
 // the advertised capabilities, so adding a capability updates the score without a
@@ -151,6 +179,10 @@ var capabilityMethods = map[string][]string{
 func implementedMethods(capabilities []string) []string {
 	seen := map[string]bool{}
 	var out []string
+	for _, m := range alwaysServedMethods {
+		seen[m] = true
+		out = append(out, m)
+	}
 	for _, c := range capabilities {
 		for _, m := range capabilityMethods[c] {
 			if !seen[m] {

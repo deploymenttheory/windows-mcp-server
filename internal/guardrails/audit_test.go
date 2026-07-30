@@ -108,3 +108,61 @@ func containsSubstr(s, sub string) bool {
 		return false
 	})()
 }
+
+// TestAuditCoversResourceAndPromptReads is the guard on the data-egress paths
+// added alongside prompts and resources. A resource read returns desktop or
+// system state to the caller; leaving it out of the hash chain would be a hole in
+// the audit trail.
+func TestAuditCoversResourceAndPromptReads(t *testing.T) {
+	sink := &memSink{}
+	log := NewAuditLog(sink)
+	mw := log.Middleware()
+	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		return &mcp.CallToolResult{}, nil
+	}
+
+	readReq := &mcp.ReadResourceRequest{Params: &mcp.ReadResourceParams{URI: "windows://desktop/snapshot"}}
+	if _, err := mw(next)(context.Background(), "resources/read", readReq); err != nil {
+		t.Fatal(err)
+	}
+	promptReq := &mcp.GetPromptRequest{Params: &mcp.GetPromptParams{
+		Name:      "rpa-journey",
+		Arguments: map[string]string{"goal": "sign in"},
+	}}
+	if _, err := mw(next)(context.Background(), "prompts/get", promptReq); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sink.entries) != 2 {
+		t.Fatalf("want 2 audit entries, got %d", len(sink.entries))
+	}
+	if sink.entries[0].Event != "resource.read" {
+		t.Errorf("entry 0 event = %q, want resource.read", sink.entries[0].Event)
+	}
+	if !containsSubstr(string(sink.entries[0].Payload), "windows://desktop/snapshot") {
+		t.Errorf("resource audit should record the URI: %s", sink.entries[0].Payload)
+	}
+	if sink.entries[1].Event != "prompt.get" {
+		t.Errorf("entry 1 event = %q, want prompt.get", sink.entries[1].Event)
+	}
+	// Prompt arguments are digested, never recorded raw.
+	if containsSubstr(string(sink.entries[1].Payload), "sign in") {
+		t.Errorf("prompt arguments leaked into the audit payload: %s", sink.entries[1].Payload)
+	}
+	if !containsSubstr(string(sink.entries[1].Payload), "args_sha256") {
+		t.Errorf("prompt audit should carry an argument digest: %s", sink.entries[1].Payload)
+	}
+	if err := VerifyChain(sink.entries); err != nil {
+		t.Errorf("chain must remain verifiable: %v", err)
+	}
+}
+
+// TestPromptArgsDigestIsDeterministic ensures map iteration order cannot change
+// the digest, which would make the audit trail non-reproducible.
+func TestPromptArgsDigestIsDeterministic(t *testing.T) {
+	a := promptArgsBytes(map[string]string{"z": "1", "a": "2", "m": "3"})
+	b := promptArgsBytes(map[string]string{"m": "3", "z": "1", "a": "2"})
+	if string(a) != string(b) {
+		t.Errorf("digest input depends on map order:\n%q\n%q", a, b)
+	}
+}

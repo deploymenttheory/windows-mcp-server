@@ -160,6 +160,34 @@ The typical loop: call **`Snapshot`** to get the foreground window and a labeled
 tree of interactive elements, then act on a label with **`Click`**, **`Type`**,
 or **`Scroll`**. Take a fresh `Snapshot` after the UI changes.
 
+### Resources and prompts
+
+Alongside tools the server exposes read-only **resources** and workflow
+**prompts**:
+
+| Resource URI | Contents |
+|---|---|
+| `windows://desktop/snapshot` | The most recent `Snapshot` — reading it does *not* capture a new one |
+| `windows://desktop/displays` | Connected displays: bounds, work area, DPI, scale |
+| `windows://session/recording` | Session-recording status, paths, frame count |
+| `windows://system/info` | OS, hardware, memory and disk inventory |
+
+| Prompt | Purpose |
+|---|---|
+| `rpa-journey` | Drive a scripted end-user journey, verifying each step |
+| `triage-support-issue` | Diagnose a reported problem, gathering state before acting |
+| `capture-evidence` | Record reproducible evidence for a test or support case |
+
+Prompts build their text from the matching persona's instructions rather than
+restating it, so `--persona` and the prompts cannot drift apart. Argument values
+are completable via `completion/complete` (persona, toolset, tool, app and
+credential *names* — never secrets).
+
+Resources and prompts are covered by the same guardrails as tools: `resources/read`
+and `prompts/get` are written to the hash-chained audit log, `resources/read` is
+rate-limited by the circuit breaker, and both manifests are fingerprinted for
+rug-pull detection.
+
 ## Personas
 
 Personas are curated tooling collections: each selects a toolset combination
@@ -398,12 +426,25 @@ capabilities, `tools/list` — against the official JSON Schemas vendored under
 ./windows-mcp-server.exe spec-check --fail-under 80       # exit 2 below threshold
 ```
 
-Scoring is weighted across tool-definition conformance (40), `tools/list`
-conformance (15), server-method coverage (15), handshake conformance (10),
-capability conformance (10), and revision currency (10). A dimension the revision
-does not define is *skipped* and drops out of the denominator, rather than
-scoring zero — revisions restructure, and `2026-07-28` removes `initialize`
-entirely in favour of `server/discover`.
+The report separates two things that are easy to conflate:
+
+- **Conformance** — does everything the server serves validate against the spec?
+  Weighted across tool definitions (45), `tools/list` (20), the handshake (15),
+  capabilities (10) and revision currency (10). This is the gateable number:
+  `--fail-under 100`.
+- **Coverage** — how much of the optional feature surface exists at all. Purely
+  informational, because MCP does not require a server to implement prompts,
+  resources or completions; a tools-only server is fully conformant. Gate it
+  separately with `--fail-coverage-under` if you want to.
+
+A dimension the revision does not define is *skipped* and drops out of the
+denominator rather than scoring zero — revisions restructure, and `2026-07-28`
+removes `initialize` entirely in favour of `server/discover`. The handshake is
+also skipped when scoring a revision other than the one the session negotiated,
+since its shape is decided by that negotiation.
+
+Current state: **conformance 100/100 against every vendored revision, zero
+findings**, and 100% method coverage on `2026-07-28`.
 
 `.github/workflows/mcp-spec-compliance.yml` runs weekly: it syncs new revisions
 from upstream, rescores, raises a PR for the vendored schema, and opens a tracking
