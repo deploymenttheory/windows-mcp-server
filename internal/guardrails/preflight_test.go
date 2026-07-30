@@ -18,7 +18,10 @@ func TestLoggedOnAccount(t *testing.T) {
 	env := func(user, pattern string) *Env {
 		return &Env{Sys: fakeProbe{rc: RunContext{User: user}}, Arg: pattern}
 	}
-	if got := checkLoggedOnAccount(context.Background(), env("CONTOSO\\svc-rpa01", `^CONTOSO\\svc-rpa\d+$`)); got.Status != Pass {
+	if got := checkLoggedOnAccount(
+		context.Background(),
+		env("CONTOSO\\svc-rpa01", `^CONTOSO\\svc-rpa\d+$`),
+	); got.Status != Pass {
 		t.Errorf("matching user should pass, got %s (%s)", got.Status, got.Detail)
 	}
 	if got := checkLoggedOnAccount(context.Background(), env("Dafydd", `^svc-`)); got.Status != Fail {

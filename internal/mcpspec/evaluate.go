@@ -107,7 +107,12 @@ type toolsListPayload struct {
 // definition. This is the heaviest dimension: it is where the project's own
 // hand-written InputSchemas and annotations are actually checked.
 func toolSchemaDimension(spec *Spec, in Input, r *Report) Dimension {
-	d := Dimension{ID: "tool-schema", Kind: KindConformance, Title: "Tool definitions conform", Weight: weightToolSchema}
+	d := Dimension{
+		ID:     "tool-schema",
+		Kind:   KindConformance,
+		Title:  "Tool definitions conform",
+		Weight: weightToolSchema,
+	}
 
 	if !spec.Has("Tool") {
 		d.Skipped, d.SkipReason = true, "revision does not define Tool"
@@ -201,7 +206,12 @@ func singleInstanceDimension(spec *Spec, r *Report, ds dimSpec) Dimension {
 // methodSurfaceDimension scores how much of the revision's server-side method
 // surface this server implements, derived from the ClientRequest union.
 func methodSurfaceDimension(r *Report) Dimension {
-	d := Dimension{ID: "method-surface", Kind: KindCoverage, Title: "Server method coverage", Weight: weightMethodSurface}
+	d := Dimension{
+		ID:     "method-surface",
+		Kind:   KindCoverage,
+		Title:  "Server method coverage",
+		Weight: weightMethodSurface,
+	}
 	s := r.MethodSurface
 	if len(s.Defined) == 0 {
 		d.Skipped, d.SkipReason = true, "revision defines no ClientRequest union"
@@ -216,7 +226,12 @@ func methodSurfaceDimension(r *Report) Dimension {
 // revision behind halves the score, so falling further behind keeps costing but
 // never dominates the total.
 func currencyDimension(r *Report) Dimension {
-	d := Dimension{ID: "protocol-currency", Kind: KindConformance, Title: "Protocol revision currency", Weight: weightCurrency}
+	d := Dimension{
+		ID:     "protocol-currency",
+		Kind:   KindConformance,
+		Title:  "Protocol revision currency",
+		Weight: weightCurrency,
+	}
 
 	switch {
 	case r.NegotiatedVersion == "":

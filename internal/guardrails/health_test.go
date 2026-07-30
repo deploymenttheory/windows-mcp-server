@@ -30,10 +30,16 @@ func run(check CheckFunc, h HealthProbe) Result {
 }
 
 func TestSecureBootStates(t *testing.T) {
-	if got := run(checkSecureBoot, fakeHealth{sb: SecureBootState{Supported: true, Enabled: true}}); got.Status != Pass {
+	if got := run(
+		checkSecureBoot,
+		fakeHealth{sb: SecureBootState{Supported: true, Enabled: true}},
+	); got.Status != Pass {
 		t.Errorf("enabled: got %s", got.Status)
 	}
-	if got := run(checkSecureBoot, fakeHealth{sb: SecureBootState{Supported: true, Enabled: false}}); got.Status != Fail {
+	if got := run(
+		checkSecureBoot,
+		fakeHealth{sb: SecureBootState{Supported: true, Enabled: false}},
+	); got.Status != Fail {
 		t.Errorf("disabled: got %s", got.Status)
 	}
 	if got := run(checkSecureBoot, fakeHealth{sb: SecureBootState{Supported: false}}); got.Status != Fail {
@@ -58,7 +64,10 @@ func TestTPMChecks(t *testing.T) {
 	if got := run(checkTPMAttestationCapable, ready); got.Status != Pass {
 		t.Errorf("attestation-capable: got %s", got.Status)
 	}
-	if got := run(checkTPMAttestationCapable, fakeHealth{tpm: TPMState{Present: true, VulnerableFirmware: true}}); got.Status != Fail {
+	if got := run(
+		checkTPMAttestationCapable,
+		fakeHealth{tpm: TPMState{Present: true, VulnerableFirmware: true}},
+	); got.Status != Fail {
 		t.Errorf("vulnerable firmware should Fail, got %s", got.Status)
 	}
 }
@@ -77,10 +86,16 @@ func TestDeviceGuardChecks(t *testing.T) {
 }
 
 func TestBitLockerChecks(t *testing.T) {
-	if got := run(checkBitLocker, fakeHealth{bl: []BitLockerVolume{{Mount: "C:", Protected: true}}}); got.Status != Pass {
+	if got := run(
+		checkBitLocker,
+		fakeHealth{bl: []BitLockerVolume{{Mount: "C:", Protected: true}}},
+	); got.Status != Pass {
 		t.Errorf("protected: got %s", got.Status)
 	}
-	if got := run(checkBitLocker, fakeHealth{bl: []BitLockerVolume{{Mount: "C:", Protected: true}, {Mount: "D:", Protected: false}}}); got.Status != Fail {
+	if got := run(
+		checkBitLocker,
+		fakeHealth{bl: []BitLockerVolume{{Mount: "C:", Protected: true}, {Mount: "D:", Protected: false}}},
+	); got.Status != Fail {
 		t.Errorf("one unprotected should Fail, got %s", got.Status)
 	}
 	if got := run(checkBitLocker, fakeHealth{blErr: errors.New("requires elevation")}); got.Status != Error {

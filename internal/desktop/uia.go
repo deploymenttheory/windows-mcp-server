@@ -32,7 +32,13 @@ type uiaClient struct {
 // after COM has been initialized.
 func newUIAClient() (*uiaClient, error) {
 	var unk *win32.IUnknown
-	err := com.CoCreateInstance(&clsidCUIAutomation, nil, com.CLSCTX_INPROC_SERVER, &accessibility.IID_IUIAutomation, &unk)
+	err := com.CoCreateInstance(
+		&clsidCUIAutomation,
+		nil,
+		com.CLSCTX_INPROC_SERVER,
+		&accessibility.IID_IUIAutomation,
+		&unk,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("CoCreateInstance(CUIAutomation): %w", err)
 	}

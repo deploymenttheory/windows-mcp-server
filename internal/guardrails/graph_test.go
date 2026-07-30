@@ -57,7 +57,15 @@ func envWithDevice(id string) *Env {
 }
 
 func TestGraphEntraCompliant(t *testing.T) {
-	stub := &graphStub{entra: &entraDevice{DeviceID: "abc", DisplayName: "PC1", IsCompliant: true, AccountEnabled: true, TrustType: "AzureAd"}}
+	stub := &graphStub{
+		entra: &entraDevice{
+			DeviceID:       "abc",
+			DisplayName:    "PC1",
+			IsCompliant:    true,
+			AccountEnabled: true,
+			TrustType:      "AzureAd",
+		},
+	}
 	c := graphClientFor(stub.server(t))
 	if got := c.checkEntraCompliant(context.Background(), envWithDevice("abc")); got.Status != Pass {
 		t.Errorf("compliant device: got %s (%s)", got.Status, got.Detail)
@@ -79,7 +87,15 @@ func TestGraphEntraNotFound(t *testing.T) {
 }
 
 func TestGraphIntuneComplianceAndEnrollment(t *testing.T) {
-	stub := &graphStub{intune: &intuneDevice{AzureADDeviceID: "abc", DeviceName: "PC1", ComplianceState: "compliant", ManagementState: "managed", DeviceEnrollmentType: "azureADJoin"}}
+	stub := &graphStub{
+		intune: &intuneDevice{
+			AzureADDeviceID:      "abc",
+			DeviceName:           "PC1",
+			ComplianceState:      "compliant",
+			ManagementState:      "managed",
+			DeviceEnrollmentType: "azureADJoin",
+		},
+	}
 	c := graphClientFor(stub.server(t))
 	if got := c.checkIntuneEnrolled(context.Background(), envWithDevice("abc")); got.Status != Pass {
 		t.Errorf("enrolled: got %s (%s)", got.Status, got.Detail)
@@ -94,7 +110,12 @@ func TestGraphIntuneComplianceAndEnrollment(t *testing.T) {
 }
 
 func TestGraphAttestation(t *testing.T) {
-	stub := &graphStub{intune: &intuneDevice{AzureADDeviceID: "abc", DeviceHealthAttestation: &healthAttestation{SecureBoot: "Enabled", BitLockerStatus: "Enabled"}}}
+	stub := &graphStub{
+		intune: &intuneDevice{
+			AzureADDeviceID:         "abc",
+			DeviceHealthAttestation: &healthAttestation{SecureBoot: "Enabled", BitLockerStatus: "Enabled"},
+		},
+	}
 	c := graphClientFor(stub.server(t))
 	if got := c.checkAttested(context.Background(), envWithDevice("abc")); got.Status != Pass {
 		t.Errorf("healthy attestation: got %s (%s)", got.Status, got.Detail)

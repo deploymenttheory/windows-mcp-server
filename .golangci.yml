@@ -170,6 +170,14 @@ formatters:
 
   # Per‐formatter settings (optional—only if you need to tweak defaults)
   settings:
+    # The line limit this project has always documented — in the comment above,
+    # and in CLAUDE.md ("golines (~120 cols)"). It was never actually set, so
+    # golines ran at its 100-column default and reported 37 files that were
+    # within the stated limit. Declaring it makes the tool agree with the
+    # convention; the genuine over-120 lines are wrapped in this same change.
+    golines:
+      max-len: 120
+
     gci:
       # customize your import sections order: standard, external, project
       sections:

@@ -17,6 +17,7 @@ func (f *fakeActuator) IsolateNetwork() (func() error, error) {
 	f.calls = append(f.calls, "isolate")
 	return func() error { f.calls = append(f.calls, "restore"); return nil }, nil
 }
+
 func (f *fakeActuator) KillProcesses(names []string) []error {
 	f.calls = append(f.calls, "kill:"+strings.Join(names, ","))
 	return nil
@@ -155,6 +156,7 @@ func contains(s []string, v string) bool {
 	}
 	return false
 }
+
 func containsPrefix(s []string, p string) bool {
 	for _, x := range s {
 		if strings.HasPrefix(x, p) {
@@ -163,6 +165,7 @@ func containsPrefix(s []string, p string) bool {
 	}
 	return false
 }
+
 func idx(s []string, v string) int {
 	for i, x := range s {
 		if x == v {
@@ -171,6 +174,7 @@ func idx(s []string, v string) int {
 	}
 	return -1
 }
+
 func filterActs(calls []string) []string {
 	var out []string
 	for _, c := range calls {

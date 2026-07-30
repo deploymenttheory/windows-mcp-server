@@ -92,7 +92,13 @@ func firewallIsolate() (func() error, error) {
 // initialized thread (use withCOMThread) and call release when done.
 func newFwPolicy() (*windowsfirewall.INetFwPolicy2, func(), error) {
 	var unk *win32.IUnknown
-	if err := com.CoCreateInstance(&clsidNetFwPolicy2, nil, com.CLSCTX_INPROC_SERVER, &windowsfirewall.IID_INetFwPolicy2, &unk); err != nil {
+	if err := com.CoCreateInstance(
+		&clsidNetFwPolicy2,
+		nil,
+		com.CLSCTX_INPROC_SERVER,
+		&windowsfirewall.IID_INetFwPolicy2,
+		&unk,
+	); err != nil {
 		return nil, nil, fmt.Errorf("CoCreateInstance(NetFwPolicy2): %w", err)
 	}
 	if unk == nil {

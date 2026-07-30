@@ -69,7 +69,10 @@ func TestCircuitBreakerTripwire(t *testing.T) {
 		Enabled: true,
 		OnTrip:  func(string) { atomic.AddInt32(&tripped, 1) },
 	})
-	res, reached := runMiddleware(mw, callReq("PowerShell", `{"command":"Set-MpPreference -DisableRealtimeMonitoring $true"}`))
+	res, reached := runMiddleware(
+		mw,
+		callReq("PowerShell", `{"command":"Set-MpPreference -DisableRealtimeMonitoring $true"}`),
+	)
 	if reached || !res.IsError {
 		t.Error("tripwire (disable Defender) should be blocked immediately")
 	}

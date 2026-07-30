@@ -127,7 +127,10 @@ func (e *KillExecutor) OnTrip(reason string) {
 	if e.cfg.KillProcs {
 		if elevated && e.act != nil {
 			errs := e.act.KillProcesses(e.cfg.ProcNames)
-			e.audit.append("killaction.done", map[string]any{"action": "kill-procs", "targets": e.cfg.ProcNames, "errors": len(errs)})
+			e.audit.append(
+				"killaction.done",
+				map[string]any{"action": "kill-procs", "targets": e.cfg.ProcNames, "errors": len(errs)},
+			)
 		} else {
 			e.audit.append("killaction.skip", map[string]any{"action": "kill-procs", "why": "not elevated"})
 		}

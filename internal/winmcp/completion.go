@@ -28,7 +28,9 @@ const maxCompletions = 100
 //
 // The SDK validates that Ref and Argument.Name are present before dispatch, so
 // this handler can assume both.
-func completionHandler(inv *inventory.Inventory) func(context.Context, *mcp.CompleteRequest) (*mcp.CompleteResult, error) {
+func completionHandler(
+	inv *inventory.Inventory,
+) func(context.Context, *mcp.CompleteRequest) (*mcp.CompleteResult, error) {
 	return func(ctx context.Context, req *mcp.CompleteRequest) (*mcp.CompleteResult, error) {
 		var values []string
 

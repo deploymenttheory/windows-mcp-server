@@ -161,10 +161,19 @@ func (p *systemProbe) PlatformAttestation(nonce []byte) (*guardrails.Attestation
 		if qsize, cerr := tpmPlatformClaim(nonce); cerr == nil {
 			att.Verified = true
 			att.QuoteSize = qsize
-			att.Detail = fmt.Sprintf("nonce-bound TPM platform quote created and verified (%d-byte claim, %d PCR banks)", qsize, banks)
+			att.Detail = fmt.Sprintf(
+				"nonce-bound TPM platform quote created and verified (%d-byte claim, %d PCR banks)",
+				qsize,
+				banks,
+			)
 			return att, nil
 		} else {
-			att.Detail = fmt.Sprintf("measured-boot log at source (%d bytes, %d PCR banks); signed quote attempt failed: %v", len(log), banks, cerr)
+			att.Detail = fmt.Sprintf(
+				"measured-boot log at source (%d bytes, %d PCR banks); signed quote attempt failed: %v",
+				len(log),
+				banks,
+				cerr,
+			)
 			return att, nil
 		}
 	}

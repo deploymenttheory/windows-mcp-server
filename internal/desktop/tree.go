@@ -93,7 +93,10 @@ func (tb *treeBuilder) visit(el *accessibility.IUIAutomationElement, depth int) 
 		tb.interactive = append(tb.interactive, LabeledElement{
 			Label: label, Info: info, CenterX: cx, CenterY: cy, element: el,
 		})
-		tb.lines = append(tb.lines, fmt.Sprintf("%s[%d] %s %q (%d,%d)", indent, label, info.ControlType, info.Name, cx, cy))
+		tb.lines = append(
+			tb.lines,
+			fmt.Sprintf("%s[%d] %s %q (%d,%d)", indent, label, info.ControlType, info.Name, cx, cy),
+		)
 	case info.Name != "":
 		// Informative/structural node with a name: include for context.
 		tb.lines = append(tb.lines, fmt.Sprintf("%s%s %q", indent, info.ControlType, info.Name))
