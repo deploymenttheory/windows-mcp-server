@@ -167,9 +167,10 @@ func (d *Desktop) WriteCredential(spec CredentialSpec) error {
 	}
 
 	cred := credentials.CREDENTIALW{
-		Type:               credType,
-		TargetName:         foundation.PWSTR(win32.UTF16Ptr(spec.Target)),
-		CredentialBlobSize: uint32(len(blob)),
+		Type:       credType,
+		TargetName: foundation.PWSTR(win32.UTF16Ptr(spec.Target)),
+		// Bounded by the credMaxBlobSize check above.
+		CredentialBlobSize: uint32(len(blob)), //nolint:gosec // bounded above
 		CredentialBlob:     &blob[0],
 		Persist:            persist,
 	}
@@ -296,8 +297,9 @@ func utf16Bytes(secret []byte) []byte {
 	units := utf16.Encode([]rune(string(secret)))
 	out := make([]byte, len(units)*2)
 	for i, u := range units {
-		out[i*2] = byte(u)
-		out[i*2+1] = byte(u >> 8)
+		// Truncation is the operation: low byte then high byte, little-endian.
+		out[i*2] = byte(u)        //nolint:gosec // deliberate UTF-16LE split
+		out[i*2+1] = byte(u >> 8) //nolint:gosec // deliberate UTF-16LE split
 	}
 	return out
 }

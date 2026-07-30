@@ -18,13 +18,19 @@ import (
 // Screenshot. Returns the image, its dimensions, and the downscale denominator
 // (1 = none).
 func captureScreen(maxWidth int) (img *image.RGBA, ew, eh, denom int, err error) {
-	vx := int(wm.GetSystemMetrics(wm.SM_XVIRTUALSCREEN))
-	vy := int(wm.GetSystemMetrics(wm.SM_YVIRTUALSCREEN))
-	vw := int(wm.GetSystemMetrics(wm.SM_CXVIRTUALSCREEN))
-	vh := int(wm.GetSystemMetrics(wm.SM_CYVIRTUALSCREEN))
+	// The virtual-screen metrics are kept in the int32 GetSystemMetrics returns
+	// and handed to GDI unchanged. Widening them to int and narrowing back for
+	// every call was a round-trip that could not lose information but did have to
+	// be justified at nine separate conversions.
+	vx := wm.GetSystemMetrics(wm.SM_XVIRTUALSCREEN)
+	vy := wm.GetSystemMetrics(wm.SM_YVIRTUALSCREEN)
+	vw := wm.GetSystemMetrics(wm.SM_CXVIRTUALSCREEN)
+	vh := wm.GetSystemMetrics(wm.SM_CYVIRTUALSCREEN)
 	if vw <= 0 || vh <= 0 {
 		return nil, 0, 0, 0, fmt.Errorf("invalid virtual screen size %dx%d", vw, vh)
 	}
+	// Widening for the pixel arithmetic below is always lossless.
+	width, height := int(vw), int(vh)
 
 	screenDC := gdi.GetDC(0)
 	if screenDC == 0 {
@@ -38,23 +44,23 @@ func captureScreen(maxWidth int) (img *image.RGBA, ew, eh, denom int, err error)
 	}
 	defer gdi.DeleteDC(memDC)
 
-	bitmap := gdi.CreateCompatibleBitmap(screenDC, int32(vw), int32(vh))
+	bitmap := gdi.CreateCompatibleBitmap(screenDC, vw, vh)
 	if bitmap == 0 {
 		return nil, 0, 0, 0, fmt.Errorf("CreateCompatibleBitmap failed")
 	}
 	defer gdi.DeleteObject(gdi.HGDIOBJ(bitmap))
 	gdi.SelectObject(memDC, gdi.HGDIOBJ(bitmap))
 
-	if err := gdi.BitBlt(memDC, 0, 0, int32(vw), int32(vh), screenDC, int32(vx), int32(vy), gdi.SRCCOPY); err != nil {
+	if err := gdi.BitBlt(memDC, 0, 0, vw, vh, screenDC, vx, vy, gdi.SRCCOPY); err != nil {
 		return nil, 0, 0, 0, fmt.Errorf("BitBlt: %w", err)
 	}
 
-	buf := make([]byte, vw*vh*4)
+	buf := make([]byte, width*height*4)
 	bi := gdi.BITMAPINFO{
 		BmiHeader: gdi.BITMAPINFOHEADER{
 			BiSize:        uint32(unsafe.Sizeof(gdi.BITMAPINFOHEADER{})),
-			BiWidth:       int32(vw),
-			BiHeight:      -int32(vh), // top-down
+			BiWidth:       vw,
+			BiHeight:      -vh, // top-down
 			BiPlanes:      1,
 			BiBitCount:    32,
 			BiCompression: 0, // BI_RGB
@@ -64,7 +70,7 @@ func captureScreen(maxWidth int) (img *image.RGBA, ew, eh, denom int, err error)
 		return nil, 0, 0, 0, fmt.Errorf("GetDIBits returned 0 scanlines")
 	}
 
-	img, ew, eh, denom = bgraToRGBA(buf, vw, vh, maxWidth)
+	img, ew, eh, denom = bgraToRGBA(buf, width, height, maxWidth)
 	return img, ew, eh, denom, nil
 }
 

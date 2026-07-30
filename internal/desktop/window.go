@@ -72,8 +72,9 @@ func getWindowText(hwnd foundation.HWND) string {
 	if err != nil || n <= 0 {
 		return ""
 	}
-	buf := make([]uint16, n+1)
-	got, err := wm.GetWindowText(hwnd, foundation.PWSTR(&buf[0]), int32(len(buf)))
+	capacity := n + 1 // int32, matching both make and the API's nMaxCount
+	buf := make([]uint16, capacity)
+	got, err := wm.GetWindowText(hwnd, foundation.PWSTR(&buf[0]), capacity)
 	if err != nil || got <= 0 {
 		return ""
 	}
@@ -82,8 +83,9 @@ func getWindowText(hwnd foundation.HWND) string {
 
 // getClassName returns a window's class name.
 func getClassName(hwnd foundation.HWND) string {
-	buf := make([]uint16, 256)
-	got, err := wm.GetClassName(hwnd, foundation.PWSTR(&buf[0]), int32(len(buf)))
+	const capacity = 256 // WNDCLASS names are capped well below this
+	buf := make([]uint16, capacity)
+	got, err := wm.GetClassName(hwnd, foundation.PWSTR(&buf[0]), capacity)
 	if err != nil || got <= 0 {
 		return ""
 	}

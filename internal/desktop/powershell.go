@@ -30,7 +30,9 @@ func encodePowerShellCommand(command string) string {
 	units := utf16.Encode([]rune(command))
 	buf := make([]byte, 0, len(units)*2)
 	for _, u := range units {
-		buf = append(buf, byte(u), byte(u>>8))
+		// Truncation is the operation: each UTF-16 code unit is emitted as its
+		// low then high byte (little-endian), which is what -EncodedCommand wants.
+		buf = append(buf, byte(u), byte(u>>8)) //nolint:gosec // deliberate UTF-16LE split
 	}
 	return base64.StdEncoding.EncodeToString(buf)
 }
