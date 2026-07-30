@@ -4,7 +4,9 @@ package desktop
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"math"
 	"os"
 )
 
@@ -39,6 +41,12 @@ const (
 	aviMoviSizePos    = 216
 	aviMoviFourccPos  = 220 // position of the 'movi' FOURCC
 	aviHeaderSize     = 224 // frame data begins here
+
+	// Sizes used to project whether another frame still fits under the format's
+	// uint32 ceiling (see fits).
+	aviFrameHeaderSize = 8  // '00dc' FOURCC + payload length
+	aviIndexHeaderSize = 8  // 'idx1' FOURCC + chunk length
+	aviIndexEntrySize  = 16 // FOURCC + flags + offset + size
 )
 
 func newAVIWriter(path string, w, h, fps int) (*aviWriter, error) {
@@ -143,8 +151,37 @@ func (a *aviWriter) writeHeader() error {
 	return err
 }
 
+// ErrAVISizeLimit reports that appending another frame would exceed what AVI 1.0
+// can address. Callers should stop recording and finalize; the file written so
+// far stays valid.
+var ErrAVISizeLimit = errors.New("avi: 4 GiB format limit reached")
+
+// fits reports whether a frame of jpegLen bytes can still be addressed.
+//
+// Every size in the AVI 1.0 container is a uint32: the RIFF size, the movi size,
+// and each idx1 entry's offset. Past 4 GiB those silently wrapped and the file
+// was corrupt with no error — which matters here because recording is
+// force-enabled by --security and this MJPEG writer is the fallback whenever
+// ffmpeg is absent, so it was the forensic artifact of a secured session. The
+// format itself is the limit (OpenDML/AVI 2.0 exists precisely to lift it), so
+// the fix is to stop cleanly rather than widen a field.
+func (a *aviWriter) fits(jpegLen int) bool {
+	movie := a.movieBytes + aviFrameHeaderSize + jpegLen
+	if jpegLen%2 == 1 {
+		movie++ // word-alignment pad
+	}
+	// idx1 chunk: 8-byte header plus one 16-byte entry per frame, this one included.
+	index := aviIndexHeaderSize + aviIndexEntrySize*(a.count+1)
+	total := aviHeaderSize + movie + index
+	// The RIFF size field stores total-8, so that is the value that must fit.
+	return total-8 <= math.MaxUint32
+}
+
 // writeFrame appends one JPEG frame.
 func (a *aviWriter) writeFrame(jpeg []byte) error {
+	if !a.fits(len(jpeg)) {
+		return ErrAVISizeLimit
+	}
 	chunkOffset := uint32(aviHeaderSize + a.movieBytes - aviMoviFourccPos)
 
 	var hdr [8]byte

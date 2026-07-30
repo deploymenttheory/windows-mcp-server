@@ -106,7 +106,21 @@ func (d *Desktop) ResizeWindow(titleSubstr string, x, y, width, height int) (Win
 		if wm.IsIconic(hwnd) {
 			wm.ShowWindow(hwnd, wm.SW_RESTORE)
 		}
-		if err := wm.MoveWindow(hwnd, int32(x), int32(y), int32(width), int32(height), true); err != nil {
+		// Geometry comes from tool arguments; validate before narrowing so an
+		// out-of-range value fails rather than wrapping into a plausible one.
+		ix, iy, err := screenPoint(x, y)
+		if err != nil {
+			return err
+		}
+		iw, err := screenCoord(width, "window width")
+		if err != nil {
+			return err
+		}
+		ih, err := screenCoord(height, "window height")
+		if err != nil {
+			return err
+		}
+		if err := wm.MoveWindow(hwnd, ix, iy, iw, ih, true); err != nil {
 			return fmt.Errorf("MoveWindow: %w", err)
 		}
 		w.Rect = Rect{Left: x, Top: y, Right: x + width, Bottom: y + height}

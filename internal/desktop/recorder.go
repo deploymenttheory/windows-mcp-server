@@ -4,6 +4,7 @@ package desktop
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"log/slog"
@@ -159,6 +160,20 @@ func (r *recorder) run() {
 		}
 
 		if err := enc.writeFrame(img); err != nil {
+			// Reaching the container's addressable limit is an expected end state,
+			// not a failure: the file written so far is valid and the deferred
+			// close() finalizes it. Report it distinctly so a truncated recording is
+			// never mistaken for a complete one, and mark the timeline.
+			if errors.Is(err, ErrAVISizeLimit) {
+				r.mu.Lock()
+				frames, path := r.frames, r.videoPath
+				r.mu.Unlock()
+				r.logger.Error("recorder: stopped at the AVI 4 GiB format limit; the recording is "+
+					"valid up to this point but does NOT cover the rest of the session",
+					"frames", frames, "path", path)
+				r.writeMarker("recording stopped: AVI 4 GiB format limit reached")
+				return
+			}
 			r.logger.Warn("recorder: write frame failed", "error", err)
 			return
 		}
