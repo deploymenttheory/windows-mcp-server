@@ -128,6 +128,15 @@ linters:
         linters:
           - gosec
 
+      # Microsoft Graph response DTOs must mirror the API's camelCase field names
+      # (deviceId, isCompliant, accountEnabled...). The project-wide snake_case
+      # rule above is right for our own artifacts — the audit chain, the
+      # guardrails status payload, schema/compliance.json — but renaming these
+      # would break Graph deserialization outright.
+      - path: graph\.go
+        linters:
+          - tagliatelle
+
       # drop staticcheck’s SA9003 messages
       - linters:
           - staticcheck
