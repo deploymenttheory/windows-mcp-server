@@ -32,11 +32,17 @@ jobs:
         env:
           DEFAULT_BRANCH: origin/main
           VALIDATE_ALL_CODEBASE: false # tells the linter to only check files that have been modified in the current pull request
-          VALIDATE_GO: true
-          VALIDATE_GOFMT: true
-          VALIDATE_GOCYCLO: true
-          VALIDATE_GOVET: true
-          VALIDATE_GOLANGCI_LINT: true
+          # Go validation is handled by go-lint.yml, which runs golangci-lint on a
+          # *Windows* runner with this repo's .golangci.yml. Super-linter is a Docker
+          # action and can only run on Linux, where almost the whole codebase is
+          # excluded by `//go:build windows` tags — so its Go validators duplicated
+          # go-lint.yml while analysing far less, and reported failures that the
+          # authoritative job did not.
+          VALIDATE_GO: false
+          VALIDATE_GOFMT: false
+          VALIDATE_GOCYCLO: false
+          VALIDATE_GOVET: false
+          VALIDATE_GOLANGCI_LINT: false
           VALIDATE_CPD: false # Disable CPD (Copy Paste Detection) for all languages
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # To report GitHub Actions status checks
           FILTER_REGEX_EXCLUDE: |

@@ -24,8 +24,18 @@ issues:
   # Define the “base” for “new” issues as the merge-base against main.
   new-from-merge-base: main
 
-  # Also catch anything in new or modified files, even outside the diff hunk.
-  whole-files: true
+  # Report only the changed lines, not every pre-existing issue in a touched file.
+  #
+  # This was `true`, which is the stricter setting and is right for a lint-clean
+  # repo. This one is not yet: with the `new`-gating disabled there are ~269
+  # outstanding issues (gosec, err113, wrapcheck, golines) spread across most of
+  # the tree. Combined with lint now being a *gating* check, `whole-files: true`
+  # meant a PR adding a single comment to a debt-heavy file inherited all of that
+  # file's issues and failed — verified: one comment in audit.go reported 12.
+  #
+  # Set back to true once the backlog is cleared; `golangci-lint run --new=false`
+  # shows the full list.
+  whole-files: false
 
   # Automatically apply any fixable issues (like gofmt/goimports).
   fix: true
@@ -69,6 +79,18 @@ linters:
   settings:
     nakedret:
       max-func-lines: 40
+
+    # This project uses snake_case JSON throughout: the hash-chained audit log,
+    # the guardrails status payload, and schema/compliance.json are all snake_case,
+    # and external tooling depends on it (the compliance workflow reads
+    # conformance_score and coverage.methods_pct). tagliatelle defaults to camel,
+    # which contradicts that convention and reported ~49 false positives across 9
+    # files. Renaming the tags instead would break the audit-log format and the
+    # committed compliance artifact.
+    tagliatelle:
+      case:
+        rules:
+          json: snake
 
   # 4) Issue-filtering (not disabling analysis, just silencing reports)
   exclusions:
