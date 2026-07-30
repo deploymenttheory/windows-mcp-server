@@ -21,7 +21,11 @@ func TestScreenCoordRejectsOutOfRange(t *testing.T) {
 	// coordinate was dangerous and a literal never would be.
 	wrapsTo100 := int(math.MaxUint32) + 101
 	if int32(wrapsTo100) != 100 { //nolint:gosec // demonstrating the wrap this guard prevents
-		t.Fatalf("premise wrong: int32(%d) = %d, expected the wrap to 100", wrapsTo100, int32(wrapsTo100))
+		t.Fatalf(
+			"premise wrong: int32(%d) = %d, expected the wrap to 100",
+			wrapsTo100,
+			int32(wrapsTo100),
+		)
 	}
 	switch _, err := screenCoord(wrapsTo100, "x coordinate"); {
 	case err == nil:

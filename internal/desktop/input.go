@@ -287,10 +287,13 @@ func (d *Desktop) Scroll(x, y, wheelClicks int, direction string) error {
 			// field: scrolling down is -120, which Windows expects as the
 			// two's-complement bit pattern 0xFFFFFF88. The conversion is a
 			// deliberate reinterpretation, not a range error.
+			//
+			// Kept as its own short statement so the formatter cannot split the
+			// call across lines and strand the nolint on a line that no longer
+			// holds the conversion — which is exactly what happened before.
+			wheelData := uint32(unit) //nolint:gosec // deliberate, see above
 			if err := sendInputs(
-				[]km.INPUT{
-					mouseInput(km.MOUSEEVENTF_WHEEL, uint32(unit)),
-				}, //nolint:gosec // signed wheel delta reinterpreted into the unsigned mouseData field
+				[]km.INPUT{mouseInput(km.MOUSEEVENTF_WHEEL, wheelData)},
 			); err != nil {
 				return err
 			}
