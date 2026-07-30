@@ -101,6 +101,22 @@ func (d *Desktop) Click(x, y int, button string, clicks int) error {
 	})
 }
 
+// leftClickAt performs one left click at (x,y).
+//
+// STA-only: it must be called from inside a Do job. Click cannot be reused from
+// within another Do job because Click wraps itself in Do, and the job channel is
+// unbuffered — re-entering would deadlock the engine thread.
+func leftClickAt(x, y int) error {
+	if err := wm.SetCursorPos(int32(x), int32(y)); err != nil {
+		return fmt.Errorf("SetCursorPos: %w", err)
+	}
+	time.Sleep(10 * time.Millisecond) // let the target window register the move
+	return sendInputs([]km.INPUT{
+		mouseInput(km.MOUSEEVENTF_LEFTDOWN, 0),
+		mouseInput(km.MOUSEEVENTF_LEFTUP, 0),
+	})
+}
+
 // ClickMany left-clicks a series of points in order. When holdCtrl is true,
 // Ctrl is held down for the whole sequence (multi-select).
 func (d *Desktop) ClickMany(points [][2]int, holdCtrl bool) error {

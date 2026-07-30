@@ -54,6 +54,9 @@ func AllTools() []inventory.ServerTool {
 		SystemInfo(),
 		Service(),
 
+		// credentials
+		Credentials(),
+
 		// testing toolset (QA)
 		Assert(),
 		CaptureEvidence(),

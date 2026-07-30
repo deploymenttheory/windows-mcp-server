@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"github.com/deploymenttheory/windows-mcp-server/internal/mcpspec"
 	"github.com/deploymenttheory/windows-mcp-server/internal/winmcp"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )
@@ -47,6 +48,7 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(stdioCmd())
 	root.AddCommand(checkCmd())
 	root.AddCommand(personasCmd())
+	root.AddCommand(specCheckCmd())
 	return root
 }
 
@@ -225,6 +227,7 @@ func stdioCmd() *cobra.Command {
 			cfg.RecordDir = v.GetString("record-dir")
 			cfg.RecordFPS = v.GetInt("record-fps")
 			cfg.RecordCodec = v.GetString("record-codec")
+			cfg.CredentialsFile = v.GetString("credentials-file")
 			// Only treat --read-only as set when the flag was explicitly changed,
 			// so a persona's default read-only stance is not overridden by the
 			// flag's zero value.
@@ -249,10 +252,140 @@ func stdioCmd() *cobra.Command {
 	f.String("record-dir", "", "Record the whole session to a video file in this directory (one file per session), so every session is tracked.")
 	f.Int("record-fps", 4, "Session recording frame rate (frames per second).")
 	f.String("record-codec", "h264", "Session recording codec: h264 or h265 (via ffmpeg if available; smaller files), or mjpeg (pure-Go, no dependency, larger files).")
+	f.String("credentials-file", "", "JSON file of credentials to install into the Windows Credential Manager at init, "+
+		"for app/web/SSO sign-in. Enables the 'credentials' toolset. Secrets are never accepted as flags or "+
+		"returned to the agent, and are removed from the store when the session ends.")
 
 	// Guardrails / admission control (shared with `check`).
 	addGuardrailFlags(f)
 	return cmd
+}
+
+// specCheckCmd scores the served MCP surface against the vendored protocol
+// schemas. It runs a real in-process MCP session, so what gets scored is the wire
+// output a client receives, not a re-marshalling of our Go types.
+func specCheckCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "spec-check",
+		Short: "Score the served MCP surface against the published protocol schemas",
+		Long: "spec-check performs an in-process MCP session against this server's tool manifest " +
+			"and validates the resulting wire objects (handshake result, capabilities, tools/list) " +
+			"against the vendored Model Context Protocol JSON Schemas, emitting a weighted score.\n\n" +
+			"Exits 2 when the score is below --fail-under, so CI can gate on it.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v := viperFor(cmd)
+
+			cfg := winmcp.Config{Version: version}
+			cfg.Persona = v.GetString("persona")
+			// Score every tool by default, not just the default toolsets: a tool in a
+			// non-default toolset can be just as non-conformant.
+			cfg.Toolsets = splitCSV(v.GetString("toolsets"))
+			if len(cfg.Toolsets) == 0 && cfg.Persona == "" {
+				cfg.Toolsets = []string{"all"}
+			}
+			if cmd.Flags().Changed("read-only") {
+				cfg.SetReadOnly(v.GetBool("read-only"))
+			}
+
+			schemaDir := v.GetString("schema-dir")
+			manifest, err := mcpspec.LoadManifest(schemaDir)
+			if err != nil {
+				return err
+			}
+
+			versions := []string{manifest.Newest()}
+			switch requested := v.GetString("spec-version"); requested {
+			case "", "newest":
+			case "all":
+				versions = manifest.Versions
+			default:
+				if manifest.Index(requested) < 0 {
+					return fmt.Errorf("unknown spec version %q (vendored: %s)",
+						requested, strings.Join(manifest.Versions, ", "))
+				}
+				versions = []string{requested}
+			}
+
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			surface, err := winmcp.CaptureSurface(ctx, cfg)
+			if err != nil {
+				return err
+			}
+			surface.Manifest = manifest
+
+			reports := make([]*mcpspec.Report, 0, len(versions))
+			for _, ver := range versions {
+				spec, err := mcpspec.Load(schemaDir, ver)
+				if err != nil {
+					return err
+				}
+				reports = append(reports, mcpspec.Evaluate(spec, surface))
+			}
+
+			rendered, err := renderSpecReports(reports, v.GetString("format"))
+			if err != nil {
+				return err
+			}
+			if out := v.GetString("out"); out != "" {
+				if err := os.WriteFile(out, []byte(rendered), 0o644); err != nil { //nolint:gosec // a report is not a secret
+					return fmt.Errorf("write report: %w", err)
+				}
+			} else {
+				fmt.Fprint(cmd.OutOrStdout(), rendered)
+			}
+
+			// Gate on the newest scored revision, which is the one operators care about.
+			if threshold := v.GetInt("fail-under"); threshold > 0 {
+				worst := reports[len(reports)-1]
+				if worst.Score < threshold {
+					fmt.Fprintf(os.Stderr, "spec-check: score %d for %s is below --fail-under=%d\n",
+						worst.Score, worst.SchemaVersion, threshold)
+					os.Exit(2)
+				}
+			}
+			return nil
+		},
+	}
+
+	f := cmd.Flags()
+	f.String("schema-dir", "schema", "Directory holding the vendored MCP schema revisions.")
+	f.String("spec-version", "newest", "Revision to score against: a version like 2026-07-28, 'newest', or 'all'.")
+	f.String("format", "markdown", "Output format: markdown or json.")
+	f.String("out", "", "Write the report to this file instead of stdout.")
+	f.Int("fail-under", 0, "Exit 2 if the newest scored revision scores below this (0 disables).")
+	f.String("toolsets", "", "Comma-separated toolsets to score (default: all toolsets).")
+	f.String("persona", "", "Score the manifest a persona would serve.")
+	f.Bool("read-only", false, "Score the read-only manifest.")
+	return cmd
+}
+
+// renderSpecReports formats one or more scored reports.
+func renderSpecReports(reports []*mcpspec.Report, format string) (string, error) {
+	switch format {
+	case "json":
+		payload := any(reports)
+		if len(reports) == 1 {
+			payload = reports[0]
+		}
+		b, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("marshal report: %w", err)
+		}
+		return string(b) + "\n", nil
+	case "", "markdown", "md":
+		var b strings.Builder
+		for i, r := range reports {
+			if i > 0 {
+				b.WriteString("\n---\n\n")
+			}
+			b.WriteString(r.Markdown())
+		}
+		return b.String(), nil
+	default:
+		return "", fmt.Errorf("unknown --format %q (want markdown or json)", format)
+	}
 }
 
 func personasCmd() *cobra.Command {

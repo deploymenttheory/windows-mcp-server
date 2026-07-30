@@ -1,0 +1,611 @@
+[
+  {
+    "schema_version": "2024-11-05",
+    "schema_draft": "http://json-schema.org/draft-07/schema#",
+    "negotiated_version": "2025-11-25",
+    "newest_published": "2026-07-28",
+    "revisions_behind": 1,
+    "score": 82,
+    "applicable_weight": 100,
+    "dimensions": [
+      {
+        "id": "tool-schema",
+        "title": "Tool definitions conform",
+        "weight": 40,
+        "score": 100,
+        "passed": 30,
+        "total": 30,
+        "detail": "30 of 30 tools valid"
+      },
+      {
+        "id": "list-tools-result",
+        "title": "tools/list result conforms",
+        "weight": 15,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against ListToolsResult"
+      },
+      {
+        "id": "method-surface",
+        "title": "Server method coverage",
+        "weight": 15,
+        "score": 15,
+        "passed": 2,
+        "total": 13,
+        "detail": "2 of 13 server methods implemented"
+      },
+      {
+        "id": "handshake-result",
+        "title": "Handshake result conforms",
+        "weight": 10,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against InitializeResult"
+      },
+      {
+        "id": "server-capabilities",
+        "title": "Server capabilities conform",
+        "weight": 10,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against ServerCapabilities"
+      },
+      {
+        "id": "protocol-currency",
+        "title": "Protocol revision currency",
+        "weight": 10,
+        "score": 50,
+        "detail": "1 released revision(s) behind 2026-07-28"
+      }
+    ],
+    "method_surface": {
+      "defined": [
+        "completion/complete",
+        "initialize",
+        "logging/setLevel",
+        "ping",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/templates/list",
+        "resources/unsubscribe",
+        "tools/call",
+        "tools/list"
+      ],
+      "present": [
+        "tools/call",
+        "tools/list"
+      ],
+      "missing": [
+        "completion/complete",
+        "initialize",
+        "logging/setLevel",
+        "ping",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/templates/list",
+        "resources/unsubscribe"
+      ],
+      "coverage": 15
+    },
+    "capability_surface": {
+      "defined": [
+        "experimental",
+        "logging",
+        "prompts",
+        "resources",
+        "tools"
+      ],
+      "present": [
+        "tools"
+      ],
+      "missing": [
+        "experimental",
+        "logging",
+        "prompts",
+        "resources"
+      ],
+      "coverage": 20
+    }
+  },
+  {
+    "schema_version": "2025-03-26",
+    "schema_draft": "http://json-schema.org/draft-07/schema#",
+    "negotiated_version": "2025-11-25",
+    "newest_published": "2026-07-28",
+    "revisions_behind": 1,
+    "score": 82,
+    "applicable_weight": 100,
+    "dimensions": [
+      {
+        "id": "tool-schema",
+        "title": "Tool definitions conform",
+        "weight": 40,
+        "score": 100,
+        "passed": 30,
+        "total": 30,
+        "detail": "30 of 30 tools valid"
+      },
+      {
+        "id": "list-tools-result",
+        "title": "tools/list result conforms",
+        "weight": 15,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against ListToolsResult"
+      },
+      {
+        "id": "method-surface",
+        "title": "Server method coverage",
+        "weight": 15,
+        "score": 15,
+        "passed": 2,
+        "total": 13,
+        "detail": "2 of 13 server methods implemented"
+      },
+      {
+        "id": "handshake-result",
+        "title": "Handshake result conforms",
+        "weight": 10,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against InitializeResult"
+      },
+      {
+        "id": "server-capabilities",
+        "title": "Server capabilities conform",
+        "weight": 10,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against ServerCapabilities"
+      },
+      {
+        "id": "protocol-currency",
+        "title": "Protocol revision currency",
+        "weight": 10,
+        "score": 50,
+        "detail": "1 released revision(s) behind 2026-07-28"
+      }
+    ],
+    "method_surface": {
+      "defined": [
+        "completion/complete",
+        "initialize",
+        "logging/setLevel",
+        "ping",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/templates/list",
+        "resources/unsubscribe",
+        "tools/call",
+        "tools/list"
+      ],
+      "present": [
+        "tools/call",
+        "tools/list"
+      ],
+      "missing": [
+        "completion/complete",
+        "initialize",
+        "logging/setLevel",
+        "ping",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/templates/list",
+        "resources/unsubscribe"
+      ],
+      "coverage": 15
+    },
+    "capability_surface": {
+      "defined": [
+        "completions",
+        "experimental",
+        "logging",
+        "prompts",
+        "resources",
+        "tools"
+      ],
+      "present": [
+        "tools"
+      ],
+      "missing": [
+        "completions",
+        "experimental",
+        "logging",
+        "prompts",
+        "resources"
+      ],
+      "coverage": 16
+    }
+  },
+  {
+    "schema_version": "2025-06-18",
+    "schema_draft": "http://json-schema.org/draft-07/schema#",
+    "negotiated_version": "2025-11-25",
+    "newest_published": "2026-07-28",
+    "revisions_behind": 1,
+    "score": 82,
+    "applicable_weight": 100,
+    "dimensions": [
+      {
+        "id": "tool-schema",
+        "title": "Tool definitions conform",
+        "weight": 40,
+        "score": 100,
+        "passed": 30,
+        "total": 30,
+        "detail": "30 of 30 tools valid"
+      },
+      {
+        "id": "list-tools-result",
+        "title": "tools/list result conforms",
+        "weight": 15,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against ListToolsResult"
+      },
+      {
+        "id": "method-surface",
+        "title": "Server method coverage",
+        "weight": 15,
+        "score": 15,
+        "passed": 2,
+        "total": 13,
+        "detail": "2 of 13 server methods implemented"
+      },
+      {
+        "id": "handshake-result",
+        "title": "Handshake result conforms",
+        "weight": 10,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against InitializeResult"
+      },
+      {
+        "id": "server-capabilities",
+        "title": "Server capabilities conform",
+        "weight": 10,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against ServerCapabilities"
+      },
+      {
+        "id": "protocol-currency",
+        "title": "Protocol revision currency",
+        "weight": 10,
+        "score": 50,
+        "detail": "1 released revision(s) behind 2026-07-28"
+      }
+    ],
+    "method_surface": {
+      "defined": [
+        "completion/complete",
+        "initialize",
+        "logging/setLevel",
+        "ping",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/templates/list",
+        "resources/unsubscribe",
+        "tools/call",
+        "tools/list"
+      ],
+      "present": [
+        "tools/call",
+        "tools/list"
+      ],
+      "missing": [
+        "completion/complete",
+        "initialize",
+        "logging/setLevel",
+        "ping",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/templates/list",
+        "resources/unsubscribe"
+      ],
+      "coverage": 15
+    },
+    "capability_surface": {
+      "defined": [
+        "completions",
+        "experimental",
+        "logging",
+        "prompts",
+        "resources",
+        "tools"
+      ],
+      "present": [
+        "tools"
+      ],
+      "missing": [
+        "completions",
+        "experimental",
+        "logging",
+        "prompts",
+        "resources"
+      ],
+      "coverage": 16
+    }
+  },
+  {
+    "schema_version": "2025-11-25",
+    "schema_draft": "https://json-schema.org/draft/2020-12/schema",
+    "negotiated_version": "2025-11-25",
+    "newest_published": "2026-07-28",
+    "revisions_behind": 1,
+    "score": 81,
+    "applicable_weight": 100,
+    "dimensions": [
+      {
+        "id": "tool-schema",
+        "title": "Tool definitions conform",
+        "weight": 40,
+        "score": 100,
+        "passed": 30,
+        "total": 30,
+        "detail": "30 of 30 tools valid"
+      },
+      {
+        "id": "list-tools-result",
+        "title": "tools/list result conforms",
+        "weight": 15,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against ListToolsResult"
+      },
+      {
+        "id": "method-surface",
+        "title": "Server method coverage",
+        "weight": 15,
+        "score": 11,
+        "passed": 2,
+        "total": 17,
+        "detail": "2 of 17 server methods implemented"
+      },
+      {
+        "id": "handshake-result",
+        "title": "Handshake result conforms",
+        "weight": 10,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against InitializeResult"
+      },
+      {
+        "id": "server-capabilities",
+        "title": "Server capabilities conform",
+        "weight": 10,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against ServerCapabilities"
+      },
+      {
+        "id": "protocol-currency",
+        "title": "Protocol revision currency",
+        "weight": 10,
+        "score": 50,
+        "detail": "1 released revision(s) behind 2026-07-28"
+      }
+    ],
+    "method_surface": {
+      "defined": [
+        "completion/complete",
+        "initialize",
+        "logging/setLevel",
+        "ping",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/templates/list",
+        "resources/unsubscribe",
+        "tasks/cancel",
+        "tasks/get",
+        "tasks/list",
+        "tasks/result",
+        "tools/call",
+        "tools/list"
+      ],
+      "present": [
+        "tools/call",
+        "tools/list"
+      ],
+      "missing": [
+        "completion/complete",
+        "initialize",
+        "logging/setLevel",
+        "ping",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/templates/list",
+        "resources/unsubscribe",
+        "tasks/cancel",
+        "tasks/get",
+        "tasks/list",
+        "tasks/result"
+      ],
+      "coverage": 11
+    },
+    "capability_surface": {
+      "defined": [
+        "completions",
+        "experimental",
+        "logging",
+        "prompts",
+        "resources",
+        "tasks",
+        "tools"
+      ],
+      "present": [
+        "tools"
+      ],
+      "missing": [
+        "completions",
+        "experimental",
+        "logging",
+        "prompts",
+        "resources",
+        "tasks"
+      ],
+      "coverage": 14
+    }
+  },
+  {
+    "schema_version": "2026-07-28",
+    "schema_draft": "https://json-schema.org/draft/2020-12/schema",
+    "negotiated_version": "2025-11-25",
+    "newest_published": "2026-07-28",
+    "revisions_behind": 1,
+    "score": 58,
+    "applicable_weight": 100,
+    "dimensions": [
+      {
+        "id": "tool-schema",
+        "title": "Tool definitions conform",
+        "weight": 40,
+        "score": 100,
+        "passed": 30,
+        "total": 30,
+        "detail": "30 of 30 tools valid"
+      },
+      {
+        "id": "list-tools-result",
+        "title": "tools/list result conforms",
+        "weight": 15,
+        "score": 0,
+        "total": 1,
+        "detail": "does not validate against ListToolsResult"
+      },
+      {
+        "id": "method-surface",
+        "title": "Server method coverage",
+        "weight": 15,
+        "score": 20,
+        "passed": 2,
+        "total": 10,
+        "detail": "2 of 10 server methods implemented"
+      },
+      {
+        "id": "handshake-result",
+        "title": "Handshake result conforms",
+        "weight": 10,
+        "score": 0,
+        "total": 1,
+        "detail": "does not validate against DiscoverResult"
+      },
+      {
+        "id": "server-capabilities",
+        "title": "Server capabilities conform",
+        "weight": 10,
+        "score": 100,
+        "passed": 1,
+        "total": 1,
+        "detail": "validates against ServerCapabilities"
+      },
+      {
+        "id": "protocol-currency",
+        "title": "Protocol revision currency",
+        "weight": 10,
+        "score": 50,
+        "detail": "1 released revision(s) behind 2026-07-28"
+      }
+    ],
+    "findings": [
+      {
+        "dimension": "list-tools-result",
+        "subject": "ListToolsResult",
+        "problem": "validating root: validating /$defs/ListToolsResult: required: missing properties: [\"cacheScope\" \"resultType\" \"ttlMs\"]"
+      },
+      {
+        "dimension": "handshake-result",
+        "subject": "DiscoverResult",
+        "problem": "validating root: validating /$defs/DiscoverResult: required: missing properties: [\"cacheScope\" \"resultType\" \"supportedVersions\" \"ttlMs\"]"
+      }
+    ],
+    "method_surface": {
+      "defined": [
+        "completion/complete",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/templates/list",
+        "server/discover",
+        "subscriptions/listen",
+        "tools/call",
+        "tools/list"
+      ],
+      "present": [
+        "tools/call",
+        "tools/list"
+      ],
+      "missing": [
+        "completion/complete",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/templates/list",
+        "server/discover",
+        "subscriptions/listen"
+      ],
+      "coverage": 20
+    },
+    "capability_surface": {
+      "defined": [
+        "completions",
+        "experimental",
+        "extensions",
+        "logging",
+        "prompts",
+        "resources",
+        "tools"
+      ],
+      "present": [
+        "tools"
+      ],
+      "missing": [
+        "completions",
+        "experimental",
+        "extensions",
+        "logging",
+        "prompts",
+        "resources"
+      ],
+      "coverage": 14
+    }
+  }
+]

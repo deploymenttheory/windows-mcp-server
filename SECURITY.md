@@ -49,3 +49,9 @@ In scope, and genuinely interesting to us:
 - privilege escalation beyond the context the server was launched in
 - a control that the flags and docs claim is off but which is actually active, or
   vice versa
+- any path by which a credential supplied via `--credentials-file` becomes
+  readable to the agent — a tool result, an error message, a log line, or the
+  audit chain that discloses plaintext. The design guarantees secrets can be
+  *used* but never *read*; a break in that is squarely in scope. Note that
+  plaintext living in this process's memory is documented residual risk, not a
+  vulnerability
