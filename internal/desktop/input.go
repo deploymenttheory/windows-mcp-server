@@ -244,33 +244,61 @@ func (d *Desktop) TypeText(text string) error {
 	})
 }
 
+// maxWheelClicks bounds a single Scroll call.
+//
+// wheelClicks arrives from a tool argument, so it is agent-supplied, and the
+// scroll loop sleeps 10ms per notch on the engine's one serialized STA thread.
+// Unbounded, a single call could hold that thread — and every automation call
+// queued behind it — for as long as the agent asked: 20 million clicks is over
+// 50 hours. A thousand notches is already far past any real scroll.
+const maxWheelClicks = 1000
+
+// boundWheelClicks clamps the requested notch count into the usable range.
+func boundWheelClicks(n int) int {
+	switch {
+	case n < 1:
+		return 1
+	case n > maxWheelClicks:
+		return maxWheelClicks
+	default:
+		return n
+	}
+}
+
+// scrollDirection maps a direction name to the wheel sign and whether the
+// scroll is horizontal (emulated by holding Shift over the vertical wheel).
+// An unrecognized direction scrolls down, matching the Python implementation.
+//
+// The sign used to be derived from wheelDelta*int32(wheelClicks) and read off
+// that product's sign, which inverted the scroll once it exceeded int32:
+// 120 * 20_000_000 wraps negative, so "up" scrolled down. The magnitude was
+// never used for anything else — the loop emits one notch per click — so the
+// direction is now decided on its own.
+func scrollDirection(direction string) (down, horizontal bool) {
+	switch direction {
+	case "up":
+		return false, false
+	case "right":
+		return false, true
+	case "left":
+		return true, true
+	default: // "down" and anything unrecognized
+		return true, false
+	}
+}
+
 // Scroll moves the cursor to (x,y) and scrolls the wheel. direction is "up",
 // "down", "left", or "right"; wheelClicks is the number of wheel notches.
 // Horizontal scrolling is emulated by holding Shift over the vertical wheel,
 // matching the Python implementation.
 func (d *Desktop) Scroll(x, y, wheelClicks int, direction string) error {
-	if wheelClicks < 1 {
-		wheelClicks = 1
-	}
+	wheelClicks = boundWheelClicks(wheelClicks)
 	return d.Do(func() error {
 		if err := setCursor(x, y); err != nil {
 			return err
 		}
 		const wheelDelta = 120
-		var delta int32
-		var horizontal bool
-		switch direction {
-		case "up":
-			delta = wheelDelta * int32(wheelClicks)
-		case "down":
-			delta = -wheelDelta * int32(wheelClicks)
-		case "right":
-			delta, horizontal = wheelDelta*int32(wheelClicks), true
-		case "left":
-			delta, horizontal = -wheelDelta*int32(wheelClicks), true
-		default:
-			delta = -wheelDelta * int32(wheelClicks)
-		}
+		down, horizontal := scrollDirection(direction)
 
 		if horizontal {
 			if err := sendInputs([]km.INPUT{vkeyInput(km.VK_SHIFT, false)}); err != nil {
@@ -280,7 +308,7 @@ func (d *Desktop) Scroll(x, y, wheelClicks int, direction string) error {
 		}
 		for range wheelClicks {
 			unit := int32(wheelDelta)
-			if delta < 0 {
+			if down {
 				unit = -wheelDelta
 			}
 			// The wheel delta is a *signed* value carried in an unsigned mouseData
