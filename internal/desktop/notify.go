@@ -11,7 +11,7 @@ import (
 // Notify shows a best-effort Windows toast notification (WinRT via Windows
 // PowerShell 5.1). Used by the guardrails layer to surface run-context
 // auto-limiting and policy actions. Failures are logged, not returned.
-func (d *Desktop) Notify(title, message string) {
+func (d *Desktop) Notify(ctx context.Context, title, message string) {
 	esc := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;", "'", "&apos;")
 	toast := "<toast><visual><binding template='ToastGeneric'><text>" +
 		esc.Replace(title) + "</text><text>" + esc.Replace(message) +
@@ -25,7 +25,7 @@ func (d *Desktop) Notify(title, message string) {
 		"$t = New-Object Windows.UI.Notifications.ToastNotification $xml;" +
 		"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(" + q(appID) + ").Show($t)"
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if _, err := d.RunWindowsPowerShell(ctx, cmd, 15*time.Second); err != nil {
 		d.logger.Warn("guardrail notification failed", "error", err)

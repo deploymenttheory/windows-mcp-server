@@ -157,7 +157,10 @@ func (d *Desktop) LaunchExecutable(path string, args []string, cwd string) (int,
 	if _, err := os.Stat(path); err != nil {
 		return 0, fmt.Errorf("executable not found: %w", err)
 	}
-	cmd := exec.Command(path, args...)
+	// Deliberately not exec.CommandContext: a launched application must outlive
+	// the tool call that started it. Binding it to the request context would kill
+	// the app the moment the call returns — see Process.Release below.
+	cmd := exec.Command(path, args...) //nolint:noctx // detached by design
 	if cwd != "" {
 		cmd.Dir = cwd
 	}

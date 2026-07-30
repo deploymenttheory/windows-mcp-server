@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
@@ -297,4 +298,35 @@ func wipe(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+// provisionCredentials installs the init-time credentials, if any, and returns
+// the installed set together with an idempotent remover.
+//
+// Removal must happen exactly once even though two independent paths call it —
+// the normal-exit defer and the kill-switch Finalize hook — hence the sync.Once.
+// On error nothing is left installed (a partial install is rolled back), so the
+// caller returns without needing the remover.
+func provisionCredentials(
+	dsk *desktop.Desktop,
+	cfg Config,
+	audit *guardrails.AuditLog,
+	logger *slog.Logger,
+) ([]installedCredential, func(), error) {
+	var installed []installedCredential
+	if cfg.CredentialsFile != "" {
+		entries, err := loadCredentialsFile(cfg.CredentialsFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		installed, err = installCredentials(dsk, entries, audit, logger)
+		if err != nil {
+			removeCredentials(dsk, installed, audit, logger) // roll back a partial install
+			return nil, nil, err
+		}
+	}
+	var once sync.Once
+	return installed, func() {
+		once.Do(func() { removeCredentials(dsk, installed, audit, logger) })
+	}, nil
 }

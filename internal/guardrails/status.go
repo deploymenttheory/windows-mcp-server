@@ -58,7 +58,11 @@ func (s *StatusServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/healthz", s.auth(s.handleStatus))
 	mux.HandleFunc("/revoke", s.auth(s.handleRevoke))
 
-	ln, err := net.Listen("tcp", s.Addr)
+	// ListenConfig.Listen honours ctx during listener setup, so a cancelled
+	// startup does not leave a socket bound. The ctx does not govern the
+	// listener's lifetime; the srv.Close goroutine below does that.
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", s.Addr)
 	if err != nil {
 		return fmt.Errorf("guardrails status listen %s: %w", s.Addr, err)
 	}

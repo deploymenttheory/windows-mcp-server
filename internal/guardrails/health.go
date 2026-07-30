@@ -235,7 +235,10 @@ func checkTPMAttested(_ context.Context, env *Env) Result {
 		// rather than overclaim a cryptographic pass.
 		return Result{ID: "tpm-attested", Status: Skip, Detail: att.Detail, Data: data}
 	}
-	return Result{ID: "tpm-attested", Status: Pass,
-		Detail: fmt.Sprintf("nonce-fresh TPM quote verified (%d PCR banks, %d-byte quote)", att.PCRBanks, att.QuoteSize),
-		Data:   data}
+	return Result{
+		ID: "tpm-attested", Status: Pass,
+		Detail: fmt.Sprintf("nonce-fresh TPM quote verified (%d PCR banks, %d-byte quote)",
+			att.PCRBanks, att.QuoteSize),
+		Data: data,
+	}
 }

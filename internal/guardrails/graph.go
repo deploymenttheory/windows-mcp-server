@@ -3,6 +3,7 @@ package guardrails
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,6 +11,19 @@ import (
 	"sync"
 	"time"
 )
+
+// ErrDeviceNotInGraph reports that Microsoft Graph returned no matching device.
+//
+// A sentinel rather than a (nil, nil) return: the lookups previously signalled
+// "no error, but nothing found" by returning two nils, which callers had to know
+// to disambiguate. Callers now match with errors.Is.
+var ErrDeviceNotInGraph = errors.New("device not found in Microsoft Graph")
+
+// ErrGraphStatus reports a Graph response that was neither the expected 200
+// nor an error the transport surfaced. Callers distinguish it from
+// ErrDeviceNotInGraph: an unexpected status is an inconclusive check, not a
+// negative answer about the device.
+var ErrGraphStatus = errors.New("unexpected HTTP status from Microsoft Graph")
 
 // GraphConfig holds the Entra app-registration credentials used for the
 // authoritative (tier-2) device-compliance checks. The app needs the
@@ -144,10 +158,10 @@ func (c *GraphClient) entraDevice(ctx context.Context, aadDeviceID string) (*ent
 		return nil, err
 	}
 	if code != http.StatusOK {
-		return nil, fmt.Errorf("Graph /devices returned HTTP %d", code)
+		return nil, fmt.Errorf("%w: %d from /devices", ErrGraphStatus, code)
 	}
 	if len(res.Value) == 0 {
-		return nil, nil
+		return nil, ErrDeviceNotInGraph
 	}
 	return &res.Value[0], nil
 }
@@ -184,10 +198,10 @@ func (c *GraphClient) intuneDevice(ctx context.Context, aadDeviceID string) (*in
 		return nil, err
 	}
 	if code != http.StatusOK {
-		return nil, fmt.Errorf("Graph /managedDevices returned HTTP %d", code)
+		return nil, fmt.Errorf("%w: %d from /managedDevices", ErrGraphStatus, code)
 	}
 	if len(res.Value) == 0 {
-		return nil, nil
+		return nil, ErrDeviceNotInGraph
 	}
 	return &res.Value[0], nil
 }
@@ -228,18 +242,22 @@ func (c *GraphClient) checkEntraRegistered(ctx context.Context, env *Env) Result
 		return errf("graph-entra-registered", err.Error())
 	}
 	dev, err := c.entraDevice(ctx, id)
-	if err != nil {
-		return errf("graph-entra-registered", "Graph query failed: "+err.Error())
-	}
-	if dev == nil {
+	switch {
+	case errors.Is(err, ErrDeviceNotInGraph):
 		return fail("graph-entra-registered", "device "+id+" not found in Entra ID")
+	case err != nil:
+		return errf("graph-entra-registered", "Graph query failed: "+err.Error())
 	}
 	if !dev.AccountEnabled {
 		return fail("graph-entra-registered", "Entra device account is disabled")
 	}
-	return Result{ID: "graph-entra-registered", Status: Pass,
+	return Result{
+		ID: "graph-entra-registered", Status: Pass,
 		Detail: fmt.Sprintf("registered in Entra (%q, trust=%s)", dev.DisplayName, dev.TrustType),
-		Data:   map[string]any{"object_id": dev.ID, "trust_type": dev.TrustType, "is_managed": dev.IsManaged}}
+		Data: map[string]any{
+			"object_id": dev.ID, "trust_type": dev.TrustType, "is_managed": dev.IsManaged,
+		},
+	}
 }
 
 func (c *GraphClient) checkEntraCompliant(ctx context.Context, env *Env) Result {
@@ -248,11 +266,11 @@ func (c *GraphClient) checkEntraCompliant(ctx context.Context, env *Env) Result 
 		return errf("graph-entra-compliant", err.Error())
 	}
 	dev, err := c.entraDevice(ctx, id)
-	if err != nil {
-		return errf("graph-entra-compliant", "Graph query failed: "+err.Error())
-	}
-	if dev == nil {
+	switch {
+	case errors.Is(err, ErrDeviceNotInGraph):
 		return fail("graph-entra-compliant", "device "+id+" not found in Entra ID")
+	case err != nil:
+		return errf("graph-entra-compliant", "Graph query failed: "+err.Error())
 	}
 	if !dev.IsCompliant {
 		return fail("graph-entra-compliant", "Entra ID reports the device as non-compliant")
@@ -266,15 +284,20 @@ func (c *GraphClient) checkIntuneEnrolled(ctx context.Context, env *Env) Result 
 		return errf("graph-intune-enrolled", err.Error())
 	}
 	dev, err := c.intuneDevice(ctx, id)
-	if err != nil {
+	switch {
+	case errors.Is(err, ErrDeviceNotInGraph):
+		return fail("graph-intune-enrolled", "device "+id+" is not enrolled in Intune")
+	case err != nil:
 		return errf("graph-intune-enrolled", "Graph query failed: "+err.Error())
 	}
-	if dev == nil {
-		return fail("graph-intune-enrolled", "device "+id+" is not enrolled in Intune")
+	return Result{
+		ID: "graph-intune-enrolled", Status: Pass,
+		Detail: fmt.Sprintf("enrolled in Intune (%q, type=%s, mgmt=%s)",
+			dev.DeviceName, dev.DeviceEnrollmentType, dev.ManagementState),
+		Data: map[string]any{
+			"managed_device_id": dev.ID, "enrollment_type": dev.DeviceEnrollmentType,
+		},
 	}
-	return Result{ID: "graph-intune-enrolled", Status: Pass,
-		Detail: fmt.Sprintf("enrolled in Intune (%q, type=%s, mgmt=%s)", dev.DeviceName, dev.DeviceEnrollmentType, dev.ManagementState),
-		Data:   map[string]any{"managed_device_id": dev.ID, "enrollment_type": dev.DeviceEnrollmentType}}
 }
 
 func (c *GraphClient) checkIntuneCompliant(ctx context.Context, env *Env) Result {
@@ -283,11 +306,11 @@ func (c *GraphClient) checkIntuneCompliant(ctx context.Context, env *Env) Result
 		return errf("graph-intune-compliant", err.Error())
 	}
 	dev, err := c.intuneDevice(ctx, id)
-	if err != nil {
-		return errf("graph-intune-compliant", "Graph query failed: "+err.Error())
-	}
-	if dev == nil {
+	switch {
+	case errors.Is(err, ErrDeviceNotInGraph):
 		return fail("graph-intune-compliant", "device "+id+" is not enrolled in Intune")
+	case err != nil:
+		return errf("graph-intune-compliant", "Graph query failed: "+err.Error())
 	}
 	if !strings.EqualFold(dev.ComplianceState, "compliant") {
 		return fail("graph-intune-compliant", "Intune compliance state is "+dev.ComplianceState)
@@ -301,11 +324,11 @@ func (c *GraphClient) checkAttested(ctx context.Context, env *Env) Result {
 		return errf("graph-attested", err.Error())
 	}
 	dev, err := c.intuneDevice(ctx, id)
-	if err != nil {
-		return errf("graph-attested", "Graph query failed: "+err.Error())
-	}
-	if dev == nil {
+	switch {
+	case errors.Is(err, ErrDeviceNotInGraph):
 		return fail("graph-attested", "device "+id+" is not enrolled in Intune")
+	case err != nil:
+		return errf("graph-attested", "Graph query failed: "+err.Error())
 	}
 	att := dev.DeviceHealthAttestation
 	if att == nil || (att.SecureBoot == "" && att.BitLockerStatus == "") {
