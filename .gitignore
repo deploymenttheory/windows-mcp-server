@@ -41,3 +41,6 @@ go.work.sum
 # Logs and scratch files
 *.log
 *.bak
+
+# golangci-lint SARIF output (see .golangci.yml output settings)
+golangci-lint-report.sarif
