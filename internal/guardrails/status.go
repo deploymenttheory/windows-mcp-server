@@ -147,8 +147,12 @@ func StatusTool(current StatusProvider, snapshot SnapshotProvider, kill *KillSwi
 	return tool, handler
 }
 
-// KillTool returns the Kill MCP tool that stops the session via the kill switch.
-func KillTool(kill *KillSwitch) (*mcp.Tool, mcp.ToolHandler) {
+// KillTool returns the Kill MCP tool that stops the session. stop is supplied by
+// the server layer: the kill switch's Trip when the switch is armed, otherwise a
+// containment-free graceful stop. Either way the session ends, but an agent can
+// never escalate "stop this session" into network isolation or a shutdown on an
+// operator who did not arm the switch.
+func KillTool(stop func(reason string)) (*mcp.Tool, mcp.ToolHandler) {
 	destructive := true
 	tool := &mcp.Tool{
 		Name:        "Kill",
@@ -172,7 +176,9 @@ func KillTool(kill *KillSwitch) (*mcp.Tool, mcp.ToolHandler) {
 				reason = "MCP Kill tool: " + args.Reason
 			}
 		}
-		kill.Trip(reason)
+		if stop != nil {
+			stop(reason)
+		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Session stopping: " + reason}}}, nil
 	}
 	return tool, handler

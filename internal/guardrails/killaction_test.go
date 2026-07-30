@@ -1,6 +1,7 @@
 package guardrails
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +100,49 @@ func TestKillRestoreUndoesIsolation(t *testing.T) {
 	}
 	if !contains(act.calls, "restore") {
 		t.Errorf("Restore must undo isolation: %v", act.calls)
+	}
+}
+
+// TestStopGracefullyDoesNotContain covers the agent-facing Kill path: the session
+// still ends, but no containment action runs and no security banner is raised —
+// an agent cannot escalate "stop this session" into network isolation or a
+// shutdown, even with every escalation configured.
+func TestStopGracefullyDoesNotContain(t *testing.T) {
+	act := &fakeActuator{elevated: true}
+	var seq []string
+	cfg := KillActionConfig{Isolate: true, KillProcs: true, Lock: true, Shutdown: true, ProcNames: []string{"x"}}
+	e := newExec(cfg, act, &seq)
+	e.StopGracefully("agent requested stop")
+
+	if len(act.calls) != 0 {
+		t.Errorf("graceful stop must not actuate containment: %v", act.calls)
+	}
+	if contains(seq, "banner") {
+		t.Errorf("graceful stop must not raise the security banner: %v", seq)
+	}
+	if !contains(seq, "finalize") || !contains(seq, "abort") {
+		t.Errorf("graceful stop must finalize the recording and abort: %v", seq)
+	}
+	if idx(seq, "finalize") > idx(seq, "abort") {
+		t.Error("finalize must precede abort")
+	}
+}
+
+// TestStopGracefullyCauseIsMatchable pins the cancel cause the server layer keys
+// off to exit 0 on a requested stop rather than reporting a crash.
+func TestStopGracefullyCauseIsMatchable(t *testing.T) {
+	var cause error
+	e := NewKillExecutor(KillExecutorDeps{
+		Audit: NewAuditLog(&memSink{}),
+		Abort: func(err error) { cause = err },
+	})
+	e.StopGracefully("journey complete")
+
+	if !errors.Is(cause, ErrSessionStopped) {
+		t.Errorf("cause = %v, want errors.Is(..., ErrSessionStopped)", cause)
+	}
+	if !strings.Contains(cause.Error(), "journey complete") {
+		t.Errorf("cause must carry the reason, got %v", cause)
 	}
 }
 

@@ -1,11 +1,17 @@
 package guardrails
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 )
+
+// ErrSessionStopped is the cancel cause used for a graceful, requested stop (as
+// opposed to a kill-switch trip). The server layer matches on it so an
+// agent-requested shutdown exits cleanly instead of looking like a crash.
+var ErrSessionStopped = errors.New("session stopped")
 
 // SystemActuator performs the OS-level containment actions the kill switch can
 // escalate to. All methods are best-effort; the Windows implementation lives in
@@ -155,6 +161,28 @@ func (e *KillExecutor) OnTrip(reason string) {
 	}
 	if e.abort != nil { // ALWAYS, last
 		e.abort(fmt.Errorf("kill switch: %s", reason))
+	}
+}
+
+// StopGracefully ends the session with no containment: it audits the stop, seals
+// the chain, finalizes the recording, and aborts. It backs the agent-facing Kill
+// tool when the kill switch is not armed, so an agent asking to stop cleanly
+// cannot escalate to network isolation, process termination, or shutdown. The
+// authoritative triggers still route through OnTrip.
+func (e *KillExecutor) StopGracefully(reason string) {
+	e.audit.append("session.stop", map[string]any{"reason": reason})
+	e.logger.Info("session.stop", "reason", reason)
+	if e.audit != nil {
+		_ = e.audit.Flush()
+	}
+	if e.finalize != nil { // flush the recording before the transport closes
+		e.finalize()
+	}
+	if e.audit != nil {
+		_ = e.audit.Flush()
+	}
+	if e.abort != nil {
+		e.abort(fmt.Errorf("%w: %s", ErrSessionStopped, reason))
 	}
 }
 

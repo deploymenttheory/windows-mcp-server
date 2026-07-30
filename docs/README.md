@@ -1,70 +1,22 @@
-# Project Title
+# Documentation
 
-Simple overview of your project and its use or purpose.
+Design and reference documentation for `windows-mcp-server`. Start with the
+[root README](../README.md) for installation, MCP client setup, the tool and
+persona inventory, and the full flag reference.
 
->Make use of the [Markdow Syntax Guide](markdown-syntax-guide.md).
+## Contents
 
-## Description
+| Document | What it covers |
+|---|---|
+| [security-architecture.md](security-architecture.md) | The four-layer security design in depth, with Mermaid diagrams: pre-flight admission, in-flight polling, inline tool-call policy, and transparency (hash-chained audit, heartbeat, rug-pull detection, security banner). Includes the kill-switch arming gate and tiered action ladder, the privilege degrade model, a threat-model mapping, the trust model, and a component/file map. |
+| [vm-isolation.md](vm-isolation.md) | **Design/research note, not a shipped feature.** Why a disposable VM is stronger containment than in-process controls, comparing Windows Sandbox, Hyper-V VMMS, and the Host Compute System (HCS) API — including a prototyped HCS flow that is invisible to Hyper-V Manager and `Get-VM`. |
+| [markdown-syntax-guide.md](markdown-syntax-guide.md) | Markdown reference for authoring these docs. |
 
-Describe your project.
+## For contributors
 
-## Getting Started
-
-This is an example of how you may give instructions on setting up your project locally.
-To get a local copy up and running follow these simple example steps.
-
-### Prerequisites
-
-Describe any prerequisites or dependencies.
-
-### Installation
-
-* How/where to download your program
-* Any modifications needed to be made to files/folders
-
-  ```bash
-  iex "&amp; { $(irm https://aka.ms/install-powershell.ps1) } -UseMSI"
-  ```
-
-## Usage
-
-Use this space to show useful examples of how a project can be used. Additional screenshots, code examples and demos work well in this space. You may also link to more resources.
-
-_For more examples, please refer to the [Documentation](https://example.com)_
-
-
-## FAQ and Known Issues
-
-Any advise for common problems or issues.
-  ```bash
-  command to run if program contains helper info
-  ```
-
-## Contributors
-
-Contributors names and contact info
-
-* You, Yourself and the Universe
-* [@your_twitter](<https://twitter.com/your_username>)
-
-## Contribution
-
-If you would like to become an active contributor to this repository or project, please follow the instructions provided in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
-
-<!-- CONTACT -->
-## Contact
-
-Your Name - [@your_twitter](<https://twitter.com/your_username>) - email@example.com
-
-Project Link: [https://github.com/your_username/repo_name](<https://github.com/your_username/repo_name>)
-
-
-<!-- LICENSE -->
-## License
-
-Distributed under the MIT License. See [`LICENSE`](`../../LICENSE`).
-
-## References
-
-* [Emoji Cheat Sheet](<https://github.com/ikatyang/emoji-cheat-sheet>)
-* [License Helper](<https://choosealicense.com/>)
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — build, test, lint, and PR conventions.
+- [CLAUDE.md](../CLAUDE.md) — the load-bearing internal conventions: the COM STA
+  thread rule, the tool-authoring checklist, parameter-coercion and result
+  semantics, and the build-tag split. Useful to humans and AI agents alike.
+- [SECURITY.md](../SECURITY.md) — how to report a vulnerability, and what falls
+  outside scope given the project's deliberate no-sandboxing design.

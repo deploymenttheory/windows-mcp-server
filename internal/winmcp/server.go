@@ -7,6 +7,7 @@ package winmcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -231,9 +232,19 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	kill := guardrails.NewKillSwitch(executor.OnTrip)
 	defer func() { _ = executor.Restore() }() // undo firewall isolation on exit
 
+	// Kill triggers are gated by the master --with-kill-switch plus each trigger's
+	// own --kill-on-* flag. A disarmed trigger is report-only: still detected and
+	// audited, but it contains nothing and the server keeps serving.
+	armed := cfg.WithKillSwitch
+	tripSentinel := tripFunc("sentinel", armed, kill, audit, logger)
+	tripPostureDrift := tripFunc("posture-drift", armed && cfg.KillOnPostureDrift, kill, audit, logger)
+	tripCircuit := tripFunc("circuit-trip", armed && cfg.KillOnCircuitTrip, kill, audit, logger)
+	tripRugpull := tripFunc("rugpull", armed && cfg.KillOnRugpull, kill, audit, logger)
+	tripHeartbeat := tripFunc("heartbeat-gap", armed && cfg.KillOnHeartbeatGap, kill, audit, logger)
+
 	// --- Layer 4d: rug-pull detector (baseline pinned after all AddTool) ---
 	heartbeat := guardrails.NewHeartbeat(audit)
-	rugpull := guardrails.NewRugPull(kill.Trip, audit)
+	rugpull := guardrails.NewRugPull(tripRugpull, audit)
 
 	deps := windows.NewBaseDeps(dsk, logger, nil)
 	// Receiving middleware (outermost first): inject deps, audit, rug-pull, policy.
@@ -248,7 +259,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		Window:    cfg.CircuitWindow,
 		Threshold: cfg.CircuitThreshold,
 		Logger:    logger,
-		OnTrip:    kill.Trip,
+		OnTrip:    tripCircuit,
 	}))
 
 	inv.RegisterTools(runCtx, server, deps)
@@ -256,7 +267,13 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// Guardrail tools registered unconditionally (present under any persona).
 	statusTool, statusHandler := guardrails.StatusTool(holder.get, snapshotFn(startedAt, rugpull, heartbeat, audit, kill), kill)
 	server.AddTool(statusTool, statusHandler)
-	killTool, killHandler := guardrails.KillTool(kill)
+	// The agent-facing Kill tool always stops the session, but only actuates the
+	// containment ladder when the operator armed the switch.
+	stopSession := executor.StopGracefully
+	if armed {
+		stopSession = kill.Trip
+	}
+	killTool, killHandler := guardrails.KillTool(stopSession)
 	server.AddTool(killTool, killHandler)
 
 	// Pin the rug-pull baseline over the full served manifest.
@@ -266,21 +283,25 @@ func RunStdio(ctx context.Context, cfg Config) error {
 
 	// --- Layer 2: in-flight polling — posture drift, sentinel, always-on verifiers ---
 	guardrails.StartMonitor(runCtx, guardrails.MonitorConfig{
-		Interval:   cfg.GuardrailsInterval,
-		ControlDir: cfg.GuardrailsControlDir,
-		Kill:       kill,
-		Logger:     logger,
+		Interval:         cfg.GuardrailsInterval,
+		ControlDir:       cfg.GuardrailsControlDir,
+		TripSentinel:     tripSentinel,
+		TripPostureDrift: tripPostureDrift,
+		Stopped:          func() bool { tripped, _ := kill.Tripped(); return tripped },
+		Logger:           logger,
 		Evaluate: func(c context.Context) guardrails.Decision {
 			d := runner.Evaluate(c, guardrailEnv(dsk, logger))
 			holder.set(d)
 			return d
 		},
-		Verify: monitorVerifiers(cfg, heartbeat, rugpull, func() []*mcp.Tool {
+		Verify: monitorVerifiers(heartbeat, rugpull, func() []*mcp.Tool {
 			return baselineTools
-		}),
+		}, tripHeartbeat, tripRugpull),
 	})
-	if cfg.WithKillSwitch && cfg.KillOnHeartbeatGap && cfg.HeartbeatInterval > 0 {
-		heartbeat.StartWatchdog(runCtx, 3*cfg.HeartbeatInterval, kill.Trip)
+	if cfg.HeartbeatInterval > 0 {
+		// Started regardless of arming: a stalled heartbeat is reported even when
+		// the operator chose not to contain on it.
+		heartbeat.StartWatchdog(runCtx, 3*cfg.HeartbeatInterval, tripHeartbeat)
 	}
 
 	// --- Status endpoint (always-on when an address is configured) ---
@@ -310,6 +331,12 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	if tripped, reason := kill.Tripped(); tripped {
 		logger.Error("session terminated by kill switch", "reason", reason)
 		return fmt.Errorf("session terminated by kill switch: %s", reason)
+	}
+	// A requested stop (the Kill tool with the switch unarmed) is a normal
+	// shutdown, not a failure — exit cleanly so the host does not read it as a crash.
+	if cause := context.Cause(runCtx); errors.Is(cause, guardrails.ErrSessionStopped) {
+		logger.Info("session stopped on request", "cause", cause.Error())
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("server run: %w", err)
@@ -349,11 +376,17 @@ func invMCPTools(ctx context.Context, inv *inventory.Inventory) []*mcp.Tool {
 }
 
 // monitorVerifiers assembles the always-on in-flight checks (heartbeat + rug-pull
-// recheck). They run on every monitor tick and are not agent-disableable.
-func monitorVerifiers(cfg Config, hb *guardrails.Heartbeat, rp *guardrails.RugPull, tools func() []*mcp.Tool) []guardrails.VerifyFunc {
+// recheck). They run on every monitor tick and are not agent-disableable. Each
+// carries its own caller-gated trip function so the two triggers arm separately.
+func monitorVerifiers(
+	hb *guardrails.Heartbeat,
+	rp *guardrails.RugPull,
+	tools func() []*mcp.Tool,
+	tripHeartbeat, tripRugpull func(string),
+) []guardrails.VerifyFunc {
 	return []guardrails.VerifyFunc{
-		{Name: "heartbeat", Run: hb.Beat},
-		{Name: "rug-pull", Run: func(context.Context) error { return rp.Recheck(tools()) }},
+		{Name: "heartbeat", Run: hb.Beat, Trip: tripHeartbeat},
+		{Name: "rug-pull", Run: func(context.Context) error { return rp.Recheck(tools()) }, Trip: tripRugpull},
 	}
 }
 

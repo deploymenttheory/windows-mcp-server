@@ -12,11 +12,17 @@ and the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk). N
 computer-vision model is required: the agent perceives the UI through the
 Windows accessibility tree.
 
-> **Safety:** several tools (PowerShell, Registry, FileSystem, Process, App) have
-> full system access with no sandboxing. Run in a VM or Windows Sandbox for
+## Safety
+
+> **Several tools (PowerShell, Registry, FileSystem, Process, App) have full
+> system access with no sandboxing.** Run in a VM or Windows Sandbox for
 > untrusted workloads — see [docs/vm-isolation.md](docs/vm-isolation.md) for the
 > isolation options, including disposable, Hyper-V-Manager-invisible **HCS**
 > sandboxes.
+
+This is the design, not an oversight; see
+[SECURITY.md](SECURITY.md) for what is and is not in scope as a vulnerability,
+and [Security — four layers](#security--four-layers) for the in-process controls.
 
 ## Requirements
 
@@ -241,8 +247,8 @@ Every flag has a `WINDOWS_MCP_`-prefixed env var (e.g. `--read-only` ↔
 | `--with-logging` | Audit-log sink: empty/`stderr` for stderr JSONL, or a file path for hash-chained JSONL |
 | `--heartbeat-interval` | Heartbeat cadence written to the audit chain (default 30s) |
 | `--guardrails-status-addr` / `--guardrails-status-token` | Loopback HTTP status/may-run endpoint + bearer token |
-| `--with-kill-switch` | Arm the kill switch |
-| `--kill-on-posture-drift` / `--kill-on-circuit-trip` / `--kill-on-rugpull` / `--kill-on-heartbeat-gap` | Kill triggers (all default on) |
+| `--with-kill-switch` | Arm the kill switch (master gate; default off — without it, triggers are detected and audited but contain nothing) |
+| `--kill-on-posture-drift` / `--kill-on-circuit-trip` / `--kill-on-rugpull` / `--kill-on-heartbeat-gap` | Kill triggers (all default on; each also requires `--with-kill-switch`) |
 | `--kill-action-isolate` | Kill action: firewall isolate the device (default on; requires elevation) |
 | `--kill-action-kill-procs` / `--kill-action-proc-names` | Kill action: terminate named processes (requires elevation) |
 | `--kill-action-lock` / `--kill-action-shutdown` / `--kill-action-shutdown-delay` | Kill actions: lock / shut down (requires elevation) |
@@ -338,15 +344,31 @@ it — rate-limiting sensitive tools and tripping on destructive tripwires
   descriptions or schemas — a "rug pull"), the served `tools/list` and the
   periodic monitor both catch it and trip the kill switch.
 
-**Kill switch — tiered, out-of-band.** Triggers (`--with-kill-switch`,
-`--kill-on-posture-drift`/`-circuit-trip`/`-rugpull`/`-heartbeat-gap`, a sentinel
-file, `POST /revoke`, or the `Kill` MCP tool) are configured separately from
-actions. On any trip the switch **always** raises the banner, seals the audit
-log, finalizes the recording, and aborts the session. Opt-in escalations run in
-order: `--kill-action-isolate` (firewall block-all; loopback stays exempt so the
-status endpoint survives — default on), `--kill-action-kill-procs`
+**Kill switch — tiered, out-of-band.** Triggers are configured separately from
+actions, and **arming is a two-step gate**: `--with-kill-switch` is the master
+switch (default **off**), and each trigger additionally honours its own
+`--kill-on-posture-drift`/`-circuit-trip`/`-rugpull`/`-heartbeat-gap` flag
+(all default on, so arming the master enables them all). A sentinel file and
+`POST /revoke` are gated on the master switch alone.
+
+Detection is never gated. When a trigger fires while disarmed it is still
+detected, logged, and written to the audit chain as `killswitch.disarmed`
+(recording the trigger and reason) — you always see that something fired, even
+when you chose not to act on it — and the server keeps serving and keeps
+monitoring.
+
+Once armed, a trip **always** raises the banner, seals the audit log, finalizes
+the recording, and aborts the session. Opt-in escalations run in order:
+`--kill-action-isolate` (firewall block-all; loopback stays exempt so the status
+endpoint survives — default on), `--kill-action-kill-procs`
 (`--kill-action-proc-names`), `--kill-action-lock`, `--kill-action-shutdown`.
-The **default is isolate + abort, no shutdown.**
+The **default once armed is isolate + abort, no shutdown.**
+
+The agent-facing `Kill` tool is deliberately not an authoritative trigger. It
+always stops the session cleanly (audit, seal, finalize the recording, abort),
+but it only actuates the containment ladder when the master switch is armed — an
+agent can never escalate "stop this session" into network isolation or a
+shutdown on an operator who did not arm it.
 
 **Privilege model — best-effort degrade.** The server runs in the (non-admin)
 user context. The elevation-only actions (isolate / kill-procs / shutdown) run
@@ -358,11 +380,13 @@ recording-finalize, and abort still happen.
 
 - **Dynamic rug pulls** — tool-manifest fingerprint + `tools/list` interception +
   periodic recheck (silent `tools/list_changed` is suppressed).
-- **Indirect prompt injection / data-exfil loops** — the circuit breaker escalates
-  to network isolation, cutting the exfil channel, then aborts.
+- **Indirect prompt injection / data-exfil loops** — the circuit breaker blocks the
+  call and, when the kill switch is armed, escalates to network isolation, cutting
+  the exfil channel, then aborts.
 - **Out-of-band control** — the status endpoint, audit log, heartbeat, monitor,
   and kill switch are not exposed as tools; the only agent-facing tools are the
-  read-only `GuardrailStatus` and the trigger-only `Kill`.
+  read-only `GuardrailStatus` and `Kill`, which stops the session but cannot
+  actuate containment unless the operator armed the switch.
 
 ### Trust model — read this
 

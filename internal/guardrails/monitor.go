@@ -19,22 +19,34 @@ type MonitorConfig struct {
 	Evaluate func(ctx context.Context) Decision
 	// Verify holds the always-on in-flight checks (heartbeat, rug-pull recheck,
 	// status refresh). They run on every tick regardless of Interval and are not
-	// agent-disableable. A non-nil error trips the kill switch.
+	// agent-disableable. A non-nil error fires that check's own Trip.
 	Verify []VerifyFunc
-	Kill   *KillSwitch
-	Logger *slog.Logger
+	// TripSentinel fires when the local sentinel file appears; TripPostureDrift
+	// fires when a periodic re-evaluation stops admitting. Each is supplied by the
+	// caller already gated on its operator flag, so a trigger the operator left
+	// disabled is report-only rather than absent — detection and audit are never
+	// conditional on containment.
+	TripSentinel     func(reason string)
+	TripPostureDrift func(reason string)
+	// Stopped reports whether the server is genuinely being torn down. The loop
+	// exits only when it returns true, so a report-only trip does not silently end
+	// all further monitoring.
+	Stopped func() bool
+	Logger  *slog.Logger
 }
 
-// VerifyFunc is one always-on in-flight check. name is used in the trip reason.
+// VerifyFunc is one always-on in-flight check. Name is used in the trip reason
+// and Trip is that check's caller-gated trip function.
 type VerifyFunc struct {
 	Name string
 	Run  func(ctx context.Context) error
+	Trip func(reason string)
 }
 
 // StartMonitor launches the continuous-verification loop: it re-evaluates
 // posture on Interval (tripping the kill switch if admission flips) and watches
 // for a local sentinel file. It returns immediately; the goroutine stops when
-// ctx is cancelled.
+// ctx is cancelled or Stopped reports the server is going down.
 func StartMonitor(ctx context.Context, cfg MonitorConfig) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -52,6 +64,7 @@ func StartMonitor(ctx context.Context, cfg MonitorConfig) {
 		t := time.NewTicker(tick)
 		defer t.Stop()
 		var lastEval time.Time
+		var sentinelSeen bool
 		for {
 			select {
 			case <-ctx.Done():
@@ -59,10 +72,15 @@ func StartMonitor(ctx context.Context, cfg MonitorConfig) {
 			case <-t.C:
 			}
 
-			if cfg.ControlDir != "" {
+			if cfg.ControlDir != "" && !sentinelSeen {
 				if _, err := os.Stat(filepath.Join(cfg.ControlDir, "kill")); err == nil {
-					cfg.Kill.Trip("local sentinel: kill file present")
-					return
+					// Report once: a sentinel file stays present, and a report-only
+					// trigger would otherwise re-audit it on every tick.
+					sentinelSeen = true
+					fire(cfg.TripSentinel, "local sentinel: kill file present")
+					if cfg.stopped() {
+						return
+					}
 				}
 			}
 
@@ -72,8 +90,10 @@ func StartMonitor(ctx context.Context, cfg MonitorConfig) {
 					continue
 				}
 				if err := v.Run(ctx); err != nil {
-					cfg.Kill.Trip(v.Name + ": " + err.Error())
-					return
+					fire(v.Trip, v.Name+": "+err.Error())
+					if cfg.stopped() {
+						return
+					}
 				}
 			}
 
@@ -82,10 +102,24 @@ func StartMonitor(ctx context.Context, cfg MonitorConfig) {
 				d := cfg.Evaluate(ctx)
 				LogDecision(cfg.Logger, "periodic", d)
 				if !d.Admit {
-					cfg.Kill.Trip("posture drift: " + strings.Join(d.Reasons, "; "))
-					return
+					fire(cfg.TripPostureDrift, "posture drift: "+strings.Join(d.Reasons, "; "))
+					if cfg.stopped() {
+						return
+					}
 				}
 			}
 		}
 	}()
+}
+
+// fire invokes a caller-supplied trip function, tolerating nil (no trigger wired).
+func fire(trip func(string), reason string) {
+	if trip != nil {
+		trip(reason)
+	}
+}
+
+// stopped reports whether the monitor loop should exit.
+func (cfg MonitorConfig) stopped() bool {
+	return cfg.Stopped != nil && cfg.Stopped()
 }

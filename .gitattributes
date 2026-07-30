@@ -5,3 +5,15 @@
 * text=auto
 
 *.json text eol=lf
+
+# Go tooling (gofmt/gofumpt/gci/golines) emits LF and treats CRLF files as
+# misformatted. Without this, a Windows checkout produces CRLF worktree files and
+# the lint job flags every file. The index is already LF, so this only affects
+# checkout — no content churn.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+
+# Workflow and config files parsed by Linux-hosted tooling.
+*.yml text eol=lf
+*.yaml text eol=lf

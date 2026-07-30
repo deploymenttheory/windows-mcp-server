@@ -154,6 +154,39 @@ func killActionConfig(cfg Config) guardrails.KillActionConfig {
 	}
 }
 
+// tripFunc returns the trip function for one kill trigger. When the kill switch
+// is armed (--with-kill-switch) and this trigger is enabled (--kill-on-<trigger>),
+// it is the switch's Trip, which runs the full containment ladder. Otherwise it is
+// report-only: the event is still audited and logged, because Layer 4 transparency
+// must not be conditional on containment — the operator sees that a trigger fired
+// even when they chose not to act on it.
+func tripFunc(
+	trigger string,
+	armed bool,
+	kill *guardrails.KillSwitch,
+	audit *guardrails.AuditLog,
+	logger *slog.Logger,
+) func(string) {
+	if armed {
+		return kill.Trip
+	}
+	return func(reason string) {
+		if audit != nil {
+			_, _ = audit.Append("killswitch.disarmed", map[string]any{
+				"trigger": trigger,
+				"reason":  reason,
+			})
+		}
+		if logger != nil {
+			logger.Warn("kill trigger fired but is disarmed; not containing",
+				"trigger", trigger,
+				"reason", reason,
+				"enable_with", "--with-kill-switch",
+			)
+		}
+	}
+}
+
 // decisionHolder stores the latest decision for the status surface.
 type decisionHolder struct {
 	mu sync.Mutex

@@ -135,10 +135,15 @@ watches a `kill` sentinel file, and runs the **force-on verifiers** (heartbeat +
 rug-pull recheck). None of it is exposed as an agent-controllable tool; the
 interval only tunes cadence (5 s floor).
 
+Each detection routes to its **own gated trip function** (see
+[Arming](#arming--a-two-step-gate)), so the four triggers arm independently. The
+loop continues unless the trip was real — a report-only trip must not end
+monitoring.
+
 ```mermaid
 flowchart LR
     T(["tick — every inflight-interval / 5s floor"]) --> S{"sentinel<br/>kill file?"}
-    S -- yes --> K["Kill.Trip"]
+    S -- "yes (once)" --> K["gated trip<br/>(contain, or audit-only)"]
     S -- no --> V["run force-on verifiers"]
     V --> HB["heartbeat.Beat → audit chain"]
     V --> RP["rug-pull recheck"]
@@ -147,6 +152,9 @@ flowchart LR
     RP -->|drift| K
     P -- "no (drift)" --> K
     P -- yes --> T
+    K --> Q{"Stopped()?"}
+    Q -- "no (report-only)" --> T
+    Q -- yes --> X(["exit loop"])
 
     classDef kill fill:#7a1f1f,stroke:#e33,color:#fff;
     class K kill;
@@ -227,7 +235,7 @@ flowchart TB
     Serve --> Live1["client tools/list"]
     Live1 --> Cmp1{"hash == baseline?"}
     Cmp1 -- yes --> OK1["ok"]
-    Cmp1 -- "no (mutated)" --> Trip["Kill.Trip + audit rugpull.detected"]
+    Cmp1 -- "no (mutated)" --> Trip["audit rugpull.detected<br/>+ gated trip"]
 
     Serve --> Live2["monitor recheck (out-of-band)"]
     Live2 --> Cmp2{"hash == baseline?"}
@@ -251,14 +259,42 @@ session recording**, so the event is on the video timeline.
 
 ## Kill switch — tiered, out-of-band
 
-Triggers are configured **separately** from actions. Regardless of which
-escalations are enabled, every trip **always** raises the banner, seals the audit
-log, finalizes the recording, and aborts the session. The order is deliberate:
-seal and finalize the forensic trail **before** any shutdown.
+Triggers are configured **separately** from actions.
+
+### Arming — a two-step gate
+
+`--with-kill-switch` is the master gate (default **off**). Each trigger
+additionally honours its own flag — `--kill-on-posture-drift`,
+`--kill-on-circuit-trip`, `--kill-on-rugpull`, `--kill-on-heartbeat-gap` — all of
+which default on, so arming the master enables the full set. The sentinel file
+and `POST /revoke` are gated on the master switch alone.
+
+**Detection is never gated.** A trigger that fires while disarmed is still
+detected, logged at Warn, and written to the audit chain as `killswitch.disarmed`
+with the trigger and reason. Layer 4 transparency does not depend on Layer 4
+containment: the operator always sees that something fired, even when they chose
+not to act on it. Critically, a report-only trip does **not** end the in-flight
+monitor loop — disarming one trigger must not silently disable all subsequent
+monitoring (`MonitorConfig.Stopped` gates loop exit, and only a real trip sets it).
+
+```mermaid
+flowchart LR
+    T["trigger fires"] --> G{"--with-kill-switch<br/>AND --kill-on-&lt;trigger&gt;?"}
+    G -- no --> R["audit: killswitch.disarmed<br/>+ log Warn<br/>keep serving, keep monitoring"]
+    G -- yes --> OT2["KillExecutor.OnTrip"]
+    classDef always fill:#1f4d7a,stroke:#4af,color:#fff;
+    class R always;
+```
+
+### The ladder
+
+Once armed, every trip **always** raises the banner, seals the audit log,
+finalizes the recording, and aborts the session. The order is deliberate: seal
+and finalize the forensic trail **before** any shutdown.
 
 ```mermaid
 flowchart TB
-    subgraph TRIG["Triggers (any one fires OnTrip once)"]
+    subgraph TRIG["Armed triggers (any one fires OnTrip once)"]
         direction LR
         t1["posture drift"]
         t2["circuit breaker"]
@@ -266,7 +302,6 @@ flowchart TB
         t4["heartbeat gap"]
         t5["sentinel file"]
         t6["POST /revoke"]
-        t7["Kill tool"]
     end
 
     TRIG --> OT["KillExecutor.OnTrip(reason)"]
@@ -298,8 +333,17 @@ flowchart TB
     class OT kill;
 ```
 
-**Default = isolate + abort, no shutdown.** On exit, network isolation is undone
-(the executor keeps a `restore` handle).
+**Default once armed = isolate + abort, no shutdown.** On exit, network isolation
+is undone (the executor keeps a `restore` handle).
+
+### The agent-facing `Kill` tool is not an authoritative trigger
+
+`Kill` is deliberately absent from the ladder above. It always stops the session
+cleanly — `KillExecutor.StopGracefully`: audit `session.stop`, seal the chain,
+finalize the recording, abort — but it actuates the containment ladder only when
+the master switch is armed. Containment exists to contain *the agent*, triggered
+by the authoritative detectors; letting the agent self-trigger firewall isolation
+or a shutdown would be a denial-of-service vector, not a protection.
 
 ### Privilege model — best-effort degrade
 
@@ -323,10 +367,10 @@ flowchart LR
 
 | Threat | Mechanism |
 |---|---|
-| **Dynamic rug pull** — approved server mutates its tool set post-deploy | Manifest fingerprint pinned at startup + `tools/list` interception + monitor recheck; silent `list_changed` suppressed → banner + isolate + abort |
-| **Indirect prompt injection / data-exfil loops** | Circuit breaker rate/tripwire → escalates to **network isolation** (cuts the exfil channel) → abort; audit records the call sequence with arg digests |
-| **Out-of-band control / agent tampering** | Status, audit, heartbeat, monitor, and kill switch are constructed in the server, not exposed as tools; middleware runs on the receiving path — unbypassable. The only agent-facing tools are read-only `GuardrailStatus` and trigger-only `Kill` |
-| **Silent posture drift** (Secure Boot off, BitLocker suspended, MDM removed mid-session) | In-flight monitor re-evaluates live posture every interval → kill on drift |
+| **Dynamic rug pull** — approved server mutates its tool set post-deploy | Manifest fingerprint pinned at startup + `tools/list` interception + monitor recheck; silent `list_changed` suppressed → audited always, and banner + isolate + abort when armed |
+| **Indirect prompt injection / data-exfil loops** | Circuit breaker rate/tripwire blocks the call → escalates to **network isolation** (cuts the exfil channel) → abort, when armed; audit records the call sequence with arg digests either way |
+| **Out-of-band control / agent tampering** | Status, audit, heartbeat, monitor, and kill switch are constructed in the server, not exposed as tools; middleware runs on the receiving path — unbypassable. The only agent-facing tools are read-only `GuardrailStatus` and `Kill`, which stops the session but cannot actuate containment unarmed |
+| **Silent posture drift** (Secure Boot off, BitLocker suspended, MDM removed mid-session) | In-flight monitor re-evaluates live posture every interval → audited always, kill on drift when armed |
 | **Log tampering / gaps** | Hash-chained append-only audit + heartbeat; `VerifyChain` detects any break |
 
 ---
@@ -358,7 +402,8 @@ enables it.
 | Rug-pull detector | `internal/guardrails/rugpull.go` |
 | Circuit breaker (inline policy) | `internal/guardrails/policy.go` |
 | In-flight monitor | `internal/guardrails/monitor.go` |
-| Kill switch + tiered executor | `internal/guardrails/{killswitch,killaction}.go` |
+| Kill switch + tiered executor + graceful stop | `internal/guardrails/{killswitch,killaction}.go` |
+| Per-trigger arming gate (`tripFunc`) | `internal/winmcp/guardrails.go` |
 | System actuator (Windows / stub) | `internal/guardrails/actuator_{windows,stub}.go` |
 | Firewall isolator (`INetFwPolicy2`) | `internal/guardrails/firewall_windows.go` |
 | Run-context detection | `internal/guardrails/runcontext_windows.go` |

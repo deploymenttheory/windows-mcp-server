@@ -1,0 +1,65 @@
+name: go | Build & Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/go-build-test.yml'
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: '🧪 Build & Test (windows)'
+    # Windows-only by design: nearly every file carries
+    # `//go:build windows && (amd64 || arm64)`, so a Linux runner would compile
+    # almost nothing. Note step-security/harden-runner is not used here — it
+    # supports Linux runners only; the security posture is SHA-pinned actions
+    # plus minimal permissions.
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check Out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: 'go.sum'
+          cache: true
+
+      - name: Verify modules and tidiness
+        run: |
+          go mod download
+          go mod verify
+          go mod tidy -diff
+
+      - name: Build (amd64)
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # The UI Automation engine tests self-skip when the environment cannot host
+      # UIA (hosted runners have no interactive desktop session), so this job
+      # guarantees compilation plus the pure-logic suites: pkg/inventory,
+      # pkg/windows (manifest invariants, param coercion), internal/guardrails,
+      # and internal/winmcp. -v keeps those skips visible rather than silent.
+      - name: Test
+        run: go test ./... -count=1 -v
+
+      # The `(amd64 || arm64)` build tag is asserted everywhere and verified
+      # nowhere; cross-compiling catches arm64-only breakage before release.
+      - name: Build (arm64 cross-compile)
+        env:
+          GOARCH: arm64
+        run: go build ./...

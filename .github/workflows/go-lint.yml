@@ -17,15 +17,14 @@ permissions:
 jobs:
   golint:
     name: '✨ Run golangci-lint'
-    runs-on: ubuntu-24.04-arm
+    # Windows-only by design: nearly every file carries
+    # `//go:build windows && (amd64 || arm64)`, so on a Linux runner golangci-lint
+    # would exclude almost the whole codebase from analysis. harden-runner is not
+    # used here — it supports Linux runners only.
+    runs-on: windows-latest
 
     steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-
-      - name: Check Out  
+      - name: Check Out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0  # Get full history for full merge-base detection
@@ -42,7 +41,9 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: latest
-          args: --timeout=30m --verbose --config=./.golangci.yml --issues-exit-code=0
+          # No --issues-exit-code=0: lint gates the PR. Safe because .golangci.yml
+          # sets new: true with new-from-merge-base: main, so only new issues surface.
+          args: --timeout=30m --verbose --config=./.golangci.yml
           only-new-issues: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
           skip-cache: false              # restore and save cache
@@ -52,6 +53,7 @@ jobs:
       # Save artifacts on failure
       - name: Save artifacts
         if: failure()
+        shell: bash # POSIX idioms below; the default shell on windows runners is pwsh
         run: |
           mkdir -p wr_actions
           echo ${{ github.repository_owner }} > wr_actions/ghowner.txt
@@ -68,6 +70,7 @@ jobs:
       # Comment on failure
       - name: Get run url
         if: failure()
+        shell: bash # $GITHUB_ENV append idiom below
         run: |
           echo "gha_url=https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}" >> $GITHUB_ENV
           
