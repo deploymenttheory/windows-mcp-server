@@ -3,12 +3,15 @@
 package desktop
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"image"
 	"io"
 	"os/exec"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 // resolveFFmpeg returns the absolute path to ffmpeg, or "" if not found. It
@@ -32,7 +35,26 @@ type ffmpegEncoder struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
 	outPath string
+	// cancel kills the child. The encoder owns its own context rather than
+	// borrowing a caller's: the process must outlive individual frame writes but
+	// must never outlive close.
+	cancel context.CancelFunc
 }
+
+// ffmpegFinalizeTimeout bounds how long close waits for ffmpeg to finish writing
+// the container after stdin is closed.
+//
+// This matters more than a tidy-up would suggest: close is reached from
+// Desktop.Close, which the kill switch's Finalize hook calls. An unbounded
+// cmd.Wait meant a wedged ffmpeg could block containment and session shutdown
+// indefinitely. Generous enough for a large file to finalize, bounded so it
+// cannot hang.
+const ffmpegFinalizeTimeout = 30 * time.Second
+
+// ErrFFmpegFinalize reports that ffmpeg had to be killed rather than allowed
+// to finish writing the container. The recording on disk is truncated but the
+// session shut down; callers surface it as a warning, not a failure.
+var ErrFFmpegFinalize = errors.New("ffmpeg did not finalize the recording within the timeout")
 
 func newFFmpegEncoder(ffmpeg, outPath string, w, h int, opt RecorderOptions) (*ffmpegEncoder, error) {
 	codec := "libx264"
@@ -54,18 +76,21 @@ func newFFmpegEncoder(ffmpeg, outPath string, w, h int, opt RecorderOptions) (*f
 		"-crf", "28",
 		outPath,
 	}
-	cmd := exec.Command(ffmpeg, args...)
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, ffmpeg, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	cmd.Env = powerShellEnv() // reconstructed environment
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, err
+		cancel()
+		return nil, fmt.Errorf("ffmpeg stdin pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
+		cancel()
 		return nil, fmt.Errorf("start ffmpeg: %w", err)
 	}
-	return &ffmpegEncoder{cmd: cmd, stdin: stdin, outPath: outPath}, nil
+	return &ffmpegEncoder{cmd: cmd, stdin: stdin, outPath: outPath, cancel: cancel}, nil
 }
 
 func (e *ffmpegEncoder) writeFrame(img *image.RGBA) error {
@@ -76,8 +101,27 @@ func (e *ffmpegEncoder) writeFrame(img *image.RGBA) error {
 }
 
 func (e *ffmpegEncoder) close() error {
+	defer e.cancel()
+
 	_ = e.stdin.Close() // signals EOF; ffmpeg finalizes the file
-	return e.cmd.Wait()
+
+	done := make(chan error, 1)
+	go func() { done <- e.cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("ffmpeg finalize: %w", err)
+		}
+		return nil
+	case <-time.After(ffmpegFinalizeTimeout):
+		// Kill it and reap, so shutdown proceeds. The partial file is left for
+		// inspection; a truncated recording is better than a hung session.
+		e.cancel()
+		<-done
+		return fmt.Errorf("%w: %s after %s; process killed",
+			ErrFFmpegFinalize, e.outPath, ffmpegFinalizeTimeout)
+	}
 }
 
 func (e *ffmpegEncoder) path() string { return e.outPath }
