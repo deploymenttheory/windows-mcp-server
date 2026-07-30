@@ -49,6 +49,38 @@ const (
 	aviIndexEntrySize  = 16 // FOURCC + flags + offset + size
 )
 
+// u32 and i16 narrow a writer-side int to the width the AVI field uses.
+//
+// Every value they receive is already bounded by one of the writer's own
+// invariants — frame dimensions come from a captured image, fps is normalized
+// positive in newAVIWriter, and every size and offset is gated by fits before a
+// frame is accepted. A value outside range is therefore a programming error, not
+// a runtime condition. They clamp rather than wrap so that if an invariant is
+// ever broken the file is merely wrong in one field instead of silently
+// mis-addressed, and so the eighteen conversions this replaced do not each need
+// their own justification.
+func u32(v int) uint32 {
+	switch {
+	case v < 0:
+		return 0
+	case v > math.MaxUint32:
+		return math.MaxUint32
+	default:
+		return uint32(v)
+	}
+}
+
+func i16(v int) int16 {
+	switch {
+	case v < math.MinInt16:
+		return math.MinInt16
+	case v > math.MaxInt16:
+		return math.MaxInt16
+	default:
+		return int16(v)
+	}
+}
+
 func newAVIWriter(path string, w, h, fps int) (*aviWriter, error) {
 	if fps <= 0 {
 		fps = 4
@@ -68,80 +100,84 @@ func newAVIWriter(path string, w, h, fps int) (*aviWriter, error) {
 func (a *aviWriter) writeHeader() error {
 	b := make([]byte, 0, aviHeaderSize)
 	fourcc := func(s string) { b = append(b, s...) }
-	u32 := func(v uint32) { b = binary.LittleEndian.AppendUint32(b, v) }
-	u16 := func(v uint16) { b = binary.LittleEndian.AppendUint16(b, v) }
-	i16 := func(v int16) { b = binary.LittleEndian.AppendUint16(b, uint16(v)) }
+	put32 := func(v uint32) { b = binary.LittleEndian.AppendUint32(b, v) }
+	put16 := func(v uint16) { b = binary.LittleEndian.AppendUint16(b, v) }
+	// rcFrame is signed in the AVI header but the buffer writer is unsigned, so
+	// the reinterpretation is the point, not a range error.
+	putI16 := func(v int16) {
+		b = binary.LittleEndian.AppendUint16(b, uint16(v)) //nolint:gosec // signed field, unsigned writer
+	}
 
 	fourcc("RIFF")
-	u32(0) // RIFF size (patched)
+	put32(0) // RIFF size (patched)
 	fourcc("AVI ")
 
 	fourcc("LIST")
-	u32(192)
+	put32(192)
 	fourcc("hdrl")
 
 	// avih (main AVI header, 56 bytes)
 	fourcc("avih")
-	u32(56)
-	u32(uint32(1000000 / a.fps)) // dwMicroSecPerFrame
-	u32(0)                       // dwMaxBytesPerSec
-	u32(0)                       // dwPaddingGranularity
-	u32(0x10)                    // dwFlags = AVIF_HASINDEX
-	u32(0)                       // dwTotalFrames (patched)
-	u32(0)                       // dwInitialFrames
-	u32(1)                       // dwStreams
-	u32(0)                       // dwSuggestedBufferSize
-	u32(uint32(a.w))             // dwWidth
-	u32(uint32(a.h))             // dwHeight
-	u32(0)                       // dwReserved[0]
-	u32(0)                       // dwReserved[1]
-	u32(0)                       // dwReserved[2]
-	u32(0)                       // dwReserved[3]
+	put32(56)
+	put32(u32(1000000 / a.fps)) // dwMicroSecPerFrame
+	put32(0)                    // dwMaxBytesPerSec
+	put32(0)                    // dwPaddingGranularity
+	put32(0x10)                 // dwFlags = AVIF_HASINDEX
+	put32(0)                    // dwTotalFrames (patched)
+	put32(0)                    // dwInitialFrames
+	put32(1)                    // dwStreams
+	put32(0)                    // dwSuggestedBufferSize
+	put32(u32(a.w))             // dwWidth
+	put32(u32(a.h))             // dwHeight
+	put32(0)                    // dwReserved[0]
+	put32(0)                    // dwReserved[1]
+	put32(0)                    // dwReserved[2]
+	put32(0)                    // dwReserved[3]
 
 	// strl (stream list)
 	fourcc("LIST")
-	u32(116)
+	put32(116)
 	fourcc("strl")
 
 	// strh (stream header, 56 bytes)
 	fourcc("strh")
-	u32(56)
+	put32(56)
 	fourcc("vids")
 	fourcc("MJPG")
-	u32(0)             // dwFlags
-	u16(0)             // wPriority
-	u16(0)             // wLanguage
-	u32(0)             // dwInitialFrames
-	u32(1)             // dwScale
-	u32(uint32(a.fps)) // dwRate
-	u32(0)             // dwStart
-	u32(0)             // dwLength (patched)
-	u32(0)             // dwSuggestedBufferSize
-	u32(0xFFFFFFFF)    // dwQuality
-	u32(0)             // dwSampleSize
-	i16(0)             // rcFrame.left
-	i16(0)             // rcFrame.top
-	i16(int16(a.w))    // rcFrame.right
-	i16(int16(a.h))    // rcFrame.bottom
+	put32(0)          // dwFlags
+	put16(0)          // wPriority
+	put16(0)          // wLanguage
+	put32(0)          // dwInitialFrames
+	put32(1)          // dwScale
+	put32(u32(a.fps)) // dwRate
+	put32(0)          // dwStart
+	put32(0)          // dwLength (patched)
+	put32(0)          // dwSuggestedBufferSize
+	put32(0xFFFFFFFF) // dwQuality
+	put32(0)          // dwSampleSize
+	putI16(0)         // rcFrame.left
+	putI16(0)         // rcFrame.top
+	putI16(i16(a.w))  // rcFrame.right
+	putI16(i16(a.h))  // rcFrame.bottom
 
 	// strf (BITMAPINFOHEADER, 40 bytes)
 	fourcc("strf")
-	u32(40)
-	u32(40)                    // biSize
-	u32(uint32(a.w))           // biWidth
-	u32(uint32(a.h))           // biHeight
-	u16(1)                     // biPlanes
-	u16(24)                    // biBitCount
-	fourcc("MJPG")             // biCompression
-	u32(uint32(a.w * a.h * 3)) // biSizeImage
-	u32(0)                     // biXPelsPerMeter
-	u32(0)                     // biYPelsPerMeter
-	u32(0)                     // biClrUsed
-	u32(0)                     // biClrImportant
+	put32(40)
+	put32(40)                 // biSize
+	put32(u32(a.w))           // biWidth
+	put32(u32(a.h))           // biHeight
+	put16(1)                  // biPlanes
+	put16(24)                 // biBitCount
+	fourcc("MJPG")            // biCompression
+	put32(u32(a.w * a.h * 3)) // biSizeImage
+	put32(0)                  // biXPelsPerMeter
+	put32(0)                  // biYPelsPerMeter
+	put32(0)                  // biClrUsed
+	put32(0)                  // biClrImportant
 
 	// movi list
 	fourcc("LIST")
-	u32(0) // movi size (patched)
+	put32(0) // movi size (patched)
 	fourcc("movi")
 
 	if len(b) != aviHeaderSize {
@@ -182,11 +218,11 @@ func (a *aviWriter) writeFrame(jpeg []byte) error {
 	if !a.fits(len(jpeg)) {
 		return ErrAVISizeLimit
 	}
-	chunkOffset := uint32(aviHeaderSize + a.movieBytes - aviMoviFourccPos)
+	chunkOffset := u32(aviHeaderSize + a.movieBytes - aviMoviFourccPos)
 
 	var hdr [8]byte
 	copy(hdr[0:4], "00dc")
-	binary.LittleEndian.PutUint32(hdr[4:8], uint32(len(jpeg)))
+	binary.LittleEndian.PutUint32(hdr[4:8], u32(len(jpeg)))
 	if _, err := a.f.Write(hdr[:]); err != nil {
 		return err
 	}
@@ -202,7 +238,7 @@ func (a *aviWriter) writeFrame(jpeg []byte) error {
 		a.movieBytes++
 	}
 
-	a.index = append(a.index, aviIndexEntry{offset: chunkOffset, size: uint32(len(jpeg))})
+	a.index = append(a.index, aviIndexEntry{offset: chunkOffset, size: u32(len(jpeg))})
 	a.count++
 	return nil
 }
@@ -218,7 +254,7 @@ func (a *aviWriter) close() error {
 	// idx1 table.
 	idx := make([]byte, 0, 8+16*len(a.index))
 	idx = append(idx, "idx1"...)
-	idx = binary.LittleEndian.AppendUint32(idx, uint32(16*len(a.index)))
+	idx = binary.LittleEndian.AppendUint32(idx, u32(16*len(a.index)))
 	for _, e := range a.index {
 		idx = append(idx, "00dc"...)
 		idx = binary.LittleEndian.AppendUint32(idx, 0x10) // AVIIF_KEYFRAME
@@ -236,16 +272,16 @@ func (a *aviWriter) close() error {
 		_, err := a.f.WriteAt(buf[:], pos)
 		return err
 	}
-	if err := patch(aviRiffSizePos, uint32(total-8)); err != nil {
+	if err := patch(aviRiffSizePos, u32(total-8)); err != nil {
 		return err
 	}
-	if err := patch(aviTotalFramesPos, uint32(a.count)); err != nil {
+	if err := patch(aviTotalFramesPos, u32(a.count)); err != nil {
 		return err
 	}
-	if err := patch(aviStreamLenPos, uint32(a.count)); err != nil {
+	if err := patch(aviStreamLenPos, u32(a.count)); err != nil {
 		return err
 	}
-	if err := patch(aviMoviSizePos, uint32(4+a.movieBytes)); err != nil {
+	if err := patch(aviMoviSizePos, u32(4+a.movieBytes)); err != nil {
 		return err
 	}
 	return nil

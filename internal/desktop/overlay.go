@@ -17,6 +17,7 @@ package desktop
 
 import (
 	"log/slog"
+	"math"
 	"runtime"
 	"syscall"
 	"time"
@@ -185,7 +186,7 @@ func (m *overlayManager) createBanner(text string) *activeOverlay {
 		overlayExLayeredFlags,
 		overlayClassName, "",
 		wm.WS_POPUP,
-		int32(rect.Left), int32(rect.Top), int32(w), int32(h),
+		screenI32(rect.Left), screenI32(rect.Top), screenI32(w), screenI32(h),
 		0, 0, m.hinstance, nil,
 	)
 	if err != nil || hwnd == 0 {
@@ -210,7 +211,7 @@ func (m *overlayManager) createBanner(text string) *activeOverlay {
 		old := gdi.SelectObject(dc, gdi.HGDIOBJ(font))
 		gdi.SetBkMode(dc, int32(gdi.TRANSPARENT))
 		gdi.SetTextColor(dc, foundation.COLORREF(0x00FFFFFF))
-		r := foundation.RECT{Left: 0, Top: 0, Right: int32(w), Bottom: int32(h)}
+		r := foundation.RECT{Left: 0, Top: 0, Right: screenI32(w), Bottom: screenI32(h)}
 		gdi.DrawText(dc, foundation.PWSTR(win32.UTF16Ptr(text)), -1, &r,
 			gdi.DT_CENTER|gdi.DT_VCENTER|gdi.DT_SINGLELINE)
 		gdi.SelectObject(dc, old)
@@ -221,8 +222,8 @@ func (m *overlayManager) createBanner(text string) *activeOverlay {
 		bits[i] |= 0xFF000000
 	}
 
-	ptDst := foundation.POINT{X: int32(rect.Left), Y: int32(rect.Top)}
-	size := foundation.SIZE{Cx: int32(w), Cy: int32(h)}
+	ptDst := foundation.POINT{X: screenI32(rect.Left), Y: screenI32(rect.Top)}
+	size := foundation.SIZE{Cx: screenI32(w), Cy: screenI32(h)}
 	ptSrc := foundation.POINT{X: 0, Y: 0}
 	blend := gdi.BLENDFUNCTION{
 		BlendOp:             byte(gdi.AC_SRC_OVER),
@@ -252,6 +253,29 @@ func (m *overlayManager) dismissBanner() {
 // drawFunc fills a premultiplied-BGRA pixel buffer (top-down, width w, height h).
 type drawFunc func(px []uint32, w, h int)
 
+// screenI32 narrows a screen-space coordinate or length to the int32 Win32
+// geometry uses, clamping instead of wrapping.
+//
+// Overlay geometry originates from OS window and monitor rectangles, which are
+// int32 at the source, so the clamp should never engage. It exists because the
+// alternative on a 64-bit build is silent wraparound, which would place the
+// decoration at a real but unrelated point on screen rather than at the edge.
+//
+// Clamping is right *here* because this is decoration: an overlay a few pixels
+// off, or pinned to the screen edge, is a cosmetic defect. Input coordinates get
+// the opposite treatment — screenCoord in input.go rejects out-of-range values,
+// because acting on the wrong point is not cosmetic.
+func screenI32(v int) int32 {
+	switch {
+	case v < math.MinInt32:
+		return math.MinInt32
+	case v > math.MaxInt32:
+		return math.MaxInt32
+	default:
+		return int32(v)
+	}
+}
+
 // createOverlay builds a layered window covering rect, renders it with draw, and
 // shows it. Returns nil (after logging) on any failure.
 func (m *overlayManager) createOverlay(rect Rect, draw drawFunc, ttl time.Duration) *activeOverlay {
@@ -264,7 +288,7 @@ func (m *overlayManager) createOverlay(rect Rect, draw drawFunc, ttl time.Durati
 		overlayExLayeredFlags,
 		overlayClassName, "",
 		wm.WS_POPUP,
-		int32(rect.Left), int32(rect.Top), int32(w), int32(h),
+		screenI32(rect.Left), screenI32(rect.Top), screenI32(w), screenI32(h),
 		0, 0, m.hinstance, nil,
 	)
 	if err != nil || hwnd == 0 {
@@ -279,8 +303,8 @@ func (m *overlayManager) createOverlay(rect Rect, draw drawFunc, ttl time.Durati
 	}
 	draw(bits, w, h)
 
-	ptDst := foundation.POINT{X: int32(rect.Left), Y: int32(rect.Top)}
-	size := foundation.SIZE{Cx: int32(w), Cy: int32(h)}
+	ptDst := foundation.POINT{X: screenI32(rect.Left), Y: screenI32(rect.Top)}
+	size := foundation.SIZE{Cx: screenI32(w), Cy: screenI32(h)}
 	ptSrc := foundation.POINT{X: 0, Y: 0}
 	blend := gdi.BLENDFUNCTION{
 		BlendOp:             byte(gdi.AC_SRC_OVER),
@@ -312,8 +336,8 @@ func (m *overlayManager) makeDIB(w, h int) (gdi.HDC, gdi.HBITMAP, []uint32, bool
 	bi := gdi.BITMAPINFO{
 		BmiHeader: gdi.BITMAPINFOHEADER{
 			BiSize:        uint32(unsafe.Sizeof(gdi.BITMAPINFOHEADER{})),
-			BiWidth:       int32(w),
-			BiHeight:      -int32(h), // negative => top-down
+			BiWidth:       screenI32(w),
+			BiHeight:      -screenI32(h), // negative => top-down
 			BiPlanes:      1,
 			BiBitCount:    32,
 			BiCompression: 0, // BI_RGB

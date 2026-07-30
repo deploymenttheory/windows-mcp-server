@@ -69,8 +69,9 @@ func tokenIsElevated(token foundation.HANDLE) bool {
 }
 
 func currentUserName() string {
-	buf := make([]uint16, 256)
-	n := uint32(len(buf))
+	const capacity = 256 // UNLEN+1 is 257; GetUserName truncates beyond it
+	buf := make([]uint16, capacity)
+	n := uint32(capacity)
 	if err := windowsprogramming.GetUserName(foundation.PWSTR(&buf[0]), &n); err != nil {
 		return ""
 	}

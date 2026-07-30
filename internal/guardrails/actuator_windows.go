@@ -82,13 +82,38 @@ func (a winActuator) KillProcesses(names []string) []error {
 // LockWorkstation locks the interactive session (no elevation required).
 func (winActuator) LockWorkstation() error { return shutdown.LockWorkStation() }
 
+// maxShutdownDelay is the ceiling Windows documents for
+// InitiateSystemShutdownEx's dwTimeout (MAX_SHUTDOWN_TIMEOUT, ten years).
+const maxShutdownDelay = 315360000 * time.Second
+
+// shutdownSeconds converts the configured delay to the uint32 seconds
+// InitiateSystemShutdownEx takes, clamping instead of wrapping.
+//
+// The delay comes from --kill-action-shutdown-delay, so it is operator input:
+// a bare uint32(delay / time.Second) turns a negative duration into roughly
+// 136 years, which would make the kill ladder's last containment step a silent
+// no-op. Clamping rather than erroring is deliberate — this runs mid-kill, and
+// refusing to contain because a flag was malformed is the worse failure. Both
+// clamps fail toward containment: too-negative becomes "now", too-large becomes
+// the longest delay the API will accept.
+func shutdownSeconds(delay time.Duration) uint32 {
+	switch {
+	case delay < 0:
+		return 0
+	case delay > maxShutdownDelay:
+		return uint32(maxShutdownDelay / time.Second)
+	default:
+		return uint32(delay / time.Second)
+	}
+}
+
 // Shutdown initiates a forced shutdown after delay, enabling SeShutdownPrivilege
 // first. Requires elevation.
 func (winActuator) Shutdown(reason string, delay time.Duration) error {
 	if err := enableShutdownPrivilege(); err != nil {
 		return fmt.Errorf("enable shutdown privilege: %w", err)
 	}
-	secs := uint32(delay / time.Second)
+	secs := shutdownSeconds(delay)
 	msg := "Windows MCP security kill switch: " + reason
 	return shutdown.InitiateSystemShutdownEx("", msg, secs, true /*force*/, false, /*reboot*/
 		shutdown.SHTDN_REASON_MAJOR_OTHER|shutdown.SHTDN_REASON_MINOR_OTHER|shutdown.SHTDN_REASON_FLAG_PLANNED)
@@ -119,7 +144,8 @@ func charsToString(b []foundation.CHAR) string {
 		if c == 0 {
 			break
 		}
-		out = append(out, byte(c))
+		// CHAR is a signed ANSI byte; reinterpreting it as unsigned is the point.
+		out = append(out, byte(c)) //nolint:gosec // ANSI byte reinterpretation
 	}
 	return string(out)
 }

@@ -73,7 +73,11 @@ func tpmPlatformClaim(nonce []byte) (quoteSize int, err error) {
 			PvBuffer:   unsafe.Pointer(&pcrMask[0]),
 		},
 	}
-	desc := cng.BCryptBufferDesc{UlVersion: cng.BCRYPTBUFFER_VERSION, CBuffers: uint32(len(bufs)), PBuffers: &bufs[0]}
+	desc := cng.BCryptBufferDesc{
+		UlVersion: cng.BCRYPTBUFFER_VERSION,
+		CBuffers:  uint32(len(bufs)), //nolint:gosec // two-element literal above
+		PBuffers:  &bufs[0],
+	}
 
 	// Size, then produce the signed claim blob.
 	var cb uint32
