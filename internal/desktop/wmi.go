@@ -232,9 +232,12 @@ func (d *Desktop) GetSystemInfo() (SystemInfo, error) {
 			for _, dk := range disks {
 				sizeGB := float64(dk.Size) / (1 << 30)
 				freeGB := float64(dk.FreeSpace) / (1 << 30)
+				// Size and FreeSpace are unsigned, so FreeSpace > Size (which WMI does
+				// report for some volumes) would underflow the subtraction into a huge
+				// value and yield a nonsense percentage rather than 0.
 				used := 0
-				if dk.Size > 0 {
-					used = int(100 * (dk.Size - dk.FreeSpace) / dk.Size)
+				if dk.Size > 0 && dk.FreeSpace <= dk.Size {
+					used = int(100 * (dk.Size - dk.FreeSpace) / dk.Size) //nolint:gosec // guarded to 0..100
 				}
 				si.Disks = append(si.Disks, DiskInfo{
 					Drive: dk.DeviceID, Volume: dk.VolumeName,
