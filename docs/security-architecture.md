@@ -363,6 +363,60 @@ flowchart LR
 
 ---
 
+## Credentials — use without disclosure
+
+Credentials supplied at init (`--credentials-file`) are installed into the running
+user's Windows Credential Manager. The threat this design addresses is **secret
+disclosure to the model**: an agent that can read a password can leak it into a
+transcript, a log, a tool argument, or an outbound request.
+
+```mermaid
+flowchart TB
+    F["--credentials-file<br/>(JSON on disk)"] --> ACL{"real DACL check<br/>Everyone / Users /<br/>Authenticated Users /<br/>INTERACTIVE readable?"}
+    ACL -- yes --> Refuse["refuse startup<br/>+ icacls remediation"]
+    ACL -- no --> Adm{"guardrails admitted?"}
+    Adm -- no --> Never["never provisioned"]
+    Adm -- yes --> W["CredWrite<br/>CRED_PERSIST_SESSION"]
+    W --> Wipe["zero file buffer<br/>+ secret copies"]
+    W --> A1["audit: credentials.installed<br/>(identifiers only)"]
+
+    W --> Tool["Credentials tool"]
+    Tool --> L["list / verify<br/>identifiers + presence"]
+    Tool --> I["inject"]
+    I --> Eng["engine: CredRead → UTF-16 units<br/>→ keystrokes → zero buffers"]
+    Eng --> Ret["returns character COUNT only"]
+
+    W --> Exit["every shutdown path<br/>(exit AND kill-switch)"]
+    Exit --> D["CredDelete + audit credentials.removed"]
+
+    classDef always fill:#1f4d7a,stroke:#4af,color:#fff;
+    classDef kill fill:#7a1f1f,stroke:#e33,color:#fff;
+    class Ret,D,Wipe always;
+    class Refuse,Never kill;
+```
+
+The load-bearing properties:
+
+| Property | How it is enforced |
+|---|---|
+| The agent can never read a secret | The tool has no `get` mode, and no function in `internal/desktop` returns a secret — `readSecretUnits` returns UTF-16 code units, not a string. A test pins the mode set. |
+| Secrets never reach the audit chain | `credentials.installed`/`credentials.removed` carry name, target, username, class. The tool-call audit middleware hashes arguments, and arguments only ever contain a credential *name*. |
+| Secrets never reach argv | Supply is file-only; argv is readable by any process on the machine. |
+| A disclosed file fails closed | The real DACL is read (`GetNamedSecurityInfo` + ACE walk). Go's Unix mode bits are ignored — Windows synthesizes `0666`, so a mode check proves nothing. |
+| No residue after a session | `CRED_PERSIST_SESSION` plus explicit `CredDelete` on normal exit *and* on kill-switch trip, via one `sync.Once`-guarded cleanup. Durable persistence is rejected, not silently overridden. |
+| A blocked startup provisions nothing | Installation happens after the Layer 1 admission gate; a partial install is rolled back. |
+| Injection is rate-limited | `Credentials` is in `sensitiveTools`, so the Layer 3 circuit breaker counts it. |
+
+**Residual risk, stated plainly.** The plaintext exists in process memory between
+reading the file and calling `CredWrite`. Buffers are zeroed and the JSON decoder
+avoids materializing an unwipeable Go string for unescaped values, but Go's
+garbage collector offers no guarantee that no copy was made. A host that can read
+this process's memory can read the secrets — as it could read them from the
+Credential Manager anyway. This raises the cost of casual disclosure; it is not a
+defence against a compromised host.
+
+---
+
 ## Threat model mapping
 
 | Threat | Mechanism |
@@ -372,6 +426,7 @@ flowchart LR
 | **Out-of-band control / agent tampering** | Status, audit, heartbeat, monitor, and kill switch are constructed in the server, not exposed as tools; middleware runs on the receiving path — unbypassable. The only agent-facing tools are read-only `GuardrailStatus` and `Kill`, which stops the session but cannot actuate containment unarmed |
 | **Silent posture drift** (Secure Boot off, BitLocker suspended, MDM removed mid-session) | In-flight monitor re-evaluates live posture every interval → audited always, kill on drift when armed |
 | **Log tampering / gaps** | Hash-chained append-only audit + heartbeat; `VerifyChain` detects any break |
+| **Credential disclosure to the model** | The `Credentials` tool has no read mode and no engine function returns a secret; `inject` types it and returns only a character count. Secrets never reach argv, tool results, or the audit chain |
 
 ---
 
@@ -395,6 +450,10 @@ enables it.
 
 | Concern | Package / file |
 |---|---|
+| Credential Manager engine (write/read/delete/inject) | `internal/desktop/credentials.go` |
+| Credentials init loading + lifecycle | `internal/winmcp/credentials.go` |
+| Credentials-file DACL check | `internal/winmcp/credfileacl_windows.go` |
+| Credentials tool (list/verify/inject) | `pkg/windows/credentials.go` |
 | PDP: runner, registry, decision, checks | `internal/guardrails/{runner,registry,decision,guardrail,providers,health}.go` |
 | Pre-flight providers (`not-admin`, `logged-on-account`) | `internal/guardrails/providers.go` |
 | Audit log (hash chain, sink, middleware) | `internal/guardrails/audit.go` |

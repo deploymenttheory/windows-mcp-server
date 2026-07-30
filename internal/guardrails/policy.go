@@ -35,7 +35,8 @@ func (c CircuitConfig) withDefaults() CircuitConfig {
 
 // sensitiveTools are state-changing / high-risk tools counted by the breaker.
 var sensitiveTools = map[string]bool{
-	"PowerShell": true, "Registry": true, "Process": true,
+	"Credentials": true,
+	"PowerShell":  true, "Registry": true, "Process": true,
 	"Service": true, "FileSystem": true, "App": true,
 }
 

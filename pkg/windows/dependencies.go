@@ -42,6 +42,12 @@ type ToolDependencies interface {
 
 	// IsFeatureEnabled reports whether a named feature flag is enabled.
 	IsFeatureEnabled(ctx context.Context, flagName string) bool
+
+	// Credentials returns the non-secret registry of credentials installed at
+	// init: names, targets, usernames, and classes. It deliberately cannot expose
+	// a secret — the plaintext never leaves the desktop engine, so no tool handler
+	// is able to return one.
+	Credentials() []desktop.CredentialInfo
 }
 
 // BaseDeps is the standard ToolDependencies implementation for the local
@@ -50,6 +56,7 @@ type BaseDeps struct {
 	desktop        *desktop.Desktop
 	logger         *slog.Logger
 	featureChecker inventory.FeatureFlagChecker
+	credentials    []desktop.CredentialInfo
 }
 
 // Compile-time assertion that BaseDeps satisfies ToolDependencies.
@@ -63,8 +70,18 @@ func NewBaseDeps(dsk *desktop.Desktop, logger *slog.Logger, featureChecker inven
 	return &BaseDeps{desktop: dsk, logger: logger, featureChecker: featureChecker}
 }
 
+// WithCredentials records the credentials installed at init, so the Credentials
+// tool can list what is available. Returns the receiver for chaining.
+func (d *BaseDeps) WithCredentials(creds []desktop.CredentialInfo) *BaseDeps {
+	d.credentials = creds
+	return d
+}
+
 // Desktop implements ToolDependencies.
 func (d *BaseDeps) Desktop() *desktop.Desktop { return d.desktop }
+
+// Credentials implements ToolDependencies.
+func (d *BaseDeps) Credentials() []desktop.CredentialInfo { return d.credentials }
 
 // Logger implements ToolDependencies.
 func (d *BaseDeps) Logger(_ context.Context) *slog.Logger { return d.logger }

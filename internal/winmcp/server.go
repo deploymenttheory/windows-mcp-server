@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -84,6 +85,13 @@ type Config struct {
 	RecordDir                 string        // legacy recording dir
 	RecordFPS                 int
 	RecordCodec               string
+
+	// --- Credentials ---
+	// CredentialsFile is a JSON document of credentials to install into the
+	// Windows Credential Manager at init. Secrets are never accepted as flags:
+	// argv is readable by any process on the machine. Enabling this also enables
+	// the "credentials" toolset.
+	CredentialsFile string
 
 	// --- Kill switch: triggers (separate from actions) ---
 	WithKillSwitch     bool
@@ -188,6 +196,29 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		guardrails.LogDecision(logger, "admit", decision)
 	}
 
+	// --- Init-time credentials ---
+	// Installed only after admission, so a denied startup never provisions
+	// credentials, and removed again on every shutdown path below.
+	var installedCreds []installedCredential
+	if cfg.CredentialsFile != "" {
+		entries, err := loadCredentialsFile(cfg.CredentialsFile)
+		if err != nil {
+			return err
+		}
+		installedCreds, err = installCredentials(dsk, entries, audit, logger)
+		if err != nil {
+			removeCredentials(dsk, installedCreds, audit, logger) // roll back a partial install
+			return err
+		}
+	}
+	// Removal must happen exactly once even though both the normal-exit defer and
+	// the kill-switch Finalize hook call it.
+	var credsOnce sync.Once
+	cleanupCreds := func() {
+		credsOnce.Do(func() { removeCredentials(dsk, installedCreds, audit, logger) })
+	}
+	defer cleanupCreds()
+
 	inv, personaInstructions, err := buildInventory(cfg, autoLimit)
 	if err != nil {
 		return err
@@ -222,7 +253,12 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		Audit:    audit,
 		Logger:   logger,
 		Banner:   dsk.ShowSecurityBanner,
-		Finalize: func() { _ = dsk.Close() }, // finalize recording synchronously (idempotent)
+		Finalize: func() {
+			// Revoke credentials before tearing the engine down: containment must not
+			// leave session credentials installed on the machine.
+			cleanupCreds()
+			_ = dsk.Close() // finalize recording synchronously (idempotent)
+		},
 		Abort: func(cause error) {
 			// Deferred so an in-flight reply (Kill tool / circuit-breaker block)
 			// flushes to the client before the transport closes.
@@ -246,7 +282,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	heartbeat := guardrails.NewHeartbeat(audit)
 	rugpull := guardrails.NewRugPull(tripRugpull, audit)
 
-	deps := windows.NewBaseDeps(dsk, logger, nil)
+	deps := windows.NewBaseDeps(dsk, logger, nil).WithCredentials(credentialInfos(installedCreds))
 	// Receiving middleware (outermost first): inject deps, audit, rug-pull, policy.
 	server.AddReceivingMiddleware(windows.InjectDepsMiddleware(deps))
 	server.AddReceivingMiddleware(audit.Middleware())
@@ -443,6 +479,11 @@ func buildInventory(cfg Config, autoLimit bool) (*inventory.Inventory, string, e
 		// SYSTEM context: restrict to non-desktop toolsets (Session 0 cannot
 		// drive the interactive desktop). Overrides any wider selection.
 		toolsets = nonAutomationToolsets
+	} else if cfg.CredentialsFile != "" {
+		// Supplying credentials is the opt-in for the credentials toolset: there is
+		// nothing for it to operate on otherwise. Skipped under autoLimit, because
+		// Session 0 cannot drive the sign-in UI the injection targets.
+		toolsets = withToolset(toolsets, string(windows.ToolsetCredentials.ID))
 	}
 
 	inv, err := windows.NewInventory().
@@ -456,6 +497,21 @@ func buildInventory(cfg Config, autoLimit bool) (*inventory.Inventory, string, e
 		return nil, "", fmt.Errorf("failed to build tool inventory: %w", err)
 	}
 	return inv, personaInstructions, nil
+}
+
+// withToolset adds id to a toolset selection. A nil selection means "the default
+// set", so it is made explicit as "default" plus id rather than collapsing to id
+// alone, which would silently drop every default toolset.
+func withToolset(toolsets []string, id string) []string {
+	if len(toolsets) == 0 {
+		return []string{"default", id}
+	}
+	for _, t := range toolsets {
+		if t == id || t == "all" {
+			return toolsets
+		}
+	}
+	return append(append([]string(nil), toolsets...), id)
 }
 
 // combineInstructions joins the persona guidance and the toolset-derived

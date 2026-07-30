@@ -65,6 +65,16 @@ var (
 		Description: "UI test assertions and evidence capture, for authoring and running automated tests. Disabled by default.",
 		Icon:        "beaker",
 	}
+	// ToolsetCredentials: use of credentials installed at init (non-default).
+	// Enabled automatically when --credentials-file is supplied; there is nothing
+	// to use without it.
+	ToolsetCredentials = inventory.ToolsetMetadata{
+		ID: "credentials",
+		Description: "Sign-in using credentials supplied to the server at startup and held in the Windows " +
+			"Credential Manager. Secrets can be injected into fields but never read back. Disabled by " +
+			"default; enabled automatically with --credentials-file.",
+		Icon: "key",
+	}
 )
 
 // Persona is a named preset that resolves to a toolset selection and a

@@ -1,0 +1,11 @@
+{
+  "source": "https://github.com/modelcontextprotocol/modelcontextprotocol/tree/main/schema",
+  "note": "Vendored MCP protocol schema revisions, one directory per released revision. Kept in-repo so conformance scoring is hermetic and offline. Managed by .github/workflows/mcp-spec-compliance.yml — do not edit by hand.",
+  "versions": [
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+    "2026-07-28"
+  ]
+}

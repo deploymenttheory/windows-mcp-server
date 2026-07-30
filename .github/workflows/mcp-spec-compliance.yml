@@ -1,0 +1,211 @@
+name: mcp | Spec Compliance
+
+# Tracks this project's conformance to the Model Context Protocol as the spec
+# evolves. Weekly it syncs the vendored schema revisions from upstream, rescores
+# the served MCP surface against every revision, and raises a PR (new schema) or a
+# tracking issue (new revision / score regression).
+#
+# Only the GitHub CLI and first-party actions are used, so every dependency is
+# either SHA-pinned or the pre-installed `gh`.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 06:17 UTC. Off the hour to avoid the scheduler's peak-minute backlog.
+    - cron: '17 6 * * 1'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/mcp-spec-compliance.yml'
+      - 'schema/**'
+      - 'internal/mcpspec/**'
+      - 'internal/winmcp/speccheck.go'
+      - 'pkg/windows/**'
+      - 'go.mod'
+
+permissions:
+  contents: read
+
+jobs:
+  compliance:
+    name: '📐 Score against MCP schemas'
+    # Windows-only: the spec-check subcommand lives behind the project's
+    # `//go:build windows` tags, and scoring runs a real in-process MCP session.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write        # push the vendored-schema branch
+      pull-requests: write   # open the schema-update PR
+      issues: write          # open/update the tracking issue
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # PR runs report only; they must not push branches or file issues.
+      MUTATE: ${{ github.event_name != 'pull_request' }}
+
+    steps:
+      - name: Check Out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: 'go.sum'
+          cache: true
+
+      - name: Sync upstream schema revisions
+        id: sync
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifestPath = 'schema/versions.json'
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          $known = @($manifest.versions)
+
+          # Upstream directory listing. Revision dirs are ISO dates; 'draft' churns
+          # continuously and is deliberately not vendored.
+          $listing = gh api repos/modelcontextprotocol/modelcontextprotocol/contents/schema | ConvertFrom-Json
+          $upstream = @($listing |
+            Where-Object { $_.type -eq 'dir' -and $_.name -match '^\d{4}-\d{2}-\d{2}$' } |
+            ForEach-Object { $_.name } | Sort-Object)
+
+          if (-not $upstream) { throw 'Upstream returned no revision directories' }
+
+          $new = @($upstream | Where-Object { $known -notcontains $_ })
+          "upstream: $($upstream -join ', ')"
+          "known   : $($known -join ', ')"
+          "new     : $(if ($new) { $new -join ', ' } else { '(none)' })"
+
+          foreach ($v in $new) {
+            New-Item -ItemType Directory -Force "schema/$v" | Out-Null
+            $url = "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/$v/schema.json"
+            Invoke-WebRequest -Uri $url -OutFile "schema/$v/schema.json"
+            "downloaded schema/$v/schema.json"
+          }
+
+          if ($new) {
+            $manifest.versions = @($upstream)
+            $manifest | ConvertTo-Json -Depth 5 | Set-Content $manifestPath -Encoding utf8
+          }
+
+          "new_versions=$($new -join ',')" | Out-File $env:GITHUB_OUTPUT -Append
+          "newest=$($upstream[-1])"        | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Read previous scores
+        id: before
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'schema/compliance.json') {
+            Copy-Item 'schema/compliance.json' "$env:RUNNER_TEMP/compliance-before.json"
+            "had_baseline=true" | Out-File $env:GITHUB_OUTPUT -Append
+          } else {
+            "had_baseline=false" | Out-File $env:GITHUB_OUTPUT -Append
+          }
+
+      - name: Score against every vendored revision
+        id: score
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go run ./cmd/windows-mcp-server spec-check --spec-version all --format json --out schema/compliance.json
+          go run ./cmd/windows-mcp-server spec-check --spec-version all --format markdown --out docs/mcp-compliance.md
+
+          $reports = Get-Content 'schema/compliance.json' -Raw | ConvertFrom-Json
+          $newest  = $reports | Select-Object -Last 1
+          "newest_version=$($newest.schema_version)" | Out-File $env:GITHUB_OUTPUT -Append
+          "newest_score=$($newest.score)"            | Out-File $env:GITHUB_OUTPUT -Append
+          "negotiated=$($newest.negotiated_version)" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Job summary
+        run: Get-Content docs/mcp-compliance.md | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Detect score regression
+        id: regress
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $regressed = @()
+          $beforePath = "$env:RUNNER_TEMP/compliance-before.json"
+          if (Test-Path $beforePath) {
+            $before = @(Get-Content $beforePath -Raw | ConvertFrom-Json)
+            $after  = @(Get-Content 'schema/compliance.json' -Raw | ConvertFrom-Json)
+            foreach ($a in $after) {
+              $b = $before | Where-Object { $_.schema_version -eq $a.schema_version } | Select-Object -First 1
+              if ($b -and $a.score -lt $b.score) {
+                $regressed += "$($a.schema_version): $($b.score) -> $($a.score)"
+              }
+            }
+          }
+          if ($regressed) { "  regressions: $($regressed -join '; ')" } else { "  no regressions" }
+          "regressed=$($regressed -join '; ')" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Open PR for vendored schema and report changes
+        if: env.MUTATE == 'true'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git add schema docs/mcp-compliance.md
+          if (-not (git diff --cached --name-only)) { "nothing changed"; exit 0 }
+
+          $newVersions = '${{ steps.sync.outputs.new_versions }}'
+          $branch = "chore/mcp-schema-sync-${{ github.run_id }}"
+          $title  = if ($newVersions) { "chore: vendor MCP schema revision(s) $newVersions" }
+                    else { 'chore: refresh MCP spec compliance report' }
+
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -b $branch
+          git commit -m $title -m 'Automated by .github/workflows/mcp-spec-compliance.yml.'
+          git push --set-upstream origin $branch
+
+          # Body is assembled as an array and passed via --body-file: PowerShell
+          # here-strings need their terminator at column 0, which a YAML block
+          # scalar cannot provide.
+          $vendored = if ($newVersions) { '`' + $newVersions + '`' } else { '_none_' }
+          $body = @(
+            'Automated MCP spec sync.'
+            ''
+            "- New revision(s) vendored: $vendored"
+            '- Newest published: `${{ steps.score.outputs.newest_version }}`'
+            '- Server negotiates: `${{ steps.score.outputs.negotiated }}`'
+            '- Score against newest: **${{ steps.score.outputs.newest_score }}/100**'
+            ''
+            'See `docs/mcp-compliance.md` in this PR for the full scored report.'
+          )
+          $bodyFile = Join-Path $env:RUNNER_TEMP 'pr-body.md'
+          $body | Set-Content $bodyFile -Encoding utf8
+          gh pr create --title $title --body-file $bodyFile --base '${{ github.ref_name }}' --head $branch
+
+      - name: Open or update tracking issue
+        if: env.MUTATE == 'true' && (steps.sync.outputs.new_versions != '' || steps.regress.outputs.regressed != '')
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $marker = 'mcp-spec-compliance'
+          $title  = 'MCP spec compliance: action needed'
+
+          $newVersions = '${{ steps.sync.outputs.new_versions }}'
+          $regressed   = '${{ steps.regress.outputs.regressed }}'
+          $newCell  = if ($newVersions) { '`' + $newVersions + '`' } else { '_none_' }
+          $regCell  = if ($regressed)   { '`' + $regressed   + '`' } else { '_none_' }
+
+          $body = @(
+            "<!-- $marker -->"
+            'Automated by `.github/workflows/mcp-spec-compliance.yml` (run ${{ github.run_id }}).'
+            ''
+            '| | |'
+            '|---|---|'
+            '| Newest published revision | `${{ steps.score.outputs.newest_version }}` |'
+            '| Server negotiates | `${{ steps.score.outputs.negotiated }}` |'
+            '| Score against newest | **${{ steps.score.outputs.newest_score }}/100** |'
+            "| New revision(s) this run | $newCell |"
+            "| Score regressions | $regCell |"
+            ''
+            'Full report: `docs/mcp-compliance.md`. Workflow run:'
+            '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          )
+          $bodyFile = Join-Path $env:RUNNER_TEMP 'issue-body.md'
+          $body | Set-Content $bodyFile -Encoding utf8
+
+          $existing = gh issue list --state open --search "$marker in:body" --json number --jq '.[0].number'
+          if ($existing) {
+            gh issue comment $existing --body-file $bodyFile
+            "updated issue #$existing"
+          } else {
+            gh issue create --title $title --body-file $bodyFile
+          }

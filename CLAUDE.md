@@ -21,6 +21,8 @@ built on `deploymenttheory/go-bindings-win32`, `go-bindings-wmi`, and the offici
 | `pkg/windows` | tool definitions (one file per topic) + toolset/persona metadata |
 | `pkg/inventory` | domain-agnostic toolset filter/registration engine (mirrors `github-mcp-server`) |
 | `internal/guardrails` | the four-layer security core |
+| `internal/mcpspec` | MCP schema conformance scorer (platform-agnostic; no build tag) |
+| `schema/` | vendored MCP protocol schemas + `versions.json` + committed `compliance.json` |
 
 ## Build, test, lint
 
@@ -182,12 +184,73 @@ The guardrails core stays platform-agnostic behind `SystemProbe` / `HealthProbe`
 without a Windows host. Keep new logic behind those interfaces rather than
 reaching for Windows APIs directly in the core.
 
+## Credentials — the never-read invariant
+
+`internal/desktop/credentials.go` is the **only** place in the server that touches
+a plaintext credential after it leaves the config file. The invariant: the agent
+can *use* a secret but can never *read* one.
+
+- No function in `internal/desktop` returns a secret. `readSecretUnits` returns
+  UTF-16 code units, not a string, precisely so a refactor cannot hand one to a
+  caller; `InjectCredential` converts them straight to keystrokes and zeroes the
+  buffer. Only the character count comes back.
+- The `Credentials` tool has exactly three modes — `list`, `verify`, `inject` —
+  and `TestCredentialsToolNeverReturnsSecrets` pins that set. **Do not add a
+  `get`/`read` mode**: it would put plaintext into the model's context.
+- `ToolDependencies.Credentials()` returns `[]desktop.CredentialInfo`, which has
+  no secret field. `TestCredentialInfosOmitSecretsAndDefault` asserts on the
+  serialized *keys* (not substrings — `domain_password` is a class name, not a
+  secret).
+- Audit gets identifiers only (`credentials.installed` / `credentials.removed`).
+- Secrets are never accepted as flags: argv is world-readable.
+- `checkCredentialsFileACL` reads the **real DACL**. Never substitute a
+  `Mode().Perm()` check — Windows synthesizes `0666` for every normal file, so a
+  Unix-bits check both proves nothing and can never be satisfied.
+- Installation happens only after guardrail admission, and removal runs on every
+  shutdown path via a `sync.Once`-guarded closure shared by the normal-exit defer
+  and the kill executor's `Finalize`.
+- `domain_password` blobs are write-only by design; `CredentialType.Readable()`
+  gates injection so the failure is explained rather than opaque.
+
+Note `leftClickAt` (`input.go`): STA-only, for use *inside* a `Do` job. Don't call
+`Click` from within a `Do` job — it wraps itself in `Do` and would deadlock on the
+unbuffered job channel.
+
+## MCP spec compliance
+
+`internal/mcpspec` scores the served surface against the vendored schemas. Two
+things to preserve:
+
+- **Score the wire bytes, not the Go types.** `winmcp.CaptureSurface` runs a real
+  in-process MCP session over `mcp.NewInMemoryTransports()` and feeds the actual
+  `tools/list` / handshake JSON to the scorer. Re-marshalling our structs would
+  hide exactly the divergence this is for. It mirrors `RunStdio`'s server
+  construction deliberately — keep them in step.
+- **Checks are def-driven, never hardcoded.** Revisions restructure: draft-07 with
+  `definitions` before 2025-11-25 and 2020-12 with `$defs` after; `ToolAnnotations`
+  does not exist in 2024-11-05; `2026-07-28` removes `InitializeResult` entirely in
+  favour of `DiscoverResult`. Use `Spec.FirstPresent(...)` and let a missing
+  definition *skip* the dimension — skipped weight leaves the denominator, so a
+  removed feature cannot depress the score.
+
+Server method coverage is derived from the schema's `ClientRequest` union (the
+requests a client sends), which is why client-side methods like
+`sampling/createMessage` correctly never count against us.
+
+After changing the tool manifest, regenerate the committed report:
+
+```powershell
+go run ./cmd/windows-mcp-server spec-check --spec-version all --format json --out schema/compliance.json
+go run ./cmd/windows-mcp-server spec-check --spec-version all --format markdown --out docs/mcp-compliance.md
+```
+
 ## Build tags
 
 Everything is `//go:build windows && (amd64 || arm64)` **except** the
 deliberately platform-agnostic files: `pkg/windows/{toolsets,params,result}.go`,
-all of `pkg/inventory`, and the `internal/guardrails` core. Preserve that split —
-it is what keeps the filter engine and security logic testable in isolation.
+all of `pkg/inventory`, all of `internal/mcpspec`, and the `internal/guardrails`
+core. Preserve that split — it is what keeps the filter engine, the conformance
+scorer, and the security logic testable in isolation.
 
 ## Notable gotchas
 

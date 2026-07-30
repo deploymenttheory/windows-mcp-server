@@ -40,6 +40,10 @@ The server speaks MCP over stdio: any MCP-capable client launches the binary
 with the `stdio` subcommand. Build it once and point your client at the full
 path to `windows-mcp-server.exe`.
 
+Subcommands: `stdio` (run the server), `check` (evaluate device guardrails once
+and print the decision), `personas` (list the presets), and `spec-check` (score
+the served MCP surface against the published protocol schemas).
+
 Configuration flags (persona, toolsets, read-only, overlay) are passed either as
 extra `args` after `stdio`, or as `WINDOWS_MCP_*` environment variables — see
 [Flags & environment](#flags--environment). The examples below select the
@@ -136,7 +140,8 @@ Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
 ## Tools
 
 Tools are grouped into **toolsets**. The default configuration enables `screen`,
-`interaction`, `apps`, and `system`; `shell`, `filesystem`, and `web` are opt-in.
+`interaction`, `apps`, and `system`; `shell`, `filesystem`, `web`, `diagnostics`,
+`testing`, and `credentials` are opt-in.
 
 | Toolset | Default | Tools |
 |---|:---:|---|
@@ -149,6 +154,7 @@ Tools are grouped into **toolsets**. The default configuration enables `screen`,
 | `web` | | `Scrape` |
 | `diagnostics` | | `SystemInfo` (OS/hardware/disk via WMI), `Service` (list / start / stop / restart) |
 | `testing` | | `Assert` (PASS/FAIL UI condition), `CaptureEvidence` (screenshot + tree) |
+| `credentials` | | `Credentials` (list / verify / inject) — enabled automatically with `--credentials-file` |
 
 The typical loop: call **`Snapshot`** to get the foreground window and a labeled
 tree of interactive elements, then act on a label with **`Click`**, **`Type`**,
@@ -232,6 +238,7 @@ Every flag has a `WINDOWS_MCP_`-prefixed env var (e.g. `--read-only` ↔
 | `--record-dir` | Record the whole session to a video file in this directory (see Session recording) |
 | `--record-fps` | Recording frame rate (default 4) |
 | `--record-codec` | `h264`/`h265` (via ffmpeg; small files) or `mjpeg` (pure-Go, no dependency) |
+| `--credentials-file` | JSON file of credentials to install into the Windows Credential Manager at init (see Credentials) |
 | `--security` | Master security switch: enforce pre-flight + force-on all transparency services (see below) |
 | `--with-mdm` | Pre-flight: require the device to be MDM-enrolled |
 | `--with-logged-on-account` | Pre-flight: require the interactive user to match a regex |
@@ -255,6 +262,111 @@ Every flag has a `WINDOWS_MCP_`-prefixed env var (e.g. `--read-only` ↔
 | `--guardrails-bypass` | Break-glass: skip pre-flight checks (logged) |
 | `--enable-tier2` + `--graph-*` / `--remote-policy-token` | Opt into the parked tier-2 remote checks (Graph / may-run PDP) |
 | `--log-file` | Write debug logs to a file (stdout is reserved for the transport) |
+
+## Credentials
+
+Credentials can be supplied to the server **at init** and are installed into the
+Windows Credential Manager for the running user, so anything in that user context
+— a browser, an LOB app, RDP, a mapped drive, Windows SSO — can consume them the
+normal way. The agent can then sign in without ever being told the secret.
+
+```sh
+./windows-mcp-server.exe stdio --credentials-file C:\secure\creds.json
+```
+
+```json
+{
+  "credentials": [
+    {
+      "name": "corp-sso",
+      "target": "login.contoso.com",
+      "username": "svc-automation@contoso.com",
+      "secret": "…",
+      "comment": "optional note stored on the credential"
+    }
+  ]
+}
+```
+
+`name` is the handle the agent uses; `target` is the Credential Manager target.
+`type` is `generic` (default) or `domain_password`. Supplying the flag enables the
+`credentials` toolset automatically — the default toolsets are kept, not replaced.
+
+### The agent can use a secret but never read one
+
+This is the property the whole design is built around:
+
+- **No mode returns plaintext.** The tool has exactly three modes — `list`,
+  `verify`, `inject` — and there is deliberately no `get`. A unit test pins the
+  mode set so a secret-reading mode cannot be added by accident.
+- **`inject` types the secret as keystrokes.** The value is read inside the
+  desktop engine, converted straight to input, and the buffers are zeroed. Only
+  the number of characters typed is returned. The secret never enters a tool
+  result, the audit log, the conversation transcript, or the model's context.
+- **Audit records identifiers only** — name, target, username, class — via
+  `credentials.installed` and `credentials.removed`.
+
+```jsonc
+// list: identifiers plus live presence, never secrets
+{"mode": "list"}
+// inject at the current focus
+{"mode": "inject", "name": "corp-sso"}
+// click the password field first, then type, then submit
+{"mode": "inject", "name": "corp-sso", "label": 7, "press_enter": true}
+{"mode": "inject", "name": "corp-sso", "name_target": "Password", "control_type": "Edit"}
+```
+
+`domain_password` credentials are installed for Windows to use but **cannot be
+injected** — Windows does not return their blob to a caller. `Credentials`
+reports them as `injectable: false` rather than failing opaquely.
+
+### Handling
+
+- **Secrets are never accepted as flags.** `argv` is readable by any process on
+  the machine, so a secret on the command line is a secret disclosed. The file is
+  the only supply path.
+- **The file's real ACL is checked** at startup. If `Everyone`, `Users`,
+  `Authenticated Users`, or `INTERACTIVE` can read it, startup fails with the
+  `icacls` command to fix it. (Go's Unix permission bits are meaningless here —
+  Windows synthesizes `0666` for every normal file.)
+- **Session-scoped and cleaned up.** Entries are written with
+  `CRED_PERSIST_SESSION` and deleted on *every* shutdown path — normal exit and
+  kill-switch trip alike — so a session leaves no credential residue. Durable
+  persistence is rejected rather than silently overridden.
+- **Installed only after admission.** A startup blocked by pre-flight guardrails
+  never provisions credentials. A partial install is rolled back.
+- `Credentials` counts as a sensitive tool, so the circuit breaker rate-limits it.
+
+> Secrets are held in process memory between reading the file and installing
+> them. Buffers are zeroed, and the JSON decoder avoids materializing an
+> unwipeable Go string for unescaped values — but Go offers no guarantee that a
+> copy was never made. Treat the host as trusted.
+
+## MCP spec compliance
+
+The project tracks its conformance to the Model Context Protocol as the spec
+evolves. `spec-check` runs a real in-process MCP session against the server's own
+tool manifest and validates the resulting **wire objects** — handshake result,
+capabilities, `tools/list` — against the official JSON Schemas vendored under
+`schema/`:
+
+```sh
+./windows-mcp-server.exe spec-check                       # newest revision, markdown
+./windows-mcp-server.exe spec-check --spec-version all --format json
+./windows-mcp-server.exe spec-check --fail-under 80       # exit 2 below threshold
+```
+
+Scoring is weighted across tool-definition conformance (40), `tools/list`
+conformance (15), server-method coverage (15), handshake conformance (10),
+capability conformance (10), and revision currency (10). A dimension the revision
+does not define is *skipped* and drops out of the denominator, rather than
+scoring zero — revisions restructure, and `2026-07-28` removes `initialize`
+entirely in favour of `server/discover`.
+
+`.github/workflows/mcp-spec-compliance.yml` runs weekly: it syncs new revisions
+from upstream, rescores, raises a PR for the vendored schema, and opens a tracking
+issue on a new revision or a score regression. The current report is committed at
+[docs/mcp-compliance.md](docs/mcp-compliance.md).
 
 ## Visual feedback overlays
 
@@ -408,9 +520,12 @@ internal/winmcp          server bootstrap: inventory + MCP server + deps middlew
 internal/desktop         the Windows engine — a dedicated COM STA thread serving
                          UIA traversal, SendInput, GDI screenshots, overlays,
                          PowerShell, and a WMI worker thread
+internal/mcpspec          MCP schema conformance scorer (platform-agnostic)
 pkg/windows              the MCP tool definitions + dependency-injection glue
 pkg/inventory            domain-agnostic toolset engine (grouping, filtering,
                          personas, read-only, feature flags)
+schema/                  vendored MCP protocol schemas, one dir per revision,
+                         plus versions.json and the committed compliance.json
 ```
 
 All Win32/COM work is serialized onto one STA thread; WMI runs on its own

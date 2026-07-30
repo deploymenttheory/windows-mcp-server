@@ -3,6 +3,7 @@
 package windows
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -51,7 +52,7 @@ func TestAllToolsValid(t *testing.T) {
 
 // TestExpectedToolCount guards against accidental tool loss/addition.
 func TestExpectedToolCount(t *testing.T) {
-	const want = 27
+	const want = 28
 	if got := len(AllTools()); got != want {
 		t.Errorf("tool count = %d, want %d (update this test intentionally)", got, want)
 	}
@@ -112,10 +113,50 @@ func TestReadOnlyToolsAreSafe(t *testing.T) {
 func TestDestructiveToolsAreWrite(t *testing.T) {
 	for _, st := range AllTools() {
 		switch st.Tool.Name {
-		case "PowerShell", "Registry", "FileSystem", "Process":
+		case "PowerShell", "Registry", "FileSystem", "Process", "Credentials":
 			if st.IsReadOnly() {
 				t.Errorf("%s must not be read-only", st.Tool.Name)
 			}
 		}
+	}
+}
+
+// TestCredentialsToolNeverReturnsSecrets is a guard on the tool's core security
+// property. The Credentials tool must expose no mode that reads a secret back, so
+// a future "get"/"read" mode cannot be added without deliberately editing this
+// test — and the description must state the guarantee so the model does not try.
+func TestCredentialsToolNeverReturnsSecrets(t *testing.T) {
+	var tool *inventory.ServerTool
+	for i := range AllTools() {
+		if AllTools()[i].Tool.Name == "Credentials" {
+			tool = &AllTools()[i]
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatal("Credentials tool not found in the manifest")
+	}
+
+	modeProp := tool.Tool.InputSchema.(*jsonschema.Schema).Properties["mode"]
+	if modeProp == nil {
+		t.Fatal("Credentials has no mode property")
+	}
+	allowed := map[string]bool{"list": true, "verify": true, "inject": true}
+	for _, v := range modeProp.Enum {
+		s, ok := v.(string)
+		if !ok {
+			t.Errorf("non-string mode enum value %v", v)
+			continue
+		}
+		if !allowed[s] {
+			t.Errorf("Credentials mode %q is not an approved mode; a secret-reading mode "+
+				"would put plaintext into the model's context", s)
+		}
+	}
+	if len(modeProp.Enum) != len(allowed) {
+		t.Errorf("mode enum has %d values, want exactly %d", len(modeProp.Enum), len(allowed))
+	}
+	if !strings.Contains(tool.Tool.Description, "cannot be read") {
+		t.Error("Credentials description must state that secrets cannot be read")
 	}
 }
