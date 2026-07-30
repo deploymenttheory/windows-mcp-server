@@ -27,6 +27,7 @@ type ToolFilter func(ctx context.Context, tool *ServerTool) (bool, error)
 //	    Build()
 type Builder struct {
 	tools             []ServerTool
+	resources         []ServerResource
 	resourceTemplates []ServerResourceTemplate
 	prompts           []ServerPrompt
 	deprecatedAliases map[string]string
@@ -57,6 +58,16 @@ func (b *Builder) SetTools(tools []ServerTool) *Builder {
 // SetResources sets the resource template manifest.
 func (b *Builder) SetResources(resources []ServerResourceTemplate) *Builder {
 	b.resourceTemplates = resources
+	return b
+}
+
+// SetFixedResources sets the fixed-URI resource manifest.
+//
+// Separate from SetResources (which takes templates) because the MCP server keeps
+// the two in disjoint collections: resources/list paginates only fixed resources.
+// Registering templates alone yields an empty resources/list.
+func (b *Builder) SetFixedResources(resources []ServerResource) *Builder {
+	b.resources = resources
 	return b
 }
 
@@ -167,6 +178,7 @@ func (b *Builder) Build() (*Inventory, error) {
 
 	r := &Inventory{
 		tools:             b.tools,
+		resources:         b.resources,
 		resourceTemplates: b.resourceTemplates,
 		prompts:           b.prompts,
 		deprecatedAliases: b.deprecatedAliases,
@@ -231,6 +243,9 @@ func (b *Builder) processToolsets() (
 	}
 	for i := range b.tools {
 		collect(b.tools[i].Toolset)
+	}
+	for i := range b.resources {
+		collect(b.resources[i].Toolset)
 	}
 	for i := range b.resourceTemplates {
 		collect(b.resourceTemplates[i].Toolset)

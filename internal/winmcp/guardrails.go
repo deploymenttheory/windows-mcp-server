@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
 )
@@ -188,6 +190,25 @@ func tripFunc(
 				"enable_with", "--with-kill-switch",
 			)
 		}
+	}
+}
+
+// pinnedCapabilities declares every server capability explicitly.
+//
+// This must stay explicit. The SDK *infers* capabilities it finds unset:
+// registering a prompt or resource makes Server.capabilities() fill in
+// Prompts/Resources with ListChanged: true. That would re-open exactly the silent
+// re-advertisement channel the tools capability was pinned to close — a mutated
+// manifest could be pushed to the client without the client re-listing, which is
+// what rug-pull detection exists to catch. Any non-nil field we set wins over
+// inference, so pinning each one with ListChanged false keeps the manifest static
+// and drift detectable.
+func pinnedCapabilities() *mcp.ServerCapabilities {
+	return &mcp.ServerCapabilities{
+		Tools:       &mcp.ToolCapabilities{},
+		Prompts:     &mcp.PromptCapabilities{},
+		Resources:   &mcp.ResourceCapabilities{},
+		Completions: &mcp.CompletionCapabilities{},
 	}
 }
 

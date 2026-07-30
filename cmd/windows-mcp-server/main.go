@@ -341,13 +341,20 @@ func specCheckCmd() *cobra.Command {
 			}
 
 			// Gate on the newest scored revision, which is the one operators care about.
-			if threshold := v.GetInt("fail-under"); threshold > 0 {
-				worst := reports[len(reports)-1]
-				if worst.Score < threshold {
-					fmt.Fprintf(os.Stderr, "spec-check: score %d for %s is below --fail-under=%d\n",
-						worst.Score, worst.SchemaVersion, threshold)
-					os.Exit(2)
-				}
+			newest := reports[len(reports)-1]
+			failed := false
+			if threshold := v.GetInt("fail-under"); threshold > 0 && newest.ConformanceScore < threshold {
+				fmt.Fprintf(os.Stderr, "spec-check: conformance %d for %s is below --fail-under=%d\n",
+					newest.ConformanceScore, newest.SchemaVersion, threshold)
+				failed = true
+			}
+			if threshold := v.GetInt("fail-coverage-under"); threshold > 0 && newest.Coverage.MethodsPct < threshold {
+				fmt.Fprintf(os.Stderr, "spec-check: method coverage %d%% for %s is below --fail-coverage-under=%d\n",
+					newest.Coverage.MethodsPct, newest.SchemaVersion, threshold)
+				failed = true
+			}
+			if failed {
+				os.Exit(2)
 			}
 			return nil
 		},
@@ -358,7 +365,10 @@ func specCheckCmd() *cobra.Command {
 	f.String("spec-version", "newest", "Revision to score against: a version like 2026-07-28, 'newest', or 'all'.")
 	f.String("format", "markdown", "Output format: markdown or json.")
 	f.String("out", "", "Write the report to this file instead of stdout.")
-	f.Int("fail-under", 0, "Exit 2 if the newest scored revision scores below this (0 disables).")
+	f.Int("fail-under", 0, "Exit 2 if the newest scored revision's CONFORMANCE score is below this (0 disables). "+
+		"Conformance is the gateable number: 100 means everything the server serves validates against the spec.")
+	f.Int("fail-coverage-under", 0, "Exit 2 if the newest revision's server-method COVERAGE percentage is below "+
+		"this (0 disables). Coverage is optional-feature breadth, not a conformance requirement.")
 	f.String("toolsets", "", "Comma-separated toolsets to score (default: all toolsets).")
 	f.String("persona", "", "Score the manifest a persona would serve.")
 	f.Bool("read-only", false, "Score the read-only manifest.")

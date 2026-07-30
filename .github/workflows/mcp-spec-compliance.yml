@@ -111,7 +111,8 @@ jobs:
           $reports = Get-Content 'schema/compliance.json' -Raw | ConvertFrom-Json
           $newest  = $reports | Select-Object -Last 1
           "newest_version=$($newest.schema_version)" | Out-File $env:GITHUB_OUTPUT -Append
-          "newest_score=$($newest.score)"            | Out-File $env:GITHUB_OUTPUT -Append
+          "newest_score=$($newest.conformance_score)" | Out-File $env:GITHUB_OUTPUT -Append
+          "newest_coverage=$($newest.coverage.methods_pct)" | Out-File $env:GITHUB_OUTPUT -Append
           "negotiated=$($newest.negotiated_version)" | Out-File $env:GITHUB_OUTPUT -Append
 
       - name: Job summary
@@ -128,8 +129,8 @@ jobs:
             $after  = @(Get-Content 'schema/compliance.json' -Raw | ConvertFrom-Json)
             foreach ($a in $after) {
               $b = $before | Where-Object { $_.schema_version -eq $a.schema_version } | Select-Object -First 1
-              if ($b -and $a.score -lt $b.score) {
-                $regressed += "$($a.schema_version): $($b.score) -> $($a.score)"
+              if ($b -and $a.conformance_score -lt $b.conformance_score) {
+                $regressed += "$($a.schema_version) conformance: $($b.conformance_score) -> $($a.conformance_score)"
               }
             }
           }
@@ -164,7 +165,8 @@ jobs:
             "- New revision(s) vendored: $vendored"
             '- Newest published: `${{ steps.score.outputs.newest_version }}`'
             '- Server negotiates: `${{ steps.score.outputs.negotiated }}`'
-            '- Score against newest: **${{ steps.score.outputs.newest_score }}/100**'
+            '- Conformance against newest: **${{ steps.score.outputs.newest_score }}/100**'
+            '- Method coverage: ${{ steps.score.outputs.newest_coverage }}%'
             ''
             'See `docs/mcp-compliance.md` in this PR for the full scored report.'
           )
@@ -192,7 +194,8 @@ jobs:
             '|---|---|'
             '| Newest published revision | `${{ steps.score.outputs.newest_version }}` |'
             '| Server negotiates | `${{ steps.score.outputs.negotiated }}` |'
-            '| Score against newest | **${{ steps.score.outputs.newest_score }}/100** |'
+            '| Conformance against newest | **${{ steps.score.outputs.newest_score }}/100** |'
+            '| Method coverage | ${{ steps.score.outputs.newest_coverage }}% |'
             "| New revision(s) this run | $newCell |"
             "| Score regressions | $regCell |"
             ''

@@ -14,6 +14,7 @@ import (
 // with Builder.
 type Inventory struct {
 	tools             []ServerTool
+	resources         []ServerResource
 	resourceTemplates []ServerResourceTemplate
 	prompts           []ServerPrompt
 	deprecatedAliases map[string]string
@@ -120,6 +121,28 @@ func (r *Inventory) AvailableTools(ctx context.Context) []ServerTool {
 	return result
 }
 
+// AvailableResources returns fixed-URI resources passing the toolset and
+// feature-flag filters, sorted.
+//
+// Note the filter set is narrower than for tools: WithReadOnly, WithFilter,
+// WithExcludeTools and the WithTools bypass all operate on *ServerTool and do not
+// apply here. Resources are read-only by construction, so the absence of a
+// read-only filter is intentional rather than an oversight.
+func (r *Inventory) AvailableResources(ctx context.Context) []ServerResource {
+	var result []ServerResource
+	for i := range r.resources {
+		res := &r.resources[i]
+		if r.featureChecker != nil && !featureFlagAllowed(ctx, r.featureChecker, res.FeatureFlagEnable, res.FeatureFlagDisable) {
+			continue
+		}
+		if r.isToolsetEnabled(res.Toolset.ID) {
+			result = append(result, *res)
+		}
+	}
+	sortResources(result)
+	return result
+}
+
 // AvailableResourceTemplates returns resource templates passing the toolset and
 // feature-flag filters, sorted.
 func (r *Inventory) AvailableResourceTemplates(ctx context.Context) []ServerResourceTemplate {
@@ -209,6 +232,16 @@ func (r *Inventory) RegisterTools(ctx context.Context, s *mcp.Server, deps any, 
 	}
 }
 
+// RegisterResources registers all available fixed-URI resources. These are what
+// resources/list returns; templates are listed separately by
+// resources/templates/list.
+func (r *Inventory) RegisterResources(ctx context.Context, s *mcp.Server, deps any) {
+	for _, res := range r.AvailableResources(ctx) {
+		resourceCopy := res.Resource
+		s.AddResource(&resourceCopy, res.Handler(deps))
+	}
+}
+
 // RegisterResourceTemplates registers all available resource templates.
 func (r *Inventory) RegisterResourceTemplates(ctx context.Context, s *mcp.Server, deps any) {
 	for _, res := range r.AvailableResourceTemplates(ctx) {
@@ -228,6 +261,7 @@ func (r *Inventory) RegisterPrompts(ctx context.Context, s *mcp.Server) {
 // RegisterAll registers all available tools, resources, and prompts.
 func (r *Inventory) RegisterAll(ctx context.Context, s *mcp.Server, deps any, middleware ...ToolHandlerMiddleware) {
 	r.RegisterTools(ctx, s, deps, middleware...)
+	r.RegisterResources(ctx, s, deps)
 	r.RegisterResourceTemplates(ctx, s, deps)
 	r.RegisterPrompts(ctx, s)
 }

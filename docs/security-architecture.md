@@ -227,6 +227,19 @@ A "rug pull" is an approved server mutating its advertised tools after deploymen
 — adding/removing/renaming tools, or silently changing descriptions or schemas —
 to smuggle unauthorized behavior past the initial approval.
 
+Three surfaces are fingerprinted, not one: **tools**, **prompts** and
+**resources**. A mutated prompt changes the instructions the model follows, and a
+mutated resource URI changes what it reads, so both are rug-pull vectors as much
+as a mutated tool. Each surface is pinned separately (`HashTools`, `HashPrompts`,
+`HashResources`) and a surface with no baseline is skipped rather than treated as
+drift, so a server that serves no prompts cannot trip on them.
+
+Capabilities are pinned explicitly by `pinnedCapabilities` with `listChanged`
+false. This matters: the SDK *infers* prompt and resource capabilities with
+`listChanged: true` the moment one is registered, which would let a mutated
+manifest be pushed to the client without it re-listing — the exact channel this
+detection exists to close.
+
 ```mermaid
 flowchart TB
     Start["startup: register all tools"] --> Base["HashTools(sorted manifest)<br/>→ baseline fingerprint"]
@@ -462,6 +475,7 @@ enables it.
 | Rug-pull detector | `internal/guardrails/rugpull.go` |
 | Circuit breaker (inline policy) | `internal/guardrails/policy.go` |
 | Enforce HTTPS (URL scheme policy) | `pkg/windows/urlpolicy.go`, `internal/guardrails/remote.go` |
+| Capability pinning (suppresses listChanged) | `internal/winmcp/guardrails.go` (`pinnedCapabilities`) |
 | In-flight monitor | `internal/guardrails/monitor.go` |
 | Kill switch + tiered executor + graceful stop | `internal/guardrails/{killswitch,killaction}.go` |
 | Per-trigger arming gate (`tripFunc`) | `internal/winmcp/guardrails.go` |

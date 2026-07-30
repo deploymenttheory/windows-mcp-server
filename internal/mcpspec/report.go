@@ -18,21 +18,44 @@ type Report struct {
 	NewestPublished string `json:"newest_published,omitempty"`
 	// RevisionsBehind counts released revisions newer than the negotiated one.
 	RevisionsBehind int `json:"revisions_behind"`
-	// Score is the weighted conformance score, 0-100, over applicable dimensions.
-	Score int `json:"score"`
-	// ApplicableWeight is the total weight of non-skipped dimensions.
-	ApplicableWeight int         `json:"applicable_weight"`
-	Dimensions       []Dimension `json:"dimensions"`
-	Findings         []Finding   `json:"findings,omitempty"`
+	// ConformanceScore is the weighted score, 0-100, over applicable *conformance*
+	// dimensions. This is the number to gate on: 100 means everything the server
+	// actually serves validates against this revision.
+	ConformanceScore int `json:"conformance_score"`
+	// ConformanceWeight is the total weight of non-skipped conformance dimensions.
+	ConformanceWeight int `json:"conformance_weight"`
+	// Coverage summarizes optional-feature breadth. Informational only — MCP does
+	// not require a server to implement prompts, resources or completions.
+	Coverage   CoverageSummary `json:"coverage"`
+	Dimensions []Dimension     `json:"dimensions"`
+	Findings   []Finding       `json:"findings,omitempty"`
 	// MethodSurface details spec-defined server methods against implemented ones.
 	MethodSurface Surface `json:"method_surface"`
 	// CapabilitySurface details spec-defined capability keys against declared ones.
 	CapabilitySurface Surface `json:"capability_surface"`
 }
 
-// Dimension is one scored conformance axis.
+// Dimension kinds. Only KindConformance contributes to ConformanceScore.
+const (
+	KindConformance = "conformance"
+	KindCoverage    = "coverage"
+)
+
+// CoverageSummary reports optional-feature breadth, separately from conformance.
+type CoverageSummary struct {
+	MethodsImplemented   int `json:"methods_implemented"`
+	MethodsDefined       int `json:"methods_defined"`
+	MethodsPct           int `json:"methods_pct"`
+	CapabilitiesDeclared int `json:"capabilities_declared"`
+	CapabilitiesDefined  int `json:"capabilities_defined"`
+	CapabilitiesPct      int `json:"capabilities_pct"`
+}
+
+// Dimension is one scored axis.
 type Dimension struct {
-	ID     string `json:"id"`
+	ID string `json:"id"`
+	// Kind is KindConformance or KindCoverage; only the former is scored.
+	Kind   string `json:"kind"`
 	Title  string `json:"title"`
 	Weight int    `json:"weight"`
 	// Score is 0-100 for this dimension.
@@ -102,22 +125,30 @@ func sortedCopy(in []string) []string {
 	return out
 }
 
-// finalize computes the weighted score over applicable dimensions.
+// finalize computes the conformance score over applicable conformance dimensions,
+// and summarizes coverage separately.
 func (r *Report) finalize() {
 	var weighted, total int
 	for _, d := range r.Dimensions {
-		if d.Skipped {
+		if d.Skipped || d.Kind != KindConformance {
 			continue
 		}
 		total += d.Weight
 		weighted += d.Weight * d.Score
 	}
-	r.ApplicableWeight = total
-	if total == 0 {
-		r.Score = 0
-		return
+	r.ConformanceWeight = total
+	if total > 0 {
+		r.ConformanceScore = weighted / total
 	}
-	r.Score = weighted / total
+
+	r.Coverage = CoverageSummary{
+		MethodsImplemented:   len(r.MethodSurface.Present),
+		MethodsDefined:       len(r.MethodSurface.Defined),
+		MethodsPct:           r.MethodSurface.Coverage,
+		CapabilitiesDeclared: len(r.CapabilitySurface.Present),
+		CapabilitiesDefined:  len(r.CapabilitySurface.Defined),
+		CapabilitiesPct:      r.CapabilitySurface.Coverage,
+	}
 }
 
 // Markdown renders the report for a workflow job summary or a committed doc.
@@ -125,7 +156,12 @@ func (r *Report) Markdown() string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "# MCP spec compliance — `%s`\n\n", r.SchemaVersion)
-	fmt.Fprintf(&b, "**Score: %d/100** (over %d applicable weight)\n\n", r.Score, r.ApplicableWeight)
+	fmt.Fprintf(&b, "**Conformance: %d/100** (over %d applicable weight) — everything the server serves validates.\n\n",
+		r.ConformanceScore, r.ConformanceWeight)
+	fmt.Fprintf(&b, "**Coverage: %d%% of server methods (%d/%d), %d%% of capabilities (%d/%d)** — informational; "+
+		"MCP does not require prompts, resources or completions.\n\n",
+		r.Coverage.MethodsPct, r.Coverage.MethodsImplemented, r.Coverage.MethodsDefined,
+		r.Coverage.CapabilitiesPct, r.Coverage.CapabilitiesDeclared, r.Coverage.CapabilitiesDefined)
 
 	fmt.Fprintf(&b, "| | |\n|---|---|\n")
 	fmt.Fprintf(&b, "| Scored against | `%s` (%s) |\n", r.SchemaVersion, r.SchemaDraft)
@@ -139,7 +175,7 @@ func (r *Report) Markdown() string {
 		fmt.Fprintf(&b, "| Revisions behind | %d |\n", r.RevisionsBehind)
 	}
 	b.WriteString("\n## Dimensions\n\n")
-	b.WriteString("| Dimension | Weight | Score | Detail |\n|---|---:|---:|---|\n")
+	b.WriteString("| Dimension | Kind | Weight | Score | Detail |\n|---|---|---:|---:|---|\n")
 	for _, d := range r.Dimensions {
 		score := fmt.Sprintf("%d", d.Score)
 		detail := d.Detail
@@ -147,7 +183,11 @@ func (r *Report) Markdown() string {
 			score = "n/a"
 			detail = "skipped — " + d.SkipReason
 		}
-		fmt.Fprintf(&b, "| %s | %d | %s | %s |\n", d.Title, d.Weight, score, detail)
+		weight := fmt.Sprintf("%d", d.Weight)
+		if d.Kind == KindCoverage {
+			weight = "—" // reported, not scored
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", d.Title, d.Kind, weight, score, detail)
 	}
 
 	b.WriteString("\n## Server method surface\n\n")

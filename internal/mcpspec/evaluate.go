@@ -26,16 +26,26 @@ type Input struct {
 	Manifest *Manifest
 }
 
-// Dimension weights. They sum to 100; skipped dimensions drop out of the
-// denominator so a revision that removes a feature cannot depress the score.
+// Conformance dimension weights. They sum to 100; skipped dimensions drop out of
+// the denominator so a revision that removes a feature cannot depress the score.
+//
+// Only conformance dimensions are scored. Optional-feature breadth (which server
+// methods and capabilities exist at all) is reported separately as coverage,
+// because MCP does not require a server to implement prompts, resources or
+// completions — a tools-only server is fully conformant. Folding the two together
+// would make a deliberate product decision read as a compliance failure.
 const (
-	weightToolSchema      = 40
-	weightListToolsResult = 15
-	weightMethodSurface   = 15
-	weightHandshake       = 10
+	weightToolSchema      = 45
+	weightListToolsResult = 20
+	weightHandshake       = 15
 	weightCapabilities    = 10
 	weightCurrency        = 10
 )
+
+// weightMethodSurface is nominal: the method-surface dimension is reported for
+// visibility but carries kind "coverage", so it is excluded from the conformance
+// denominator.
+const weightMethodSurface = 0
 
 // Evaluate scores the observed surface against one schema revision.
 func Evaluate(spec *Spec, in Input) *Report {
@@ -69,8 +79,9 @@ func Evaluate(spec *Spec, in Input) *Report {
 			weight: weightHandshake,
 			// The handshake was restructured in 2026-07-28: initialize is replaced
 			// by server/discover. Name both and use whichever the revision defines.
-			defs:    []string{"InitializeResult", "DiscoverResult"},
-			payload: in.HandshakeResult,
+			defs:           []string{"InitializeResult", "DiscoverResult"},
+			payload:        in.HandshakeResult,
+			revisionShaped: true,
 		}),
 		singleInstanceDimension(spec, r, dimSpec{
 			id:      "server-capabilities",
@@ -96,7 +107,7 @@ type toolsListPayload struct {
 // definition. This is the heaviest dimension: it is where the project's own
 // hand-written InputSchemas and annotations are actually checked.
 func toolSchemaDimension(spec *Spec, in Input, r *Report) Dimension {
-	d := Dimension{ID: "tool-schema", Title: "Tool definitions conform", Weight: weightToolSchema}
+	d := Dimension{ID: "tool-schema", Kind: KindConformance, Title: "Tool definitions conform", Weight: weightToolSchema}
 
 	if !spec.Has("Tool") {
 		d.Skipped, d.SkipReason = true, "revision does not define Tool"
@@ -143,10 +154,27 @@ type dimSpec struct {
 	weight  int
 	defs    []string // candidate definition names, in preference order
 	payload json.RawMessage
+	// revisionShaped marks a payload whose *shape* is determined by the revision
+	// the session negotiated, so it can only be judged against that revision.
+	revisionShaped bool
 }
 
 func singleInstanceDimension(spec *Spec, r *Report, ds dimSpec) Dimension {
-	d := Dimension{ID: ds.id, Title: ds.title, Weight: ds.weight}
+	d := Dimension{ID: ds.id, Kind: KindConformance, Title: ds.title, Weight: ds.weight}
+
+	// A revision-shaped payload captured under a different revision is not
+	// comparable. The handshake is the case in point: a session negotiating
+	// 2026-07-28 yields a DiscoverResult, which of course lacks the
+	// protocolVersion/serverInfo an older InitializeResult requires. Scoring it
+	// against the older schema would report a false failure — the server does
+	// serve a conformant initialize to a client that asks for one, it simply was
+	// not asked in this capture.
+	if ds.revisionShaped && r.NegotiatedVersion != "" && r.NegotiatedVersion != spec.Version {
+		d.Skipped = true
+		d.SkipReason = fmt.Sprintf("handshake captured under %s; not comparable to %s",
+			r.NegotiatedVersion, spec.Version)
+		return d
+	}
 
 	def, ok := spec.FirstPresent(ds.defs...)
 	if !ok {
@@ -173,7 +201,7 @@ func singleInstanceDimension(spec *Spec, r *Report, ds dimSpec) Dimension {
 // methodSurfaceDimension scores how much of the revision's server-side method
 // surface this server implements, derived from the ClientRequest union.
 func methodSurfaceDimension(r *Report) Dimension {
-	d := Dimension{ID: "method-surface", Title: "Server method coverage", Weight: weightMethodSurface}
+	d := Dimension{ID: "method-surface", Kind: KindCoverage, Title: "Server method coverage", Weight: weightMethodSurface}
 	s := r.MethodSurface
 	if len(s.Defined) == 0 {
 		d.Skipped, d.SkipReason = true, "revision defines no ClientRequest union"
@@ -188,7 +216,7 @@ func methodSurfaceDimension(r *Report) Dimension {
 // revision behind halves the score, so falling further behind keeps costing but
 // never dominates the total.
 func currencyDimension(r *Report) Dimension {
-	d := Dimension{ID: "protocol-currency", Title: "Protocol revision currency", Weight: weightCurrency}
+	d := Dimension{ID: "protocol-currency", Kind: KindConformance, Title: "Protocol revision currency", Weight: weightCurrency}
 
 	switch {
 	case r.NegotiatedVersion == "":
