@@ -76,6 +76,10 @@ type Config struct {
 	CircuitBreaker   bool          // inline destructive-action circuit breaker
 	CircuitWindow    time.Duration // sliding window (0 = default 10s)
 	CircuitThreshold int           // sensitive calls before tripping (0 = default 3)
+	// EnforceHTTPS blocks plaintext http:// targets: the Scrape tool, a URL-shaped
+	// App launch (which Start-Process hands to the default browser), and the
+	// remote may-run endpoint. Forced on by --security.
+	EnforceHTTPS bool
 
 	// --- Layer 4: transparency / always-on ---
 	WithVideoSessionRecording string        // record path (implies recording)
@@ -171,7 +175,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		logger.Warn("unknown guardrail requested", "guardrail", u)
 	}
 	holder := &decisionHolder{}
-	decision := runner.Evaluate(ctx, guardrailEnv(dsk, logger))
+	decision := runner.Evaluate(ctx, guardrailEnv(cfg, dsk, logger))
 	holder.set(decision)
 	_, _ = audit.Append("preflight.decision", decision)
 
@@ -282,7 +286,9 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	heartbeat := guardrails.NewHeartbeat(audit)
 	rugpull := guardrails.NewRugPull(tripRugpull, audit)
 
-	deps := windows.NewBaseDeps(dsk, logger, nil).WithCredentials(credentialInfos(installedCreds))
+	deps := windows.NewBaseDeps(dsk, logger, nil).
+		WithCredentials(credentialInfos(installedCreds)).
+		WithEnforceHTTPS(enforceHTTPS(cfg))
 	// Receiving middleware (outermost first): inject deps, audit, rug-pull, policy.
 	server.AddReceivingMiddleware(windows.InjectDepsMiddleware(deps))
 	server.AddReceivingMiddleware(audit.Middleware())
@@ -326,7 +332,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		Stopped:          func() bool { tripped, _ := kill.Tripped(); return tripped },
 		Logger:           logger,
 		Evaluate: func(c context.Context) guardrails.Decision {
-			d := runner.Evaluate(c, guardrailEnv(dsk, logger))
+			d := runner.Evaluate(c, guardrailEnv(cfg, dsk, logger))
 			holder.set(d)
 			return d
 		},
@@ -448,7 +454,7 @@ func EvaluateGuardrails(ctx context.Context, cfg Config) (guardrails.Decision, e
 	for _, u := range runner.Unknown() {
 		logger.Warn("unknown guardrail requested", "guardrail", u)
 	}
-	return runner.Evaluate(ctx, guardrailEnv(dsk, logger)), nil
+	return runner.Evaluate(ctx, guardrailEnv(cfg, dsk, logger)), nil
 }
 
 // buildInventory applies persona, toolset, read-only, and allow/deny

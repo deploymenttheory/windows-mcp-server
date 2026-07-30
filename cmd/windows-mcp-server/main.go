@@ -72,6 +72,7 @@ func guardrailConfigFrom(v *viper.Viper) winmcp.Config {
 		CircuitBreaker:   v.GetBool("circuit-breaker"),
 		CircuitWindow:    v.GetDuration("circuit-window"),
 		CircuitThreshold: v.GetInt("circuit-threshold"),
+		EnforceHTTPS:     v.GetBool("enforce-https"),
 		// Layer 4: transparency
 		WithVideoSessionRecording: v.GetString("with-video-session-recording"),
 		WithLogging:               v.GetString("with-logging"),
@@ -137,6 +138,9 @@ func addGuardrailPolicyFlags(f *pflag.FlagSet) {
 	f.Bool("circuit-breaker", false, "Inline destructive-action circuit breaker (auto-on in enforce mode).")
 	f.Duration("circuit-window", 0, "Circuit-breaker sliding window (0 = default 10s).")
 	f.Int("circuit-threshold", 0, "Sensitive tool calls within the window before tripping (0 = default 3).")
+	f.Bool("enforce-https", false, "Enforce HTTPS: refuse plaintext http:// targets, so computer use only "+
+		"interacts with HTTPS sites. Covers the Scrape tool, a URL-shaped App launch (which opens the default "+
+		"browser), and the remote may-run endpoint. Forced on by --security.")
 }
 
 // addTransparencyFlags — Layer 4: always-on transparency (forced on by --security).

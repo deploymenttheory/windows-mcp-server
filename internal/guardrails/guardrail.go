@@ -94,6 +94,9 @@ type Env struct {
 	// Arg is the optional argument supplied for this guardrail (e.g. an
 	// allowlist path for device-allowlist, or a URL for remote-policy).
 	Arg string
+	// EnforceHTTPS mirrors the server's Enforce HTTPS setting. Checks that reach
+	// the network must refuse a plaintext http:// endpoint when it is set.
+	EnforceHTTPS bool
 }
 
 // CheckFunc evaluates a guardrail against the environment.

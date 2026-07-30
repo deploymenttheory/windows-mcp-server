@@ -53,6 +53,12 @@ func App() inventory.ServerTool {
 				if err != nil {
 					return NewToolResultError(err.Error()), nil
 				}
+				// A URL-shaped name is a navigation, not an app launch: Start-Process
+				// hands it to the default browser. Enforce HTTPS has to see it.
+				if scheme, isURL := urlSchemeIfURL(name); isURL && scheme == "http" && deps.EnforceHTTPS() {
+					return NewToolResultErrorf("%s: %q would open the default browser at a plaintext "+
+						"address. Retry with an https:// URL.", ErrPlaintextHTTP, name), nil
+				}
 				if _, err := dsk.LaunchApp(ctx, name); err != nil {
 					return NewToolResultErrorFromErr("launch failed", err), nil
 				}
