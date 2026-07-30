@@ -24,7 +24,6 @@ import (
 	"runtime"
 	"sync"
 
-	win32 "github.com/deploymenttheory/go-bindings-win32/bindings/runtime/win32"
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/security"
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/system/com"
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/ui/hidpi"
@@ -282,9 +281,4 @@ func safeCall(fn func() error) (err error) {
 		}
 	}()
 	return fn()
-}
-
-// hresultError wraps a failing HRESULT with context.
-func hresultError(what string, hr win32.HRESULT) error {
-	return fmt.Errorf("%s: hresult 0x%08X", what, uint32(hr))
 }

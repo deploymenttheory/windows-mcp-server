@@ -11,7 +11,6 @@ import (
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/system/registry"
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/system/tpmbaseservices"
 	wmirt "github.com/deploymenttheory/go-bindings-wmi/runtime/wmi"
-
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
 )
 

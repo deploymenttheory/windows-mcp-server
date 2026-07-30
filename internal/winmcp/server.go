@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -157,7 +156,13 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	if cfg.WithVideoSessionRecording != "" {
 		recordDir = cfg.WithVideoSessionRecording
 	}
-	dsk, err := desktop.New(logger, desktop.Options{
+	// contextcheck reports the recorder's ffmpeg child here because it does not
+	// inherit this context. That is deliberate: the encoder must survive the
+	// cancellation that ends the session, or the kill path would kill ffmpeg
+	// mid-write and truncate the very recording the transparency layer exists to
+	// produce. It has its own bounded lifetime instead — see ffmpeg.go's
+	// ffmpegFinalizeTimeout, which Close enforces.
+	dsk, err := desktop.New(logger, desktop.Options{ //nolint:contextcheck // see above
 		Overlay:         cfg.Overlay || cfg.Security,
 		SecurityOverlay: cfg.Security,
 		Record:          desktop.RecorderOptions{Dir: recordDir, FPS: cfg.RecordFPS, Codec: cfg.RecordCodec},
@@ -194,32 +199,19 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			_, _ = audit.Append("preflight.deny", decision.Reasons)
 			_ = audit.Flush()
 			dsk.ShowSecurityBanner("STARTUP BLOCKED — device did not meet policy")
-			dsk.Notify("Windows MCP: startup blocked", "Device did not meet policy: "+strings.Join(decision.Reasons, "; "))
+			dsk.Notify(ctx, "Windows MCP: startup blocked",
+				"Device did not meet policy: "+strings.Join(decision.Reasons, "; "))
 			return fmt.Errorf("guardrails denied startup: %s", strings.Join(decision.Reasons, "; "))
 		}
 		guardrails.LogDecision(logger, "admit", decision)
 	}
 
 	// --- Init-time credentials ---
-	// Installed only after admission, so a denied startup never provisions
+	// Provisioned only after admission, so a denied startup never installs
 	// credentials, and removed again on every shutdown path below.
-	var installedCreds []installedCredential
-	if cfg.CredentialsFile != "" {
-		entries, err := loadCredentialsFile(cfg.CredentialsFile)
-		if err != nil {
-			return err
-		}
-		installedCreds, err = installCredentials(dsk, entries, audit, logger)
-		if err != nil {
-			removeCredentials(dsk, installedCreds, audit, logger) // roll back a partial install
-			return err
-		}
-	}
-	// Removal must happen exactly once even though both the normal-exit defer and
-	// the kill-switch Finalize hook call it.
-	var credsOnce sync.Once
-	cleanupCreds := func() {
-		credsOnce.Do(func() { removeCredentials(dsk, installedCreds, audit, logger) })
+	installedCreds, cleanupCreds, err := provisionCredentials(dsk, cfg, audit, logger)
+	if err != nil {
+		return err
 	}
 	defer cleanupCreds()
 
@@ -232,7 +224,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	}
 	if autoLimit {
 		logger.Warn("run-context is SYSTEM: desktop-automation toolsets disabled (Session 0 cannot drive the desktop)")
-		dsk.Notify("Windows MCP: limited mode", "Running as SYSTEM — desktop automation is disabled; diagnostics/system tools only.")
+		dsk.Notify(ctx, "Windows MCP: limited mode",
+			"Running as SYSTEM — desktop automation is disabled; diagnostics/system tools only.")
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{
@@ -482,7 +475,8 @@ func EvaluateGuardrails(ctx context.Context, cfg Config) (guardrails.Decision, e
 	}
 	defer cleanup()
 
-	dsk, err := desktop.New(logger, desktop.Options{})
+	// The engine owns its own lifetime; see the note in RunStdio.
+	dsk, err := desktop.New(logger, desktop.Options{}) //nolint:contextcheck // owns its lifetime
 	if err != nil {
 		return guardrails.Decision{}, fmt.Errorf("failed to start desktop engine: %w", err)
 	}

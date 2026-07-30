@@ -3,6 +3,7 @@
 package guardrails
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"unsafe"
@@ -50,7 +51,7 @@ func firewallIsolate() (func() error, error) {
 			in, e1 := policy.Get_DefaultInboundAction(p)
 			out, e2 := policy.Get_DefaultOutboundAction(p)
 			if e1 != nil || e2 != nil {
-				return fmt.Errorf("read firewall defaults (profile %d): %v / %v", p, e1, e2)
+				return fmt.Errorf("read firewall defaults (profile %d): %w", p, errors.Join(e1, e2))
 			}
 			saved = append(saved, savedProfile{p, in, out})
 			if e := policy.Put_DefaultInboundAction(p, windowsfirewall.NET_FW_ACTION_BLOCK); e != nil {

@@ -33,13 +33,13 @@ func tpmPlatformClaim(nonce []byte) (quoteSize int, err error) {
 	if err = cng.NCryptOpenStorageProvider(&prov, "Microsoft Platform Crypto Provider", 0); err != nil {
 		return 0, fmt.Errorf("open Platform Crypto Provider: %w", err)
 	}
-	defer cng.NCryptFreeObject(cng.NCRYPT_HANDLE(prov))
+	defer func() { _ = cng.NCryptFreeObject(cng.NCRYPT_HANDLE(prov)) }() // best-effort cleanup
 
 	aik, err := openOrCreateAIK(prov)
 	if err != nil {
 		return 0, err
 	}
-	defer cng.NCryptFreeObject(cng.NCRYPT_HANDLE(aik))
+	defer func() { _ = cng.NCryptFreeObject(cng.NCRYPT_HANDLE(aik)) }() // best-effort cleanup
 
 	// Parameter list: the nonce (TPM2_Quote qualifying data) and a 3-byte PCR
 	// selection mask covering PCRs 0-23.
@@ -83,11 +83,11 @@ func openOrCreateAIK(prov cng.NCRYPT_PROV_HANDLE) (cng.NCRYPT_KEY_HANDLE, error)
 	usage := make([]byte, 4)
 	binary.LittleEndian.PutUint32(usage, cng.NCRYPT_PCP_IDENTITY_KEY)
 	if err := cng.NCryptSetProperty(cng.NCRYPT_HANDLE(aik), cng.NCRYPT_PCP_KEY_USAGE_POLICY_PROPERTY, usage, 0); err != nil {
-		cng.NCryptDeleteKey(aik, 0)
+		_ = cng.NCryptDeleteKey(aik, 0) // roll back the half-created key
 		return 0, fmt.Errorf("set AIK usage policy: %w", err)
 	}
 	if err := cng.NCryptFinalizeKey(aik, 0); err != nil {
-		cng.NCryptDeleteKey(aik, 0)
+		_ = cng.NCryptDeleteKey(aik, 0) // roll back the half-created key
 		return 0, fmt.Errorf("finalize AIK: %w", err)
 	}
 	return aik, nil

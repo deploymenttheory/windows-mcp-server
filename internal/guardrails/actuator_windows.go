@@ -52,7 +52,7 @@ func (a winActuator) KillProcesses(names []string) []error {
 	if err != nil {
 		return []error{fmt.Errorf("snapshot: %w", err)}
 	}
-	defer foundation.CloseHandle(snap)
+	defer func() { _ = foundation.CloseHandle(snap) }() // best-effort cleanup
 
 	var pe toolhelp.PROCESSENTRY32
 	pe.DwSize = uint32(unsafe.Sizeof(pe))
@@ -69,7 +69,7 @@ func (a winActuator) KillProcesses(names []string) []error {
 				if err := threading.TerminateProcess(h, 1); err != nil {
 					errs = append(errs, fmt.Errorf("terminate pid %d: %w", pe.Th32ProcessID, err))
 				}
-				foundation.CloseHandle(h)
+				_ = foundation.CloseHandle(h) // best-effort cleanup
 			}
 		}
 		if err := toolhelp.Process32Next(snap, &pe); err != nil {
@@ -101,7 +101,7 @@ func enableShutdownPrivilege() error {
 		security.TOKEN_ADJUST_PRIVILEGES|security.TOKEN_QUERY, &tok); err != nil {
 		return err
 	}
-	defer foundation.CloseHandle(tok)
+	defer func() { _ = foundation.CloseHandle(tok) }() // best-effort cleanup
 
 	var luid foundation.LUID
 	if err := security.LookupPrivilegeValue("", security.SE_SHUTDOWN_NAME, &luid); err != nil {

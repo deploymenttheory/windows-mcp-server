@@ -82,9 +82,7 @@ type overlayManager struct {
 
 // wndProcCallback is the shared window procedure. Layered windows updated via
 // UpdateLayeredWindow need no custom painting, so it just defers to the OS.
-var wndProcCallback = syscall.NewCallback(func(hwnd foundation.HWND, msg uint32, wp foundation.WPARAM, lp foundation.LPARAM) foundation.LRESULT {
-	return wm.DefWindowProc(hwnd, msg, wp, lp)
-})
+var wndProcCallback = syscall.NewCallback(wm.DefWindowProc)
 
 // newOverlayManager starts the overlay thread. If Win32 setup fails, it returns
 // an error and the caller should proceed without overlays.
@@ -246,6 +244,7 @@ func (m *overlayManager) createBanner(text string) *activeOverlay {
 func (m *overlayManager) showBanner(text string) {
 	m.send(overlayCmd{kind: cmdSecurityBanner, text: text})
 }
+
 func (m *overlayManager) dismissBanner() {
 	m.send(overlayCmd{kind: cmdDismissBanner})
 }
@@ -387,7 +386,8 @@ func (m *overlayManager) teardown() {
 		m.destroyOverlay(m.banner)
 		m.banner = nil
 	}
-	wm.UnregisterClass(overlayClassName, m.hinstance)
+	// Teardown: nothing useful to do if the class was never registered.
+	_ = wm.UnregisterClass(overlayClassName, m.hinstance)
 }
 
 // flashClick enqueues an orange ring centered at (x,y).
