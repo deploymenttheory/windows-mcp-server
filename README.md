@@ -14,7 +14,9 @@ Windows accessibility tree.
 
 > **Safety:** several tools (PowerShell, Registry, FileSystem, Process, App) have
 > full system access with no sandboxing. Run in a VM or Windows Sandbox for
-> untrusted workloads.
+> untrusted workloads — see [docs/vm-isolation.md](docs/vm-isolation.md) for the
+> isolation options, including disposable, Hyper-V-Manager-invisible **HCS**
+> sandboxes.
 
 ## Requirements
 
