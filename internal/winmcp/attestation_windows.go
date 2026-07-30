@@ -4,7 +4,9 @@ package winmcp
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"math"
 	"unsafe"
 
 	cng "github.com/deploymenttheory/go-bindings-win32/bindings/win32/security/cryptography"
@@ -13,6 +15,13 @@ import (
 // platformAIKName is the persisted machine-scoped Attestation Identity Key the
 // server reuses across evaluations. It is created once (elevated) and reused.
 const platformAIKName = "windows-mcp-server-platform-aik"
+
+// Attestation input errors. Both are caller mistakes rather than TPM
+// failures, so they are distinguishable from a genuine attestation error.
+var (
+	ErrEmptyNonce    = errors.New("attestation nonce is empty")
+	ErrNonceTooLarge = errors.New("attestation nonce exceeds the uint32 buffer length")
+)
 
 // tpmPlatformClaim produces a nonce-bound TPM platform attestation via the
 // Platform Crypto Provider: NCryptCreateClaim(NCRYPT_CLAIM_PLATFORM) runs a
@@ -27,7 +36,14 @@ const platformAIKName = "windows-mcp-server-platform-aik"
 // 0x80090010 Access denied), so callers gate this on an elevated/SYSTEM context.
 func tpmPlatformClaim(nonce []byte) (quoteSize int, err error) {
 	if len(nonce) == 0 {
-		return 0, fmt.Errorf("empty nonce")
+		return 0, ErrEmptyNonce
+	}
+	// CbBuffer is a uint32. The nonce arrives from the caller, so bound it here
+	// rather than let an oversized one wrap into a small length and quote over
+	// the wrong qualifying data — an attestation that verifies but proves
+	// nothing about the nonce the verifier chose.
+	if len(nonce) > math.MaxUint32 {
+		return 0, fmt.Errorf("%w: %d bytes", ErrNonceTooLarge, len(nonce))
 	}
 	var prov cng.NCRYPT_PROV_HANDLE
 	if err = cng.NCryptOpenStorageProvider(&prov, "Microsoft Platform Crypto Provider", 0); err != nil {
@@ -45,8 +61,17 @@ func tpmPlatformClaim(nonce []byte) (quoteSize int, err error) {
 	// selection mask covering PCRs 0-23.
 	pcrMask := []byte{0xFF, 0xFF, 0xFF}
 	bufs := []cng.BCryptBuffer{
-		{CbBuffer: uint32(len(nonce)), BufferType: cng.NCRYPTBUFFER_TPM_PLATFORM_CLAIM_NONCE, PvBuffer: unsafe.Pointer(&nonce[0])},
-		{CbBuffer: uint32(len(pcrMask)), BufferType: cng.NCRYPTBUFFER_TPM_PLATFORM_CLAIM_PCR_MASK, PvBuffer: unsafe.Pointer(&pcrMask[0])},
+		{
+			CbBuffer:   uint32(len(nonce)), //nolint:gosec // bounded above
+			BufferType: cng.NCRYPTBUFFER_TPM_PLATFORM_CLAIM_NONCE,
+			PvBuffer:   unsafe.Pointer(&nonce[0]),
+		},
+		{
+			// pcrMask is the 3-byte literal above, so this cannot overflow.
+			CbBuffer:   uint32(len(pcrMask)), //nolint:gosec // fixed 3-byte literal
+			BufferType: cng.NCRYPTBUFFER_TPM_PLATFORM_CLAIM_PCR_MASK,
+			PvBuffer:   unsafe.Pointer(&pcrMask[0]),
+		},
 	}
 	desc := cng.BCryptBufferDesc{UlVersion: cng.BCRYPTBUFFER_VERSION, CBuffers: uint32(len(bufs)), PBuffers: &bufs[0]}
 
@@ -82,7 +107,12 @@ func openOrCreateAIK(prov cng.NCRYPT_PROV_HANDLE) (cng.NCRYPT_KEY_HANDLE, error)
 	}
 	usage := make([]byte, 4)
 	binary.LittleEndian.PutUint32(usage, cng.NCRYPT_PCP_IDENTITY_KEY)
-	if err := cng.NCryptSetProperty(cng.NCRYPT_HANDLE(aik), cng.NCRYPT_PCP_KEY_USAGE_POLICY_PROPERTY, usage, 0); err != nil {
+	if err := cng.NCryptSetProperty(
+		cng.NCRYPT_HANDLE(aik),
+		cng.NCRYPT_PCP_KEY_USAGE_POLICY_PROPERTY,
+		usage,
+		0,
+	); err != nil {
 		_ = cng.NCryptDeleteKey(aik, 0) // roll back the half-created key
 		return 0, fmt.Errorf("set AIK usage policy: %w", err)
 	}

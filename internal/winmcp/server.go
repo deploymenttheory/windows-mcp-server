@@ -132,6 +132,14 @@ func (c *Config) SetReadOnly(v bool) {
 	c.readOnlySet = true
 }
 
+// ErrPersonaNeedsUser reports a persona requested in a context that cannot
+// drive the desktop. Personas are desktop-automation presets, and Session 0
+// has no desktop to drive, so this is a configuration error rather than a
+// policy denial — it is not routed through the guardrail decision.
+var ErrPersonaNeedsUser = errors.New(
+	"persona requires an interactive user context, but the process is running as SYSTEM",
+)
+
 // RunStdio builds the server and serves the MCP protocol over stdio until the
 // context is cancelled or the client disconnects.
 func RunStdio(ctx context.Context, cfg Config) error {
@@ -187,7 +195,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	requestedSystem := strings.EqualFold(cfg.RunContext, "system")
 	autoLimit := requestedSystem || decision.RunContext.IsSystem
 	if cfg.Persona != "" && autoLimit {
-		return fmt.Errorf("persona %q requires an interactive user context, but the process is running as SYSTEM", cfg.Persona)
+		return fmt.Errorf("%w: %q", ErrPersonaNeedsUser, cfg.Persona)
 	}
 
 	if gcfg.Bypass {
@@ -305,7 +313,11 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	inv.RegisterAll(runCtx, server, deps)
 
 	// Guardrail tools registered unconditionally (present under any persona).
-	statusTool, statusHandler := guardrails.StatusTool(holder.get, snapshotFn(startedAt, rugpull, heartbeat, audit, kill), kill)
+	statusTool, statusHandler := guardrails.StatusTool(
+		holder.get,
+		snapshotFn(startedAt, rugpull, heartbeat, audit, kill),
+		kill,
+	)
 	server.AddTool(statusTool, statusHandler)
 	// The agent-facing Kill tool always stops the session, but only actuates the
 	// containment ladder when the operator armed the switch.
@@ -396,7 +408,13 @@ func RunStdio(ctx context.Context, cfg Config) error {
 }
 
 // snapshotFn builds the always-on server-status snapshot provider.
-func snapshotFn(startedAt time.Time, rp *guardrails.RugPull, hb *guardrails.Heartbeat, audit *guardrails.AuditLog, kill *guardrails.KillSwitch) guardrails.SnapshotProvider {
+func snapshotFn(
+	startedAt time.Time,
+	rp *guardrails.RugPull,
+	hb *guardrails.Heartbeat,
+	audit *guardrails.AuditLog,
+	kill *guardrails.KillSwitch,
+) guardrails.SnapshotProvider {
 	return func() guardrails.ServerStatus {
 		beats, age := hb.Snapshot()
 		seq, head := audit.Head()
