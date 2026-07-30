@@ -103,27 +103,37 @@ func releaseStateElements(s *DesktopState) {
 	}
 }
 
-// selectTargets orders windows for traversal: the foreground window first, then
+// selectTargets orders windows for traversal: the primary window first, then
 // (when allWindows) the remaining non-minimized windows.
+//
+// De-duplication keys on the window Handle rather than the IsForeground flag.
+// The flag is not a reliable identity for the primary target: when there is no
+// foreground window the fallback picks a window that is by definition *not*
+// foreground, so a flag-based skip appended it a second time. That mattered
+// because Snapshot shares one treeBuilder — and therefore one maxTreeNodes
+// budget — across every target, so a duplicated window consumed the budget twice
+// and could crowd real elements out of the tree.
 func selectTargets(windows []WindowInfo, allWindows bool) []WindowInfo {
-	var fg *WindowInfo
+	// primary is the window added as the first target: the foreground window, or
+	// the fallback pick when there is none.
+	var primary *WindowInfo
 	for i := range windows {
 		if windows[i].IsForeground {
-			fg = &windows[i]
+			primary = &windows[i]
 			break
 		}
 	}
 
 	var targets []WindowInfo
-	if fg != nil {
-		targets = append(targets, *fg)
+	if primary != nil {
+		targets = append(targets, *primary)
 	} else if len(windows) > 0 {
 		// No foreground window (e.g. focus in transition): fall back to the
 		// topmost non-minimized window so a snapshot still captures something.
 		for i := range windows {
 			if !windows[i].Minimized {
 				targets = append(targets, windows[i])
-				fg = &windows[i]
+				primary = &windows[i]
 				break
 			}
 		}
@@ -132,8 +142,11 @@ func selectTargets(windows []WindowInfo, allWindows bool) []WindowInfo {
 		return targets
 	}
 	for i := range windows {
-		if windows[i].IsForeground || windows[i].Minimized {
+		if windows[i].Minimized {
 			continue
+		}
+		if primary != nil && windows[i].Handle == primary.Handle {
+			continue // already added as the first target
 		}
 		targets = append(targets, windows[i])
 	}
