@@ -12,9 +12,15 @@ type fakeEnforcer struct {
 	applied      []EnforceSpec
 	restores     int
 	recovered    int
+	suspends     int
 	applyErr     error
 	restoreErr   error
 	recoverError error
+}
+
+func (f *fakeEnforcer) Suspend() error {
+	f.suspends++
+	return nil
 }
 
 func (f *fakeEnforcer) Elevated() bool { return f.elevated }
@@ -56,6 +62,9 @@ func TestNoEnforcerIsHonestlyUnprivileged(t *testing.T) {
 	}
 	if n, err := e.Recover(); n != 0 || err != nil {
 		t.Errorf("NoEnforcer.Recover = (%d, %v), want (0, nil)", n, err)
+	}
+	if err := e.Suspend(); err != nil {
+		t.Errorf("NoEnforcer.Suspend should be a no-op: %v", err)
 	}
 }
 

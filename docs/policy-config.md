@@ -273,10 +273,8 @@ The tier in force is reported by `GuardrailStatus` and the status endpoint under
 `proxy-only` — so a proxy nothing is forced through is never mistaken for
 enforcement.
 
-`scoped` is implemented. `global` is not yet, and a document setting
-`block_all_outbound` is **refused at load** rather than accepted and ignored —
-a policy claiming the machine is default-deny, served by a build that cannot do
-it, is the failure this validation exists to prevent.
+All three tiers are implemented. `global` is the disruptive one — read the
+section below before enabling it.
 
 ### Scoped enforcement
 
@@ -302,19 +300,66 @@ is still better than nothing, whereas an operator whose document says these
 programs cannot bypass the proxy must never get a server where they silently
 can.
 
+### Global enforcement: `block_all_outbound`
+
+This sets the machine's **default outbound action to block** on all three
+firewall profiles. Nothing reaches the network unless a rule permits it. Try it
+in a VM first.
+
+Because a bare default-deny would leave the machine looking broken rather than
+governed, the server installs an exception set first — allow rules scoped to the
+specific Windows service that needs each one:
+
+| Exception | Service | Why it cannot be dropped |
+|---|---|---|
+| DNS | `Dnscache` | UDP/TCP 53 plus 443 for DoH; without it nothing resolves |
+| DHCP | `Dhcp` | Without it the machine loses its lease and has no network at all |
+| NCSI | `NlaSvc` | The connectivity probe; without it Windows reports "no internet" and apps stop trying rather than failing cleanly |
+| Time | `W32Time` | Clock drift breaks TLS and Kerberos |
+| Update | `wuauserv`, `BITS`, `DoSvc` | Security updates |
+| Revocation | `CryptSvc` | Blocking it makes signature checks hang for seconds rather than fail |
+| The proxy | this server's binary | Its route out, bounded to `allow_ports` |
+
+Two orderings are deliberate. **Allow rules go in before the default flips** —
+in the other order there is a window with no DNS and no DHCP, and a lease lost
+in that window does not come back when the rules arrive. **Restoring reverses
+it**: the default action goes back first, so a process dying mid-teardown leaves
+a usable machine with only stale rules, which the next start clears.
+
+Explicit `Allow` beats the block *default*, which is also why global mode cannot
+be built from one catch-all `Block` rule — that would beat the exceptions.
+
 ### If the server dies without cleaning up
 
-Rules outlive the process. Before creating any, the server records their names
-in `%ProgramData%\WindowsMCP\egress-rules.json`, and every subsequent start —
-including one where egress is now disabled — removes whatever that file names
-and audits `egress.recovered`. An unelevated start that finds rules it cannot
-remove says so loudly on every start rather than leaving you guessing.
+State outlives the process, so the server records what it is about to change in
+`%ProgramData%\WindowsMCP\egress-rules.json` **before changing anything** — the
+rule names, the per-profile default action to put back, and the prior WinINET
+settings. Every subsequent start, including one where egress is now disabled,
+restores whatever that file describes and audits `egress.recovered`.
 
-To clean up by hand:
+The default action is restored first and unconditionally. Stale rules are
+untidiness; a machine left default-deny with nothing running to proxy it has no
+working network, which a user experiences as the computer being broken.
+
+An unelevated start that finds state it cannot undo says so on every start
+rather than leaving you guessing.
+
+To recover by hand:
 
 ```powershell
+netsh advfirewall set allprofiles firewallpolicy blockinbound,allowoutbound
 netsh advfirewall firewall delete rule group="WindowsMCP-Egress"
 ```
+
+### Interaction with the kill switch
+
+If containment trips while global mode is active, the kill ladder isolates the
+network by flipping the same default actions to block — but the exception rules
+beat that default, so this server and the exempted services would keep their
+route out during an incident. The `Finalize` hook therefore **disables** the
+allow rules without restoring anything: undoing state there would countermand
+the containment just applied. Full teardown stays with the normal exit path, and
+a machine that reboots still contained is the correct direction to fail.
 
 ### What the proxy does per request
 

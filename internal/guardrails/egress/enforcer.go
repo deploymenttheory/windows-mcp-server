@@ -22,6 +22,15 @@ type Enforcer interface {
 	// current policy disables egress: state left by an earlier session is
 	// exactly what nothing else would clean up.
 	Recover() (removed int, err error)
+	// Suspend weakens egress without restoring anything, for the kill path.
+	//
+	// Containment flips the machine's default outbound action to block, but the
+	// allow rules global mode installs beat that default — so this server's own
+	// binary and the exempted services would keep their route out during an
+	// incident. Disabling those rules closes it. Nothing is restored here,
+	// because undoing state in Finalize could countermand the isolation the
+	// kill ladder has just applied.
+	Suspend() error
 }
 
 // EnforceSpec is what the OS layer is asked to arrange.
@@ -35,6 +44,11 @@ type EnforceSpec struct {
 	// GlobalBlock flips the machine's default outbound action, with the service
 	// exception set that keeps DNS, DHCP, NCSI and update working.
 	GlobalBlock bool
+	// AllowPorts bounds the proxy's own allow rule under GlobalBlock, so the
+	// firewall grant is no broader than the allowlist the proxy enforces.
+	AllowPorts []int
+	// SetSystemProxy points this user's WinINET settings at ProxyAddr.
+	SetSystemProxy bool
 }
 
 // NoEnforcer performs no OS actuation. It is the honest implementation for the
@@ -49,3 +63,5 @@ func (NoEnforcer) Apply(EnforceSpec) (func() error, error) {
 }
 
 func (NoEnforcer) Recover() (int, error) { return 0, nil }
+
+func (NoEnforcer) Suspend() error { return nil }

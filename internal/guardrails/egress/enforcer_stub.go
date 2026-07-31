@@ -26,3 +26,5 @@ func (WindowsEnforcer) Apply(spec EnforceSpec) (func() error, error) {
 }
 
 func (WindowsEnforcer) Recover() (int, error) { return 0, nil }
+
+func (WindowsEnforcer) Suspend() error { return nil }

@@ -588,13 +588,12 @@ func (p *Policy) validateEgress(add func(string, ...any)) {
 		add("%v: egress.enabled is true with an empty egress.allow; list the domains the device may reach",
 			ErrInvalidEgress)
 	}
-	if e.BlockAllOutbound {
-		// Refused at load rather than accepted and ignored. A document saying
-		// the machine is default-deny, served by a build that cannot do it, is
-		// exactly the "believes a control is in force when it is not" failure
-		// this validation exists to prevent.
-		add("%v: egress.block_all_outbound is not implemented in this build; "+
-			"use egress.applications to stop named programs bypassing the proxy", ErrInvalidEgress)
+	if e.BlockAllOutbound && len(e.AllowPorts) == 0 {
+		// Unreachable in practice, since Parse defaults the ports — but a Policy
+		// built in code could reach it, and a global block whose proxy has no
+		// permitted ports would cut the machine off with no route out at all.
+		add("%v: egress.block_all_outbound needs at least one entry in egress.allow_ports, "+
+			"or the proxy itself has no permitted route out", ErrInvalidEgress)
 	}
 	if _, err := hostmatch.Compile(e.Allow); err != nil {
 		add("%v: %v", ErrInvalidEgress, err)

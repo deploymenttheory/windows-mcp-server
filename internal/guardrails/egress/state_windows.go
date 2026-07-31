@@ -33,6 +33,18 @@ type enforcementState struct {
 	Listen    string   `json:"listen"`
 	Group     string   `json:"group"`
 	RuleNames []string `json:"rule_names"`
+	// GlobalBlock records that the machine's default outbound action was
+	// changed. This is the field that matters most in a recovery: rules can be
+	// left behind harmlessly, but a machine left default-deny with nothing
+	// running to proxy it has no working network at all.
+	GlobalBlock bool `json:"global_block,omitempty"`
+	// SavedOutbound is the per-profile default action to put back. It records
+	// what was found rather than assuming Allow, so an operator whose machine
+	// already blocked outbound by policy does not have that quietly undone.
+	SavedOutbound []savedOutbound `json:"saved_outbound,omitempty"`
+	// SystemProxy is the WinINET configuration to put back, when the policy
+	// pointed this user's settings at the proxy.
+	SystemProxy *savedProxySettings `json:"system_proxy,omitempty"`
 }
 
 // stateDir is ProgramData rather than the user profile: the rules are

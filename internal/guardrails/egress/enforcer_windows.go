@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unsafe"
 
@@ -66,30 +67,38 @@ func (WindowsEnforcer) Elevated() bool { return contain.CurrentUserIsAdmin() }
 // not starting.
 func (e WindowsEnforcer) Apply(spec EnforceSpec) (func() error, error) {
 	logger := e.logger()
-	if spec.GlobalBlock {
-		// Phase 3. Refusing is the honest answer: accepting the flag and doing
-		// nothing would leave an operator believing the machine is default-deny.
-		return nil, fmt.Errorf("%w: egress.block_all_outbound is not implemented yet", errNotSupported)
-	}
-	if len(spec.Applications) == 0 {
+	if len(spec.Applications) == 0 && !spec.GlobalBlock {
 		return func() error { return nil }, nil
 	}
 	if !e.Elevated() {
 		return nil, ErrNotElevated
 	}
 
-	names := ruleNames(spec.Applications)
-	// Written before the first rule exists. A crash in between leaves the file
-	// naming rules that were never created, and removing a rule that is not
-	// there is a no-op — the opposite order would leave real rules with nothing
-	// recording them.
-	if err := writeState(enforcementState{
-		PID: os.Getpid(), Listen: spec.ProxyAddr, Group: ruleGroup, RuleNames: names,
-	}); err != nil {
+	blockNames := ruleNames(spec.Applications)
+	allowNames := plannedAllowNames(spec)
+	state := enforcementState{
+		PID: os.Getpid(), Listen: spec.ProxyAddr, Group: ruleGroup,
+		RuleNames: append(append([]string{}, blockNames...), allowNames...),
+	}
+
+	// The whole mutation is recorded before any of it happens. A crash between
+	// writing and acting leaves a file naming rules that do not exist and
+	// default actions that were never changed — both harmless to undo. The
+	// reverse order would leave a machine blocked with nothing recording how to
+	// unblock it, which is the failure this file exists to prevent.
+	if spec.GlobalBlock {
+		saved, err := readDefaultOutbound()
+		if err != nil {
+			return nil, err
+		}
+		state.SavedOutbound = saved
+		state.GlobalBlock = true
+	}
+	if err := writeState(state); err != nil {
 		return nil, err
 	}
 
-	err := contain.WithCOMThread(func() error {
+	if err := contain.WithCOMThread(func() error {
 		rules, release, err := openRules()
 		if err != nil {
 			return err
@@ -98,26 +107,74 @@ func (e WindowsEnforcer) Apply(spec EnforceSpec) (func() error, error) {
 
 		// Clear our own names first: Add would otherwise stack a second rule
 		// with the same name from a session that did not shut down cleanly.
-		for _, name := range names {
+		for _, name := range state.RuleNames {
 			removeRule(rules, name)
 		}
+
+		// Allow rules go in BEFORE the default flips. In the other order there
+		// is a window — however brief — where the machine has no DNS and no
+		// DHCP, and a lease lost in that window does not come back just because
+		// the rules arrive afterwards.
+		if spec.GlobalBlock {
+			if err := addGlobalAllowRules(rules, spec); err != nil {
+				removeNamed(rules, state.RuleNames)
+				return err
+			}
+		}
 		for i, app := range spec.Applications {
-			if err := addBlockRule(rules, names[i], app, spec.ProxyAddr); err != nil {
+			if err := addBlockRule(rules, blockNames[i], app, spec.ProxyAddr); err != nil {
 				// Roll back what this call created, so a failure leaves the
 				// machine as it was found rather than half-enforced.
-				for _, name := range names[:i] {
-					removeRule(rules, name)
-				}
+				removeNamed(rules, state.RuleNames)
 				return err
 			}
 		}
 		return nil
-	})
-	if err != nil {
+	}); err != nil {
 		_ = clearState() // nothing was installed; do not leave a file claiming otherwise
 		return nil, fmt.Errorf("install egress firewall rules: %w", err)
 	}
-	logger.Info("egress enforcement applied", "rules", len(names), "group", ruleGroup)
+
+	// Only now, with every exception in place, does the machine become
+	// default-deny.
+	if spec.GlobalBlock {
+		if err := setDefaultOutbound(windowsfirewall.NET_FW_ACTION_BLOCK); err != nil {
+			_ = e.removeRules(state.RuleNames)
+			_ = clearState()
+			return nil, fmt.Errorf("set default outbound to block: %w", err)
+		}
+		logger.Warn("egress: machine default outbound action is now BLOCK",
+			"exceptions", len(allowNames), "recovery_state", statePath())
+	}
+	if spec.SetSystemProxy {
+		savedProxy, err := setSystemProxy(spec.ProxyAddr)
+		if err != nil {
+			// Unwind the firewall work: a machine pointed at a proxy it cannot
+			// use, or blocked with no proxy configured, is worse than either.
+			if spec.GlobalBlock {
+				_ = restoreDefaultOutbound(state.SavedOutbound)
+			}
+			_ = e.removeRules(state.RuleNames)
+			_ = clearState()
+			return nil, fmt.Errorf("point WinINET at the egress proxy: %w", err)
+		}
+		state.SystemProxy = savedProxy
+		// Re-record: the settings to restore were not known until now.
+		if err := writeState(state); err != nil {
+			_ = restoreSystemProxy(savedProxy)
+			if spec.GlobalBlock {
+				_ = restoreDefaultOutbound(state.SavedOutbound)
+			}
+			_ = e.removeRules(state.RuleNames)
+			_ = clearState()
+			return nil, err
+		}
+		logger.Info("WinINET proxy settings point at the egress proxy", "addr", spec.ProxyAddr)
+	}
+
+	logger.Info("egress enforcement applied",
+		"block_rules", len(blockNames), "allow_rules", len(allowNames),
+		"global", spec.GlobalBlock, "system_proxy", spec.SetSystemProxy, "group", ruleGroup)
 
 	var undone bool
 	restore := func() error {
@@ -125,26 +182,135 @@ func (e WindowsEnforcer) Apply(spec EnforceSpec) (func() error, error) {
 			return nil
 		}
 		undone = true
-		err := contain.WithCOMThread(func() error {
-			rules, release, err := openRules()
-			if err != nil {
+		// Defaults first, rules second — the reverse of how they went on. If
+		// the process dies between the two, the machine is already usable and
+		// only stale allow rules remain, which the next start clears.
+		if spec.GlobalBlock {
+			if err := restoreDefaultOutbound(state.SavedOutbound); err != nil {
+				return fmt.Errorf("restore default outbound action: %w", err)
+			}
+		}
+		if state.SystemProxy != nil {
+			if err := restoreSystemProxy(state.SystemProxy); err != nil {
 				return err
 			}
-			defer release()
-			for _, name := range names {
-				removeRule(rules, name)
-			}
-			logger.Info("egress enforcement removed", "rules", len(names))
-			return nil
-		})
-		// Clear the state only once the rules are actually gone, so a failed
-		// removal is still recoverable by the next start.
-		if err != nil {
-			return fmt.Errorf("remove egress firewall rules: %w", err)
 		}
+		if err := e.removeRules(state.RuleNames); err != nil {
+			return err
+		}
+		logger.Info("egress enforcement removed", "rules", len(state.RuleNames))
 		return clearState()
 	}
 	return restore, nil
+}
+
+// Suspend weakens egress without touching the machine's default actions.
+//
+// It exists for the kill path. When containment isolates the network it flips
+// the default outbound action to block — but the allow rules installed for
+// global mode beat that default, so svchost and this server's own binary would
+// keep their route out during an incident. Disabling those rules closes it.
+//
+// Restoring is deliberately not done here: undoing anything in Finalize could
+// countermand the isolation the kill ladder just applied. Full teardown belongs
+// to the exit defer, and a machine that reboots still contained is the correct
+// direction to fail.
+func (e WindowsEnforcer) Suspend() error {
+	state, err := readState()
+	if err != nil || state == nil {
+		return nil //nolint:nilerr // nothing recorded means nothing to suspend
+	}
+	if !e.Elevated() {
+		return nil
+	}
+	if err := contain.WithCOMThread(func() error {
+		rules, release, err := openRules()
+		if err != nil {
+			return err
+		}
+		defer release()
+		for _, name := range state.RuleNames {
+			if isAllowRuleName(name) {
+				_ = setRuleEnabled(rules, name, false)
+			}
+		}
+		e.logger().Warn("egress allow rules disabled for containment", "rules", len(state.RuleNames))
+		return nil
+	}); err != nil {
+		return fmt.Errorf("disable egress allow rules: %w", err)
+	}
+	return nil
+}
+
+func (e WindowsEnforcer) removeRules(names []string) error {
+	if err := contain.WithCOMThread(func() error {
+		rules, release, err := openRules()
+		if err != nil {
+			return err
+		}
+		defer release()
+		removeNamed(rules, names)
+		return nil
+	}); err != nil {
+		return fmt.Errorf("remove egress firewall rules: %w", err)
+	}
+	return nil
+}
+
+func removeNamed(rules *windowsfirewall.INetFwRules, names []string) {
+	for _, name := range names {
+		removeRule(rules, name)
+	}
+}
+
+// plannedAllowNames is the allow-rule set global mode will create. Naming them
+// up front is what lets the state file record the whole mutation before any of
+// it happens.
+func plannedAllowNames(spec EnforceSpec) []string {
+	if !spec.GlobalBlock {
+		return nil
+	}
+	names := []string{proxyAllowRuleName()}
+	for _, ex := range defaultExceptions() {
+		names = append(names, exceptionRuleName(ex))
+	}
+	return names
+}
+
+func isAllowRuleName(name string) bool {
+	return strings.HasPrefix(name, ruleGroup+"-Allow-")
+}
+
+// addGlobalAllowRules installs the proxy's own route out plus the exception set
+// that keeps the machine functioning under a block-by-default policy.
+func addGlobalAllowRules(rules *windowsfirewall.INetFwRules, spec EnforceSpec) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate this executable for the proxy allow rule: %w", err)
+	}
+	if err := addProxyAllowRule(rules, exe, proxyAllowPorts(spec)); err != nil {
+		return err
+	}
+	for _, ex := range defaultExceptions() {
+		if err := addExceptionRule(rules, ex); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// proxyAllowPorts bounds where the proxy itself may reach. It mirrors the
+// policy's allow_ports, so the firewall rule is no broader than the allowlist
+// the proxy already enforces.
+func proxyAllowPorts(spec EnforceSpec) string {
+	if len(spec.AllowPorts) == 0 {
+		return "80,443"
+	}
+	parts := make([]string, 0, len(spec.AllowPorts))
+	for _, p := range spec.AllowPorts {
+		parts = append(parts, strconv.Itoa(p))
+	}
+	return strings.Join(parts, ",")
 }
 
 // Recover removes any rules left behind by a session that did not shut down.
@@ -181,6 +347,27 @@ func (e WindowsEnforcer) Recover() (int, error) {
 			"rules", len(state.RuleNames), "previous_pid", state.PID,
 			"fix", `run elevated, or: netsh advfirewall firewall delete rule group="`+ruleGroup+`"`)
 		return 0, nil
+	}
+
+	// The machine's default action comes back first and unconditionally. Stale
+	// rules are an untidiness; a machine left default-deny with nothing running
+	// to proxy it has no working network, and that is what a user would
+	// experience as the computer being broken.
+	if state.GlobalBlock {
+		if err := restoreDefaultOutbound(state.SavedOutbound); err != nil {
+			e.logger().Error("could not restore the machine's default outbound action; "+
+				"the network will stay blocked until this is fixed",
+				"error", err,
+				"fix", "netsh advfirewall set allprofiles firewallpolicy blockinbound,allowoutbound")
+			return 0, err
+		}
+		e.logger().Warn("restored the machine's default outbound action after an unclean shutdown",
+			"previous_pid", state.PID)
+	}
+	if state.SystemProxy != nil {
+		if err := restoreSystemProxy(state.SystemProxy); err != nil {
+			e.logger().Error("could not restore WinINET proxy settings", "error", err)
+		}
 	}
 
 	var removed int
@@ -253,21 +440,11 @@ func openRules() (*windowsfirewall.INetFwRules, func(), error) {
 // would leave HTTP/3 as an open path straight past the proxy. Ports are left
 // unset because Windows rejects a port on a rule whose protocol is ANY.
 func addBlockRule(rules *windowsfirewall.INetFwRules, name, appPath, proxyAddr string) error {
-	var unk *win32.IUnknown
-	if err := com.CoCreateInstance(
-		&clsidNetFwRule,
-		nil,
-		com.CLSCTX_INPROC_SERVER,
-		&windowsfirewall.IID_INetFwRule,
-		&unk,
-	); err != nil {
-		return fmt.Errorf("CoCreateInstance(NetFwRule): %w", err)
+	rule, release, err := newRuleObject()
+	if err != nil {
+		return err
 	}
-	if unk == nil {
-		return fmt.Errorf("CoCreateInstance(NetFwRule): nil interface") //nolint:err113 // one-off guard
-	}
-	rule := (*windowsfirewall.INetFwRule)(unsafe.Pointer(unk))
-	defer rule.Release()
+	defer release()
 
 	description := fmt.Sprintf(
 		"Blocked by windows-mcp-server egress policy. Reach approved destinations through the proxy at %s.",
@@ -297,6 +474,28 @@ func addBlockRule(rules *windowsfirewall.INetFwRules, name, appPath, proxyAddr s
 	}
 	return nil
 }
+
+// newRuleObject instantiates an empty INetFwRule. Must run on a COM-initialized
+// thread; the returned func releases it.
+func newRuleObject() (*windowsfirewall.INetFwRule, func(), error) {
+	var unk *win32.IUnknown
+	if err := com.CoCreateInstance(
+		&clsidNetFwRule,
+		nil,
+		com.CLSCTX_INPROC_SERVER,
+		&windowsfirewall.IID_INetFwRule,
+		&unk,
+	); err != nil {
+		return nil, nil, fmt.Errorf("CoCreateInstance(NetFwRule): %w", err)
+	}
+	if unk == nil {
+		return nil, nil, errNilRuleInterface
+	}
+	rule := (*windowsfirewall.INetFwRule)(unsafe.Pointer(unk))
+	return rule, func() { rule.Release() }, nil
+}
+
+var errNilRuleInterface = errors.New("CoCreateInstance(NetFwRule) returned a nil interface")
 
 // withBSTR allocates a BSTR, hands it to a setter and frees it. Every string
 // property crosses the COM boundary this way, and forgetting the free is a leak

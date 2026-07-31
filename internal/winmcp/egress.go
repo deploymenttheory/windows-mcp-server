@@ -34,7 +34,7 @@ func provisionEgress(
 	devicePolicy *policy.Policy,
 	auditLog *audit.AuditLog,
 	logger *slog.Logger,
-) (*egress.Service, func(), error) {
+) (*egress.Service, func(), func(), error) {
 	noop := func() {}
 	cfg := devicePolicy.Egress
 	enforcer := egress.WindowsEnforcer{Logger: logger}
@@ -51,7 +51,7 @@ func provisionEgress(
 	}
 
 	if !cfg.Enabled {
-		return nil, noop, nil
+		return nil, noop, noop, nil
 	}
 
 	allow, err := hostmatch.Compile(cfg.Allow)
@@ -59,7 +59,7 @@ func provisionEgress(
 		// Validation already rejected this at load; reaching here means a Config
 		// was built by hand, so fail rather than serve an allowlist that did not
 		// compile.
-		return nil, noop, fmt.Errorf("egress allowlist: %w", err)
+		return nil, noop, noop, fmt.Errorf("egress allowlist: %w", err)
 	}
 
 	var token string
@@ -82,7 +82,7 @@ func provisionEgress(
 			"reason":      "not elevated",
 			"enforcement": cfg.Enforcement(),
 		})
-		return nil, noop, fmt.Errorf("%w: egress.applications and egress.block_all_outbound "+
+		return nil, noop, noop, fmt.Errorf("%w: egress.applications and egress.block_all_outbound "+
 			"install firewall rules, so the server must run elevated; "+
 			"remove them to run the proxy in advisory mode", egress.ErrNotElevated)
 	}
@@ -97,7 +97,7 @@ func provisionEgress(
 		Logger:       logger,
 	})
 	if err != nil {
-		return nil, noop, fmt.Errorf("start egress proxy: %w", err)
+		return nil, noop, noop, fmt.Errorf("start egress proxy: %w", err)
 	}
 
 	// Rules go in only once the proxy is actually listening: blocking an
@@ -105,14 +105,16 @@ func provisionEgress(
 	// no route, which is the failure mode an operator would notice as "the
 	// browser broke" rather than "policy applied".
 	restoreRules, err := enforcer.Apply(egress.EnforceSpec{
-		ProxyAddr:    svc.Addr(),
-		Applications: cfg.Applications,
-		GlobalBlock:  cfg.BlockAllOutbound,
+		ProxyAddr:      svc.Addr(),
+		Applications:   cfg.Applications,
+		GlobalBlock:    cfg.BlockAllOutbound,
+		AllowPorts:     cfg.AllowPorts,
+		SetSystemProxy: cfg.SetSystemProxy,
 	})
 	if err != nil {
 		svc.Stop()
 		_, _ = auditLog.Append("egress.enforce.error", map[string]any{"error": err.Error()})
-		return nil, noop, fmt.Errorf("apply egress enforcement: %w", err)
+		return nil, noop, noop, fmt.Errorf("apply egress enforcement: %w", err)
 	}
 	if wantsEnforcement {
 		_, _ = auditLog.Append("egress.enforce.applied", map[string]any{
@@ -163,7 +165,18 @@ func provisionEgress(
 			})
 		})
 	}
-	return svc, cleanup, nil
+	// suspend is the kill path's hook. It stops admitting traffic and disables
+	// the allow rules that would otherwise survive containment, but restores
+	// nothing: undoing state inside Finalize could countermand the isolation the
+	// kill ladder has just applied. Full teardown stays with the exit defer.
+	suspend := func() {
+		svc.Stop()
+		if err := enforcer.Suspend(); err != nil {
+			logger.Error("could not disable egress allow rules for containment", "error", err)
+		}
+		_, _ = auditLog.Append("egress.suspend", map[string]any{"counters": svc.Counters()})
+	}
+	return svc, cleanup, suspend, nil
 }
 
 // summarizeEgress folds the running totals into the audit chain periodically, so

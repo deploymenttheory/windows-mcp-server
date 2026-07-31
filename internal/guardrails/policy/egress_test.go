@@ -103,13 +103,6 @@ func TestEgressValidationRejectsMisconfiguration(t *testing.T) {
 			egress: `{"enabled":false,"block_all_outbound":true}`,
 			want:   "egress.enabled is false",
 		},
-		{
-			// Accepting a setting this build cannot honour would leave the
-			// operator believing the machine is default-deny.
-			name:   "global block is not implemented yet",
-			egress: `{"enabled":true,"allow":["example.com"],"block_all_outbound":true}`,
-			want:   "not implemented in this build",
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := egressDoc(t, tc.egress)
@@ -138,6 +131,9 @@ func TestEgressValidationAcceptsWorkableDocuments(t *testing.T) {
 		  "applications":["C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"]}`,
 		`{"enabled":true,"allow":["*.contoso.com"],"applications":["\\\\server\\share\\app.exe"]}`,
 		`{"enabled":true,"allow":["*.contoso.com"],"listen":"localhost:8181"}`,
+		// Global block is implemented now; Parse supplies the default ports it
+		// needs, so this is a complete document.
+		`{"enabled":true,"allow":["*.contoso.com"],"block_all_outbound":true,"set_system_proxy":true}`,
 	} {
 		p := egressDoc(t, egress)
 		if err := p.Validate(knownSignals); err != nil {

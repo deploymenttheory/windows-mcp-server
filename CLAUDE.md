@@ -278,6 +278,33 @@ short of `Rules.Add` (the only step needing elevation) so it runs unprivileged
 in CI. If you change a property, that test is what catches a wrong argument type
 before an elevated machine does.
 
+Global mode (`block_all_outbound`) flips the machine's default outbound action.
+Four rules, all learned the hard way:
+
+- **Allow rules go in before the default flips; restoring reverses it.** In the
+  other order there is a window with no DNS and no DHCP, and a lease lost in
+  that window does not come back when the rules arrive. On the way out, the
+  default action is restored first so a process dying mid-teardown leaves a
+  usable machine.
+- **The exception set is not optional decoration.** Dropping `Dnscache` or
+  `Dhcp` gives a machine with no network; dropping `NlaSvc` gives one where
+  Windows reports "no internet" and applications stop trying rather than
+  failing cleanly. `defaultExceptions()` documents why each entry exists, and
+  `TestGlobalAllowRulesCoverTheMachineEssentials` makes removing one deliberate.
+- **`Suspend()` must never restore.** The kill ladder's `IsolateNetwork` flips
+  the same defaults, and explicit allows beat a blocked default — so containment
+  needs those rules switched off. Restoring anything in `Finalize` would
+  countermand the isolation just applied. Full teardown belongs to the exit
+  defer, and a machine that reboots still contained is the right way to fail.
+- **The state file is written before any mutation and read on every start**,
+  even when egress is now disabled. It carries the saved per-profile action, not
+  an assumption of `Allow`: an operator whose machine already blocked outbound
+  must not have that silently undone by this server exiting.
+
+The live global-block tests are gated behind `WINDOWS_MCP_GLOBAL_BLOCK_TEST=1`,
+deliberately a different variable from the scoped tests' — running those must
+never cut a machine off by accident.
+
 ### Cost and correctness
 
 Signals are cached with a per-signal TTL because `dsregcmd`, WMI and `tpmtool`
