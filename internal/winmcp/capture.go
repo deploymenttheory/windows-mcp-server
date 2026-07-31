@@ -12,7 +12,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/contain"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/status"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )
 
@@ -68,14 +70,14 @@ func CaptureSurface(ctx context.Context, cfg Config) (Surface, error) {
 
 	// The two guardrail tools are registered unconditionally by RunStdio, so they
 	// are part of the served manifest and must be scored too.
-	kill := guardrails.NewKillSwitch(nil)
-	statusTool, statusHandler := guardrails.StatusTool(
-		func() guardrails.Decision { return guardrails.Decision{} },
-		func() guardrails.ServerStatus { return guardrails.ServerStatus{} },
+	kill := contain.NewKillSwitch(nil)
+	statusTool, statusHandler := status.StatusTool(
+		func() signals.Decision { return signals.Decision{} },
+		func() status.ServerStatus { return status.ServerStatus{} },
 		kill,
 	)
 	server.AddTool(statusTool, statusHandler)
-	killTool, killHandler := guardrails.KillTool(func(string) {})
+	killTool, killHandler := status.KillTool(func(string) {})
 	server.AddTool(killTool, killHandler)
 
 	ctx, cancel := context.WithTimeout(ctx, captureTimeout)

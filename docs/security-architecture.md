@@ -40,7 +40,7 @@ flowchart TB
         ENG["policy engine"]
     end
 
-    subgraph EVAL["Engine (internal/guardrails)"]
+    subgraph EVAL["Engine (internal/guardrails/policy)"]
         direction TB
         SUBJ["subject: tool / resource / prompt<br/>facts: toolset · read-only · destructive · open-world"]
         MATCH["match rules → union requirements<br/>severity per signal from the most specific rule"]
@@ -462,30 +462,30 @@ evaluated unless a policy asks for it.
 | Credentials init loading + lifecycle | `internal/winmcp/credentials.go` |
 | Credentials-file DACL check | `internal/winmcp/credfileacl_windows.go` |
 | Credentials tool (list/verify/inject) | `pkg/windows/credentials.go` |
-| Policy document: schema, loader, validation, embedded default | `internal/guardrails/policyconfig.go`, `policy_default.json` |
-| Signal cache (per-signal TTL, background refresh) | `internal/guardrails/signalcache.go` |
-| Rule matcher, verdict, rate limits, `Explain` | `internal/guardrails/engine.go` |
-| Enforcement middleware (the decision point) | `internal/guardrails/enforce.go` |
-| Signal registry + the signals themselves | `internal/guardrails/{registry,guardrail,providers,health,graph,remote}.go` |
+| Policy document: schema, loader, validation, embedded default | `internal/guardrails/policy/policyconfig.go`, `policy_default.json` |
+| Signal cache (per-signal TTL, background refresh) | `internal/guardrails/policy/signalcache.go` |
+| Rule matcher, verdict, rate limits, `Explain` | `internal/guardrails/policy/engine.go` |
+| Enforcement middleware (the decision point) | `internal/guardrails/enforce/enforce.go` |
+| Signal registry + the signals themselves | `internal/guardrails/signals/` |
 | Tool index adapter (toolset + annotations) | `internal/winmcp/guardrails.go` (`newToolIndex`) |
 | Operator commands (`policy validate/check/explain`) | `internal/winmcp/policyops.go` |
 | Example policies | `policy/examples/*.json` |
-| Audit log (hash chain, sink, middleware) | `internal/guardrails/audit.go` |
-| Heartbeat + watchdog | `internal/guardrails/heartbeat.go` |
-| Rug-pull detector | `internal/guardrails/rugpull.go` |
-| Enforce HTTPS (URL scheme policy) | `pkg/windows/urlpolicy.go`, `internal/guardrails/remote.go` |
+| Audit log (hash chain, sink, middleware) | `internal/guardrails/audit/audit.go` |
+| Heartbeat + watchdog | `internal/guardrails/watch/heartbeat.go` |
+| Rug-pull detector | `internal/guardrails/watch/rugpull.go` |
+| Enforce HTTPS (URL scheme policy) | `pkg/windows/urlpolicy.go`, `internal/guardrails/signals/remote.go` |
 | Capability pinning (suppresses listChanged) | `internal/winmcp/guardrails.go` (`pinnedCapabilities`) |
-| In-flight monitor | `internal/guardrails/monitor.go` |
-| Kill switch + tiered executor + graceful stop | `internal/guardrails/{killswitch,killaction}.go` |
+| In-flight monitor | `internal/guardrails/watch/monitor.go` |
+| Kill switch + tiered executor + graceful stop | `internal/guardrails/contain/{killswitch,killaction}.go` |
 | Per-trigger arming gate (`tripFunc`) | `internal/winmcp/guardrails.go` |
-| System actuator (Windows / stub) | `internal/guardrails/actuator_{windows,stub}.go` |
-| Firewall isolator (`INetFwPolicy2`) | `internal/guardrails/firewall_windows.go` |
-| Run-context detection | `internal/guardrails/runcontext_windows.go` |
-| Status surface (tool + HTTP snapshot) | `internal/guardrails/status.go` |
+| System actuator (Windows / stub) | `internal/guardrails/contain/actuator_{windows,stub}.go` |
+| Firewall isolator (`INetFwPolicy2`) | `internal/guardrails/contain/firewall_windows.go` |
+| Run-context detection | `internal/guardrails/signals/runcontext_windows.go` |
+| Status surface (tool + HTTP snapshot) | `internal/guardrails/status/status.go` |
 | On-screen security banner | `internal/desktop/overlay.go`, `com.go` |
 | Wiring (RunStdio, config groups) | `internal/winmcp/{server,guardrails}.go` |
 | CLI flag groups | `cmd/windows-mcp-server/main.go` |
-| Tier-2 (parked) | `internal/guardrails/{graph,remote,attestation_windows}.go` |
+| Tier-2 (parked) | `internal/guardrails/signals/{graph,remote}.go` |
 
 The platform-agnostic core (audit, heartbeat, rug-pull, kill-action logic,
 providers) builds and unit-tests on Linux via the `!windows` actuator stub; only

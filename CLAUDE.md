@@ -20,7 +20,7 @@ built on `deploymenttheory/go-bindings-win32`, `go-bindings-wmi`, and the offici
 | `internal/desktop` | the Win32/UIA/WMI engine — one COM STA thread |
 | `pkg/windows` | tool definitions (one file per topic) + toolset/persona metadata |
 | `pkg/inventory` | domain-agnostic toolset filter/registration engine (mirrors `github-mcp-server`) |
-| `internal/guardrails` | the device-policy engine + audit/rug-pull/kill-switch core |
+| `internal/guardrails` | the security stack, split by lifecycle layer (see below) |
 | `policy/examples` | starting-point policy documents (validated by the test suite) |
 | `internal/mcpspec` | vendored-schema loader + offline wire validation (platform-agnostic; no build tag) |
 | `internal/mcpconf` | official conformance-suite results: ingest + reporting (no build tag) |
@@ -169,9 +169,27 @@ A policy engine on the request path, plus an out-of-band kill switch. See
 `docs/security-architecture.md` for the design and `docs/policy-config.md` for the
 document schema.
 
-The engine is four files in `internal/guardrails`: `policyconfig.go` (schema,
-loader, validation, embedded default), `signalcache.go` (per-signal TTL),
-`engine.go` (rule matching and verdict), `enforce.go` (the middleware).
+`internal/guardrails` is split by lifecycle layer, and the import graph is
+acyclic in that order:
+
+| Package | Holds | Depends on |
+|---|---|---|
+| `signals` | signal vocabulary, probes, `Registry`, the checks, `Decision` | — |
+| `audit` | hash chain, sink, `VerifyChain` | — |
+| `policy` | document schema, signal cache, engine, verdict | `signals` |
+| `enforce` | the MCP middleware | `policy`, `audit` |
+| `watch` | heartbeat, rug-pull, monitor | `audit`, `signals` |
+| `contain` | kill switch, ladder, actuator, firewall | `audit`, `signals` |
+| `status` | status endpoint, `GuardrailStatus` + `Kill` tools | `signals`, `contain` |
+
+Two properties are worth preserving:
+
+- **`signals` and `audit` are leaves.** Recording must never be contingent on the
+  thing being recorded, and the signal catalogue must stay evaluable on its own.
+- **`policy` has no MCP dependency.** The decision is testable against fake
+  signals and a fake tool index, with no transport. Anything MCP-shaped about
+  enforcement belongs in `enforce`.
+
 Everything is configured by a JSON document — `--policy-config` is the only
 security flag.
 
@@ -258,7 +276,7 @@ unbuffered job channel.
 
 `"enforce_https": true` in the policy document refuses plaintext `http://`
 targets. `pkg/windows/urlpolicy.go` owns the tool-layer policy;
-`internal/guardrails/remote.go` applies it to the may-run endpoint via
+`internal/guardrails/signals/remote.go` applies it to the may-run endpoint via
 `Env.EnforceHTTPS`. RunStdio copies the setting onto `Config` right after loading,
 because it has to reach the tool dependencies and the guardrail `Env`, neither of
 which carries a policy.
@@ -400,7 +418,7 @@ with no pinned baseline is skipped rather than treated as drift.
 Everything is `//go:build windows && (amd64 || arm64)` **except** the
 deliberately platform-agnostic files: `pkg/windows/{toolsets,params,result}.go`,
 all of `pkg/inventory`, all of `internal/mcpspec`, all of `internal/mcpconf`, and
-the `internal/guardrails` core. Preserve that split — it is what keeps the filter
+and all of `internal/guardrails` except its `contain` actuators and the`signals` run-context detector. Preserve that split — it is what keeps the filter
 engine, the schema validation, the conformance reporting and the security logic
 testable in isolation.
 

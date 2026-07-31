@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/contain"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
 )
 
 // TestEnforceHTTPSResolution pins that the setting comes from Config, which
@@ -25,13 +27,13 @@ func TestEnforceHTTPSResolution(t *testing.T) {
 // TestKillPolicyConfigMapsContainment checks the policy's containment actions
 // reach the executor, and that a policy configuring none produces none.
 func TestKillPolicyConfigMapsContainment(t *testing.T) {
-	none := killPolicyConfig(&guardrails.Policy{})
+	none := killPolicyConfig(&policy.Policy{})
 	if none.Isolate || none.Lock || none.Shutdown || none.KillProcs {
 		t.Errorf("a policy with no actions must contain nothing, got %+v", none)
 	}
 
-	full := killPolicyConfig(&guardrails.Policy{Kill: guardrails.KillPolicy{
-		Actions: guardrails.KillActions{
+	full := killPolicyConfig(&policy.Policy{Kill: policy.KillPolicy{
+		Actions: policy.KillActions{
 			Isolate:   true,
 			Lock:      true,
 			KillProcs: []string{"evil.exe"},
@@ -57,9 +59,9 @@ func TestGuardrailEnvCarriesEnforceHTTPS(t *testing.T) {
 }
 
 // capturingSink records audit entries so the disarmed path can be inspected.
-type capturingSink struct{ entries []guardrails.AuditEntry }
+type capturingSink struct{ entries []audit.AuditEntry }
 
-func (s *capturingSink) Write(e guardrails.AuditEntry) error {
+func (s *capturingSink) Write(e audit.AuditEntry) error {
 	s.entries = append(s.entries, e)
 	return nil
 }
@@ -68,10 +70,10 @@ func (s *capturingSink) Close() error { return nil }
 
 func TestTripFuncArmedTripsTheSwitch(t *testing.T) {
 	var reason string
-	kill := guardrails.NewKillSwitch(func(r string) { reason = r })
+	kill := contain.NewKillSwitch(func(r string) { reason = r })
 	sink := &capturingSink{}
 
-	trip := tripFunc("rugpull", true, kill, guardrails.NewAuditLog(sink), nil)
+	trip := tripFunc("rugpull", true, kill, audit.NewAuditLog(sink), nil)
 	trip("manifest drift")
 
 	if tripped, _ := kill.Tripped(); !tripped {
@@ -87,10 +89,10 @@ func TestTripFuncArmedTripsTheSwitch(t *testing.T) {
 // see it fired) while containing nothing.
 func TestTripFuncDisarmedAuditsWithoutContaining(t *testing.T) {
 	var tripped bool
-	kill := guardrails.NewKillSwitch(func(string) { tripped = true })
+	kill := contain.NewKillSwitch(func(string) { tripped = true })
 	sink := &capturingSink{}
 
-	trip := tripFunc("posture-drift", false, kill, guardrails.NewAuditLog(sink), nil)
+	trip := tripFunc("posture-drift", false, kill, audit.NewAuditLog(sink), nil)
 	trip("secure-boot=fail")
 
 	if tripped {
@@ -112,7 +114,7 @@ func TestTripFuncDisarmedAuditsWithoutContaining(t *testing.T) {
 			t.Errorf("audit payload missing %q: %s", want, payload)
 		}
 	}
-	if err := guardrails.VerifyChain(sink.entries); err != nil {
+	if err := audit.VerifyChain(sink.entries); err != nil {
 		t.Errorf("disarmed entries must keep the chain verifiable: %v", err)
 	}
 }
@@ -120,7 +122,7 @@ func TestTripFuncDisarmedAuditsWithoutContaining(t *testing.T) {
 // TestTripFuncNilAuditIsSafe covers the tests-and-degraded path where no audit
 // log is wired.
 func TestTripFuncNilAuditIsSafe(t *testing.T) {
-	kill := guardrails.NewKillSwitch(nil)
+	kill := contain.NewKillSwitch(nil)
 	tripFunc("sentinel", false, kill, nil, nil)("no audit configured")
 	if tripped, _ := kill.Tripped(); tripped {
 		t.Error("disarmed trigger must not trip even without an audit log")
