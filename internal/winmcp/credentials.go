@@ -27,7 +27,7 @@ import (
 	"sync"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
 )
 
 // credentialFileMaxSize bounds the credentials document, so a mistyped path at a
@@ -172,7 +172,7 @@ func loadCredentialsFile(path string) ([]credentialEntry, error) {
 func installCredentials(
 	dsk *desktop.Desktop,
 	entries []credentialEntry,
-	audit *guardrails.AuditLog,
+	audit *audit.AuditLog,
 	logger *slog.Logger,
 ) ([]installedCredential, error) {
 	installed := make([]installedCredential, 0, len(entries))
@@ -225,7 +225,7 @@ func installCredentials(
 func removeCredentials(
 	dsk *desktop.Desktop,
 	installed []installedCredential,
-	audit *guardrails.AuditLog,
+	audit *audit.AuditLog,
 	logger *slog.Logger,
 ) {
 	if len(installed) == 0 {
@@ -310,7 +310,7 @@ func wipe(b []byte) {
 func provisionCredentials(
 	dsk *desktop.Desktop,
 	cfg Config,
-	audit *guardrails.AuditLog,
+	audit *audit.AuditLog,
 	logger *slog.Logger,
 ) ([]installedCredential, func(), error) {
 	var installed []installedCredential

@@ -10,33 +10,34 @@ import (
 	"sort"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
 )
 
-// The operator-facing operations behind the `policy` subcommands. They exist so
+// The operator-facing operations behind the `devicePolicy` subcommands. They exist so
 // the three questions an operator actually asks — is this document valid, what
 // does this device look like right now, and why was that call refused — can each
 // be answered without starting a server.
 
-// ValidatePolicy loads and validates a policy document.
+// ValidatePolicy loads and validates a devicePolicy document.
 //
 // It touches no device: validation is about the document and the set of signals
 // this build can evaluate, so it runs anywhere, including in CI on a machine
 // with no TPM and no domain.
-func ValidatePolicy(cfg Config) (*guardrails.Policy, error) {
+func ValidatePolicy(cfg Config) (*policy.Policy, error) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	reg := newGuardrailRegistry(cfg, logger)
 	if cfg.PolicyConfig == "" {
-		return guardrails.DefaultPolicy(), nil
+		return policy.Default(), nil
 	}
-	policy, err := guardrails.LoadPolicy(cfg.PolicyConfig, reg.IDs())
+	devicePolicy, err := policy.Load(cfg.PolicyConfig, reg.IDs())
 	if err != nil {
-		return nil, fmt.Errorf("validate policy: %w", err)
+		return nil, fmt.Errorf("validate devicePolicy: %w", err)
 	}
-	return policy, nil
+	return devicePolicy, nil
 }
 
-// EvaluatePolicy reads every signal the policy declares and returns the decision
+// EvaluatePolicy reads every signal the devicePolicy declares and returns the decision
 // for the startup scope.
 //
 // Every signal is read live, cache bypassed: an operator running this wants the
@@ -44,35 +45,35 @@ func ValidatePolicy(cfg Config) (*guardrails.Policy, error) {
 // asked. That makes it slow — seconds, on a device where dsregcmd, WMI and
 // tpmtool all have to run — which is correct for a diagnostic and is exactly why
 // the request path does not work this way.
-func EvaluatePolicy(ctx context.Context, cfg Config) (guardrails.Decision, error) {
+func EvaluatePolicy(ctx context.Context, cfg Config) (signals.Decision, error) {
 	logger, cleanup, err := newLogger(cfg.LogFile)
 	if err != nil {
-		return guardrails.Decision{}, err
+		return signals.Decision{}, err
 	}
 	defer cleanup()
 
-	policy, err := loadPolicy(cfg, newGuardrailRegistry(cfg, logger), logger)
+	devicePolicy, err := loadPolicy(cfg, newGuardrailRegistry(cfg, logger), logger)
 	if err != nil {
-		return guardrails.Decision{}, err
+		return signals.Decision{}, err
 	}
 
 	// The engine owns its own lifetime; see the note in RunStdio.
 	dsk, err := desktop.New(logger, desktop.Options{}) //nolint:contextcheck // owns its lifetime
 	if err != nil {
-		return guardrails.Decision{}, fmt.Errorf("failed to start desktop engine: %w", err)
+		return signals.Decision{}, fmt.Errorf("failed to start desktop engine: %w", err)
 	}
 	defer func() { _ = dsk.Close() }()
 
-	envFn := func() *guardrails.Env { return guardrailEnv(cfg, dsk, logger) }
-	engine := guardrails.NewEngine(policy, newGuardrailRegistry(cfg, logger), nil, envFn)
+	envFn := func() *signals.Env { return guardrailEnv(cfg, dsk, logger) }
+	engine := policy.NewEngine(devicePolicy, newGuardrailRegistry(cfg, logger), nil, envFn)
 
 	engine.ReadAll(ctx)
 	probe := envFn().Sys
-	verdict := engine.Evaluate(ctx, guardrails.StartupSubject())
+	verdict := engine.Evaluate(ctx, policy.StartupSubject())
 	return engine.DecisionFrom(verdict, probe.DeviceIdentity(), probe.RunContext()), nil
 }
 
-// PolicyCoverage is what covers one tool, for `policy explain`.
+// PolicyCoverage is what covers one tool, for `devicePolicy explain`.
 type PolicyCoverage struct {
 	Tool string `json:"tool"`
 	// Known reports whether the tool is in the served manifest. A rule can still
@@ -80,7 +81,7 @@ type PolicyCoverage struct {
 	// point: an operator who mistyped a name should see that, not an empty result
 	// that reads like "nothing applies".
 	Known   bool                 `json:"known"`
-	Facts   guardrails.ToolFacts `json:"facts"`
+	Facts   policy.ToolFacts     `json:"facts"`
 	Rules   []PolicyCoverageRule `json:"rules"`
 	Signals []string             `json:"required_signals"`
 }
@@ -100,7 +101,7 @@ type PolicyCoverageRule struct {
 func ExplainPolicy(ctx context.Context, cfg Config, tool string) (PolicyCoverage, error) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	policy, err := loadPolicy(cfg, newGuardrailRegistry(cfg, logger), logger)
+	devicePolicy, err := loadPolicy(cfg, newGuardrailRegistry(cfg, logger), logger)
 	if err != nil {
 		return PolicyCoverage{}, err
 	}
@@ -110,7 +111,7 @@ func ExplainPolicy(ctx context.Context, cfg Config, tool string) (PolicyCoverage
 	}
 
 	index := newToolIndex(ctx, inv)
-	engine := guardrails.NewEngine(policy, newGuardrailRegistry(cfg, logger), index, nil)
+	engine := policy.NewEngine(devicePolicy, newGuardrailRegistry(cfg, logger), index, nil)
 
 	facts, known := index.Lookup(tool)
 	cov := PolicyCoverage{Tool: tool, Known: known, Facts: facts}
@@ -136,7 +137,7 @@ func ExplainPolicy(ctx context.Context, cfg Config, tool string) (PolicyCoverage
 // ruleDisplayName falls back to a positional label for an unnamed rule. Naming
 // rules is worth the keystrokes precisely so this fallback is never what an
 // operator reads during an incident.
-func ruleDisplayName(r guardrails.Rule, index int) string {
+func ruleDisplayName(r policy.Rule, index int) string {
 	if r.Name != "" {
 		return r.Name
 	}

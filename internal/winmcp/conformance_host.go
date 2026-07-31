@@ -24,7 +24,13 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/contain"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/enforce"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/status"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/watch"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )
 
@@ -55,7 +61,7 @@ const shutdownGrace = 5 * time.Second
 // What makes the evidence meaningful is that the surface is built by
 // newMCPSurface and wrapped in the same middleware chain as RunStdio, in the same
 // order: inject-deps and cache hints from the shared constructor, then audit,
-// rug-pull and the policy engine. Only the transport differs.
+// rug-pull and the devicePolicy engine. Only the transport differs.
 //
 // Two deliberate differences from a production run, both to avoid measuring
 // something other than protocol conformance:
@@ -64,10 +70,10 @@ const shutdownGrace = 5 * time.Second
 //     fixtures built in, the fixture tools; it never drives the real desktop.
 //     A real tool call here would reach a nil engine, which is a bug in the run
 //     rather than a supported path.
-//   - The policy engine runs under the built-in default policy, which evaluates
+//   - The devicePolicy engine runs under the built-in default devicePolicy, which evaluates
 //     and records but refuses nothing. The engine has to be in the chain — a
 //     conformance result gathered without it would describe a server nobody runs
-//     — but a policy that refused calls partway through would report its own
+//     — but a devicePolicy that refused calls partway through would report its own
 //     refusals as protocol failures.
 func RunConformanceHost(ctx context.Context, cfg Config, hostCfg ConformanceConfig) error {
 	if err := requireLoopback(hostCfg.Addr); err != nil {
@@ -151,8 +157,8 @@ func buildConformanceServer(
 	// The transparency services, as RunStdio wires them. A trip here logs and
 	// records rather than actuating containment: the conformance host has no
 	// desktop to contain, and a kill mid-suite would destroy the evidence.
-	audit := guardrails.NewAuditLog(&conformanceAuditSink{logger: logger})
-	rugpull := guardrails.NewRugPull(func(reason string) {
+	audit := audit.NewAuditLog(&conformanceAuditSink{logger: logger})
+	rugpull := watch.NewRugPull(func(reason string) {
 		logger.Error("guardrail.rugpull", "reason", reason)
 	}, audit)
 
@@ -162,14 +168,14 @@ func buildConformanceServer(
 	server.AddReceivingMiddleware(rugpull.ResourceMiddleware())
 	server.AddReceivingMiddleware(rugpull.DiscoverMiddleware())
 
-	// The policy engine under the built-in default: present, evaluating and
+	// The devicePolicy engine under the built-in default: present, evaluating and
 	// recording, refusing nothing. The suite must meet the same middleware chain a
 	// real session does — otherwise the conformance evidence describes a server
-	// nobody runs — but a policy that refused calls would report the refusals as
+	// nobody runs — but a devicePolicy that refused calls would report the refusals as
 	// protocol failures.
-	engine := guardrails.NewEngine(guardrails.DefaultPolicy(), newGuardrailRegistry(cfg, logger), nil,
-		func() *guardrails.Env { return &guardrails.Env{Sys: &conformanceProbe{}, Logger: logger} })
-	server.AddReceivingMiddleware(engine.Middleware(guardrails.EnforcerDeps{
+	engine := policy.NewEngine(policy.Default(), newGuardrailRegistry(cfg, logger), nil,
+		func() *signals.Env { return &signals.Env{Sys: &conformanceProbe{}, Logger: logger} })
+	server.AddReceivingMiddleware(enforce.Middleware(engine, enforce.EnforcerDeps{
 		Audit:  audit,
 		Logger: logger,
 	}))
@@ -177,14 +183,14 @@ func buildConformanceServer(
 	inv.RegisterAll(ctx, server, deps)
 	engine.SetIndex(newToolIndex(ctx, inv))
 
-	kill := guardrails.NewKillSwitch(nil)
-	statusTool, statusHandler := guardrails.StatusTool(
-		func() guardrails.Decision { return guardrails.Decision{} },
-		func() guardrails.ServerStatus { return guardrails.ServerStatus{} },
+	kill := contain.NewKillSwitch(nil)
+	statusTool, statusHandler := status.StatusTool(
+		func() signals.Decision { return signals.Decision{} },
+		func() status.ServerStatus { return status.ServerStatus{} },
 		kill,
 	)
 	server.AddTool(statusTool, statusHandler)
-	killTool, killHandler := guardrails.KillTool(func(string) {})
+	killTool, killHandler := status.KillTool(func(string) {})
 	server.AddTool(killTool, killHandler)
 
 	// Baselines are pinned after the fixtures are registered, over what the server
@@ -224,23 +230,23 @@ func requireLoopback(addr string) error {
 	return nil
 }
 
-// conformanceProbe satisfies guardrails.SystemProbe without a desktop engine.
+// conformanceProbe satisfies signals.SystemProbe without a desktop engine.
 //
 // The conformance host creates no engine — the suite never drives the real
-// desktop — so the default policy's signals have nothing to read. Every method
+// desktop — so the default devicePolicy's signals have nothing to read. Every method
 // returns a zero value, which makes run-context report a non-interactive session
-// and therefore fail. Under the default policy that is a warning and nothing
+// and therefore fail. Under the default devicePolicy that is a warning and nothing
 // more, which is the intended outcome: the middleware is exercised on every
 // request, and no request is refused.
 type conformanceProbe struct{}
 
 func (*conformanceProbe) RunShell(context.Context, string) (string, error) { return "", nil }
-func (*conformanceProbe) DomainSKU() (guardrails.DomainSKU, error) {
-	return guardrails.DomainSKU{}, nil
+func (*conformanceProbe) DomainSKU() (signals.DomainSKU, error) {
+	return signals.DomainSKU{}, nil
 }
-func (*conformanceProbe) RunContext() guardrails.RunContext { return guardrails.RunContext{} }
-func (*conformanceProbe) DeviceIdentity() guardrails.DeviceIdentity {
-	return guardrails.DeviceIdentity{Hostname: "conformance-host"}
+func (*conformanceProbe) RunContext() signals.RunContext { return signals.RunContext{} }
+func (*conformanceProbe) DeviceIdentity() signals.DeviceIdentity {
+	return signals.DeviceIdentity{Hostname: "conformance-host"}
 }
 func (*conformanceProbe) IsAdmin() bool { return false }
 
@@ -249,7 +255,7 @@ func (*conformanceProbe) IsAdmin() bool { return false }
 // entries land in the workflow log next to the harness output.
 type conformanceAuditSink struct{ logger *slog.Logger }
 
-func (s *conformanceAuditSink) Write(e guardrails.AuditEntry) error {
+func (s *conformanceAuditSink) Write(e audit.AuditEntry) error {
 	s.logger.Info("audit", "seq", e.Seq, "event", e.Event, "hash", e.EntryHash)
 	return nil
 }

@@ -13,11 +13,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/contain"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
 )
 
-// systemProbe adapts the desktop engine to guardrails.SystemProbe. A fresh probe
+// systemProbe adapts the desktop engine to signals.SystemProbe. A fresh probe
 // is created per evaluation so posture-drift re-checks see current WMI facts;
 // within a single evaluation the WMI query is cached.
 type systemProbe struct {
@@ -34,7 +37,7 @@ func (p *systemProbe) load() {
 		// Entra device ID + tenant from dsregcmd, for device-allowlist matching
 		// and as the key for Graph compliance lookups.
 		if res, err := p.dsk.RunPowerShell(context.Background(), "dsregcmd /status", 10*time.Second); err == nil {
-			m := guardrails.ParseDsreg(res.Output)
+			m := signals.ParseDsreg(res.Output)
 			p.entraID = m["DeviceId"]
 			p.tenantID = m["TenantId"]
 		}
@@ -49,9 +52,9 @@ func (p *systemProbe) RunShell(ctx context.Context, command string) (string, err
 	return res.Output, nil
 }
 
-func (p *systemProbe) DomainSKU() (guardrails.DomainSKU, error) {
+func (p *systemProbe) DomainSKU() (signals.DomainSKU, error) {
 	p.load()
-	return guardrails.DomainSKU{
+	return signals.DomainSKU{
 		PartOfDomain: p.facts.PartOfDomain,
 		Domain:       p.facts.Domain,
 		OSSKU:        p.facts.OSSKU,
@@ -59,13 +62,13 @@ func (p *systemProbe) DomainSKU() (guardrails.DomainSKU, error) {
 	}, nil
 }
 
-func (p *systemProbe) RunContext() guardrails.RunContext { return guardrails.DetectRunContext() }
+func (p *systemProbe) RunContext() signals.RunContext { return signals.DetectRunContext() }
 
-func (p *systemProbe) IsAdmin() bool { return guardrails.CurrentUserIsAdmin() }
+func (p *systemProbe) IsAdmin() bool { return contain.CurrentUserIsAdmin() }
 
-func (p *systemProbe) DeviceIdentity() guardrails.DeviceIdentity {
+func (p *systemProbe) DeviceIdentity() signals.DeviceIdentity {
 	p.load()
-	return guardrails.DeviceIdentity{
+	return signals.DeviceIdentity{
 		Hostname:      p.facts.Hostname,
 		Serial:        p.facts.Serial,
 		EntraDeviceID: p.entraID,
@@ -73,39 +76,39 @@ func (p *systemProbe) DeviceIdentity() guardrails.DeviceIdentity {
 	}
 }
 
-// loadPolicy resolves the active device policy.
+// Load resolves the active device devicePolicy.
 //
-// With no --policy-config the embedded default applies: the engine is present,
+// With no --devicePolicy-config the embedded default applies: the engine is present,
 // every declared signal is evaluated and every verdict recorded, but nothing is
 // refused. That is deliberate — an engine that arrived enforcing would start
 // refusing tool calls on devices that worked the day before, with no operator
 // action and no document to point at.
 //
-// A named policy that fails to load is fatal. Falling back to the default would
-// silently run a device under weaker policy than its operator wrote, which is the
+// A named devicePolicy that fails to load is fatal. Falling back to the default would
+// silently run a device under weaker devicePolicy than its operator wrote, which is the
 // worst of the available outcomes.
-func loadPolicy(cfg Config, reg *guardrails.Registry, logger *slog.Logger) (*guardrails.Policy, error) {
+func loadPolicy(cfg Config, reg *signals.Registry, logger *slog.Logger) (*policy.Policy, error) {
 	if cfg.PolicyConfig == "" {
-		logger.Info("device policy: built-in default (audit only, nothing refused)")
-		return guardrails.DefaultPolicy(), nil
+		logger.Info("device devicePolicy: built-in default (audit only, nothing refused)")
+		return policy.Default(), nil
 	}
-	policy, err := guardrails.LoadPolicy(cfg.PolicyConfig, reg.IDs())
+	devicePolicy, err := policy.Load(cfg.PolicyConfig, reg.IDs())
 	if err != nil {
-		return nil, fmt.Errorf("device policy: %w", err)
+		return nil, fmt.Errorf("device devicePolicy: %w", err)
 	}
-	logger.Info("device policy loaded",
+	logger.Info("device devicePolicy loaded",
 		"path", cfg.PolicyConfig,
-		"mode", string(policy.Mode),
-		"signals", policy.SignalIDs(),
-		"rules", len(policy.Rules),
+		"mode", string(devicePolicy.Mode),
+		"signals", devicePolicy.SignalIDs(),
+		"rules", len(devicePolicy.Rules),
 	)
-	return policy, nil
+	return devicePolicy, nil
 }
 
-// killPolicyConfig maps the policy's containment actions to the executor's config.
-func killPolicyConfig(policy *guardrails.Policy) guardrails.KillActionConfig {
-	a := policy.Kill.Actions
-	return guardrails.KillActionConfig{
+// killPolicyConfig maps the devicePolicy's containment actions to the executor's config.
+func killPolicyConfig(devicePolicy *policy.Policy) contain.KillActionConfig {
+	a := devicePolicy.Kill.Actions
+	return contain.KillActionConfig{
 		Isolate:       a.Isolate,
 		KillProcs:     len(a.KillProcs) > 0,
 		ProcNames:     a.KillProcs,
@@ -115,16 +118,16 @@ func killPolicyConfig(policy *guardrails.Policy) guardrails.KillActionConfig {
 	}
 }
 
-// toolIndex adapts the served inventory to guardrails.ToolIndex, so policy rules
+// toolIndex adapts the served inventory to policy.ToolIndex, so devicePolicy rules
 // can match on the toolset and annotations a tool actually carries.
 //
 // It is a snapshot taken once the manifest is assembled, not a live view: the
 // manifest cannot change while the process runs — the rug-pull detector trips the
 // kill switch if it does — so a snapshot is accurate, and it keeps the lookup a
 // map read on the request path rather than a filter pass over every tool.
-type toolIndex map[string]guardrails.ToolFacts
+type toolIndex map[string]policy.ToolFacts
 
-func (i toolIndex) Lookup(tool string) (guardrails.ToolFacts, bool) {
+func (i toolIndex) Lookup(tool string) (policy.ToolFacts, bool) {
 	facts, ok := i[tool]
 	return facts, ok
 }
@@ -135,7 +138,7 @@ func newToolIndex(ctx context.Context, inv *inventory.Inventory) toolIndex {
 	index := make(toolIndex, len(tools))
 	for i := range tools {
 		st := &tools[i]
-		facts := guardrails.ToolFacts{
+		facts := policy.ToolFacts{
 			Name:    st.Tool.Name,
 			Toolset: string(st.Toolset.ID),
 		}
@@ -155,22 +158,22 @@ func newToolIndex(ctx context.Context, inv *inventory.Inventory) toolIndex {
 // guardrailEnv builds a fresh evaluation environment. The same systemProbe backs
 // both the SystemProbe and HealthProbe surfaces (it reads live OS/hardware state
 // on every call), so posture is measured just-in-time on each evaluation.
-func guardrailEnv(cfg Config, dsk *desktop.Desktop, logger *slog.Logger) *guardrails.Env {
+func guardrailEnv(cfg Config, dsk *desktop.Desktop, logger *slog.Logger) *signals.Env {
 	p := &systemProbe{dsk: dsk}
-	return &guardrails.Env{Sys: p, Health: p, Logger: logger, EnforceHTTPS: enforceHTTPS(cfg)}
+	return &signals.Env{Sys: p, Health: p, Logger: logger, EnforceHTTPS: enforceHTTPS(cfg)}
 }
 
 // enforceHTTPS resolves the Enforce HTTPS setting.
 //
-// The value lives on Config rather than being read from the policy at each call
+// The value lives on Config rather than being read from the devicePolicy at each call
 // site because it has to reach the tool dependencies and the guardrail Env, and
-// neither carries a policy. RunStdio copies it across immediately after loading,
-// so the policy remains the only place an operator sets it.
+// neither carries a devicePolicy. RunStdio copies it across immediately after loading,
+// so the devicePolicy remains the only place an operator sets it.
 func enforceHTTPS(cfg Config) bool { return cfg.EnforceHTTPS }
 
 // Environment variables carrying the tier-2 credentials. They are read from the
-// environment rather than from flags or the policy document because they are
-// secrets: argv is world-readable, and a policy document is meant to be
+// environment rather than from flags or the devicePolicy document because they are
+// secrets: argv is world-readable, and a devicePolicy document is meant to be
 // reviewable and checked in. This mirrors the credentials invariant — a secret
 // may be used, but it is never written somewhere it can be read back.
 const (
@@ -184,29 +187,29 @@ const (
 
 // newGuardrailRegistry builds the signal registry: the tier-1 local checks, the
 // just-in-time at-source device-posture checks, and — when the credentials are
-// present in the environment — the authoritative tier-2 Graph and remote-policy
+// present in the environment — the authoritative tier-2 Graph and remote-devicePolicy
 // providers.
 //
-// Registering a signal only makes it available for a policy to declare. Nothing
-// here decides whether it is evaluated; that is the policy's job.
-func newGuardrailRegistry(_ Config, logger *slog.Logger) *guardrails.Registry {
-	reg := guardrails.NewRegistry()
-	guardrails.RegisterBuiltins(reg)
-	guardrails.RegisterHealth(reg) // JIT at-source device-posture checks
+// Registering a signal only makes it available for a devicePolicy to declare. Nothing
+// here decides whether it is evaluated; that is the devicePolicy's job.
+func newGuardrailRegistry(_ Config, logger *slog.Logger) *signals.Registry {
+	reg := signals.NewRegistry()
+	signals.RegisterBuiltins(reg)
+	signals.RegisterHealth(reg) // JIT at-source device-posture checks
 
-	gc := guardrails.GraphConfig{
+	gc := signals.GraphConfig{
 		TenantID:     os.Getenv(envGraphTenant),
 		ClientID:     os.Getenv(envGraphClientID),
 		ClientSecret: os.Getenv(envGraphClientSecret),
 	}
 	if gc.Configured() {
-		guardrails.RegisterGraph(reg, guardrails.NewGraphClient(gc))
+		signals.RegisterGraph(reg, signals.NewGraphClient(gc))
 		if logger != nil {
 			logger.Info("tier-2 Graph signals available (Entra + Intune compliance)")
 		}
 	}
 	if token := os.Getenv(envRemotePolicyToken); token != "" {
-		guardrails.RegisterRemotePolicy(reg, token)
+		signals.RegisterRemotePolicy(reg, token)
 	}
 	return reg
 }
@@ -220,8 +223,8 @@ func newGuardrailRegistry(_ Config, logger *slog.Logger) *guardrails.Registry {
 func tripFunc(
 	trigger string,
 	armed bool,
-	kill *guardrails.KillSwitch,
-	audit *guardrails.AuditLog,
+	kill *contain.KillSwitch,
+	audit *audit.AuditLog,
 	logger *slog.Logger,
 ) func(string) {
 	if armed {
@@ -273,11 +276,11 @@ func pinnedCapabilities() *mcp.ServerCapabilities {
 // decisionHolder stores the latest decision for the status surface.
 type decisionHolder struct {
 	mu sync.Mutex
-	d  guardrails.Decision
+	d  signals.Decision
 }
 
-func (h *decisionHolder) set(d guardrails.Decision) { h.mu.Lock(); h.d = d; h.mu.Unlock() }
-func (h *decisionHolder) get() guardrails.Decision  { h.mu.Lock(); defer h.mu.Unlock(); return h.d }
+func (h *decisionHolder) set(d signals.Decision) { h.mu.Lock(); h.d = d; h.mu.Unlock() }
+func (h *decisionHolder) get() signals.Decision  { h.mu.Lock(); defer h.mu.Unlock(); return h.d }
 
 // nonAutomationToolsets is the toolset set permitted when the server runs in
 // SYSTEM context (Session 0 cannot drive the interactive desktop).
