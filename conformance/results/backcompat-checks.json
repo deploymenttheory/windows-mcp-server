@@ -1,0 +1,907 @@
+[
+  {
+    "id": "completion-complete",
+    "name": "CompletionComplete",
+    "description": "Server responds to completion requests",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:54.804Z",
+    "specReferences": [
+      {
+        "id": "MCP-Completion",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/completion"
+      }
+    ],
+    "details": {
+      "result": {
+        "completion": {
+          "values": []
+        }
+      }
+    }
+  },
+  {
+    "id": "localhost-host-rebinding-rejected",
+    "name": "DNSRebindingRejected",
+    "description": "Server rejects requests with non-localhost Host/Origin headers",
+    "timestamp": "2026-07-31T12:22:55.53Z",
+    "specReferences": [
+      {
+        "id": "MCP-DNS-Rebinding-Protection",
+        "url": "https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise"
+      },
+      {
+        "id": "MCP-Transport-Security",
+        "url": "https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#security-warning"
+      }
+    ],
+    "status": "SUCCESS",
+    "details": {
+      "hostHeader": "evil.example.com",
+      "originHeader": "http://evil.example.com",
+      "statusCode": 403,
+      "body": null
+    }
+  },
+  {
+    "id": "localhost-host-valid-accepted",
+    "name": "LocalhostHostAccepted",
+    "description": "Server accepts requests with valid localhost Host/Origin headers",
+    "timestamp": "2026-07-31T12:22:55.53Z",
+    "specReferences": [
+      {
+        "id": "MCP-DNS-Rebinding-Protection",
+        "url": "https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise"
+      },
+      {
+        "id": "MCP-Transport-Security",
+        "url": "https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#security-warning"
+      }
+    ],
+    "status": "SUCCESS",
+    "details": {
+      "hostHeader": "127.0.0.1:3003",
+      "originHeader": "http://127.0.0.1:3003",
+      "statusCode": 200,
+      "body": null
+    }
+  },
+  {
+    "id": "elicitation-sep1034-general",
+    "name": "ElicitationSEP1034General",
+    "description": "Server requests elicitation with default values",
+    "status": "FAILURE",
+    "timestamp": "2026-07-31T12:22:55.174Z",
+    "errorMessage": "Failed: MCP error -32602: unknown tool \"test_elicitation_sep1034_defaults\"",
+    "specReferences": [
+      {
+        "id": "SEP-1034",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1034"
+      }
+    ]
+  },
+  {
+    "id": "elicitation-sep1330-general",
+    "name": "ElicitationSEP1330General",
+    "description": "Server requests elicitation with enum schemas",
+    "status": "FAILURE",
+    "timestamp": "2026-07-31T12:22:55.242Z",
+    "errorMessage": "Failed: MCP error -32602: unknown tool \"test_elicitation_sep1330_enums\"",
+    "specReferences": [
+      {
+        "id": "SEP-1330",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1330"
+      }
+    ]
+  },
+  {
+    "id": "json-schema-2020-12-tool-found",
+    "name": "JsonSchema2020_12ToolFound",
+    "description": "Server advertises tool 'json_schema_2020_12_tool'",
+    "status": "FAILURE",
+    "timestamp": "2026-07-31T12:22:55.165Z",
+    "errorMessage": "Tool 'json_schema_2020_12_tool' not found. Available tools: App, Assert, CaptureEvidence, Click, Clipboard, Credentials, DisplayInventory, FileSystem, GetText, GuardrailStatus, Invoke, Kill, Move, MultiEdit, MultiSelect, Notification, PowerShell, Process, Recording, Registry, Scrape, Screenshot, Scroll, Service, Shortcut, Snapshot, SystemInfo, Type, Wait, WaitFor, test_audio_content, test_embedded_resource, test_error_handling, test_image_content, test_multiple_content_types, test_simple_text, test_tool_with_progress",
+    "specReferences": [
+      {
+        "id": "SEP-1613",
+        "url": "https://github.com/modelcontextprotocol/specification/pull/655"
+      }
+    ],
+    "details": {
+      "toolFound": false,
+      "availableTools": [
+        "App",
+        "Assert",
+        "CaptureEvidence",
+        "Click",
+        "Clipboard",
+        "Credentials",
+        "DisplayInventory",
+        "FileSystem",
+        "GetText",
+        "GuardrailStatus",
+        "Invoke",
+        "Kill",
+        "Move",
+        "MultiEdit",
+        "MultiSelect",
+        "Notification",
+        "PowerShell",
+        "Process",
+        "Recording",
+        "Registry",
+        "Scrape",
+        "Screenshot",
+        "Scroll",
+        "Service",
+        "Shortcut",
+        "Snapshot",
+        "SystemInfo",
+        "Type",
+        "Wait",
+        "WaitFor",
+        "test_audio_content",
+        "test_embedded_resource",
+        "test_error_handling",
+        "test_image_content",
+        "test_multiple_content_types",
+        "test_simple_text",
+        "test_tool_with_progress"
+      ]
+    }
+  },
+  {
+    "id": "logging-set-level",
+    "name": "LoggingSetLevel",
+    "description": "Server accepts logging level setting",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:54.741Z",
+    "specReferences": [
+      {
+        "id": "MCP-Logging",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/logging"
+      }
+    ],
+    "details": {
+      "result": {}
+    }
+  },
+  {
+    "id": "ping",
+    "name": "Ping",
+    "description": "Server responds to ping requests",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:54.767Z",
+    "specReferences": [
+      {
+        "id": "MCP-Ping",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/basic/utilities/ping"
+      }
+    ],
+    "details": {
+      "result": {}
+    }
+  },
+  {
+    "id": "prompts-get-embedded-resource",
+    "name": "PromptsGetEmbeddedResource",
+    "description": "Get prompt with embedded resource",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:55.505Z",
+    "specReferences": [
+      {
+        "id": "MCP-Prompts-Embedded-Resources",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/prompts#embedded-resources"
+      }
+    ],
+    "details": {
+      "messageCount": 2,
+      "messages": [
+        {
+          "content": {
+            "type": "resource",
+            "resource": {
+              "uri": "test://example-resource",
+              "mimeType": "text/plain",
+              "text": "Embedded resource content for testing."
+            }
+          },
+          "role": "user"
+        },
+        {
+          "content": {
+            "type": "text",
+            "text": "Please process the embedded resource above."
+          },
+          "role": "user"
+        }
+      ]
+    }
+  },
+  {
+    "id": "prompts-get-simple",
+    "name": "PromptsGetSimple",
+    "description": "Get simple prompt successfully",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:55.466Z",
+    "specReferences": [
+      {
+        "id": "MCP-Prompts-Get",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/prompts#getting-prompts"
+      }
+    ],
+    "details": {
+      "messageCount": 1
+    }
+  },
+  {
+    "id": "prompts-get-with-args",
+    "name": "PromptsGetWithArgs",
+    "description": "Get parameterized prompt with argument substitution",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:55.497Z",
+    "specReferences": [
+      {
+        "id": "MCP-Prompts-Get",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/prompts#getting-prompts"
+      }
+    ],
+    "details": {
+      "messageCount": 1,
+      "messages": [
+        {
+          "content": {
+            "type": "text",
+            "text": "Prompt with arguments: arg1='testValue1', arg2='testValue2'"
+          },
+          "role": "user"
+        }
+      ]
+    }
+  },
+  {
+    "id": "prompts-get-with-image",
+    "name": "PromptsGetWithImage",
+    "description": "Get prompt with image content",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:55.528Z",
+    "specReferences": [
+      {
+        "id": "MCP-Prompts-Image",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/prompts#image-content"
+      }
+    ],
+    "details": {
+      "messageCount": 2
+    }
+  },
+  {
+    "id": "prompts-list",
+    "name": "PromptsList",
+    "description": "Server lists available prompts with valid structure",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:55.429Z",
+    "specReferences": [
+      {
+        "id": "MCP-Prompts-List",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/prompts#listing-prompts"
+      }
+    ],
+    "details": {
+      "promptCount": 7,
+      "prompts": [
+        "capture-evidence",
+        "rpa-journey",
+        "test_prompt_with_arguments",
+        "test_prompt_with_embedded_resource",
+        "test_prompt_with_image",
+        "test_simple_prompt",
+        "triage-support-issue"
+      ]
+    }
+  },
+  {
+    "id": "resources-list",
+    "name": "ResourcesList",
+    "description": "Server lists available resources with valid structure",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:55.273Z",
+    "specReferences": [
+      {
+        "id": "MCP-Resources-List",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/resources#listing-resources"
+      }
+    ],
+    "details": {
+      "resourceCount": 6,
+      "resources": [
+        "test://static-binary",
+        "test://static-text",
+        "windows://desktop/displays",
+        "windows://desktop/snapshot",
+        "windows://session/recording",
+        "windows://system/info"
+      ]
+    }
+  },
+  {
+    "id": "resources-read-binary",
+    "name": "ResourcesReadBinary",
+    "description": "Read binary resource successfully",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:55.315Z",
+    "specReferences": [
+      {
+        "id": "MCP-Resources-Read",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/resources#reading-resources"
+      }
+    ],
+    "details": {
+      "uri": "test://static-binary",
+      "mimeType": "image/png",
+      "hasBlob": true
+    }
+  },
+  {
+    "id": "resources-read-text",
+    "name": "ResourcesReadText",
+    "description": "Read text resource successfully",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:55.306Z",
+    "specReferences": [
+      {
+        "id": "MCP-Resources-Read",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/resources#reading-resources"
+      }
+    ],
+    "details": {
+      "uri": "test://static-text",
+      "mimeType": "text/plain",
+      "hasText": true
+    }
+  },
+  {
+    "id": "resources-subscribe",
+    "name": "ResourcesSubscribe",
+    "description": "Subscribe to resource successfully",
+    "status": "FAILURE",
+    "timestamp": "2026-07-31T12:22:55.367Z",
+    "errorMessage": "Failed: method not found: \"resources/subscribe\"",
+    "specReferences": [
+      {
+        "id": "MCP-Resources-Subscribe",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/resources#resource-subscriptions"
+      }
+    ]
+  },
+  {
+    "id": "resources-templates-read",
+    "name": "ResourcesTemplateRead",
+    "description": "Read resource from template with parameter substitution",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:55.337Z",
+    "specReferences": [
+      {
+        "id": "MCP-Resources-Templates",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/resources#resource-templates"
+      }
+    ],
+    "details": {
+      "uri": "test://template/123/data",
+      "content": "{\"id\":\"123\",\"templateTest\":true,\"data\":\"Data for ID: 123\"}"
+    }
+  },
+  {
+    "id": "resources-unsubscribe",
+    "name": "ResourcesUnsubscribe",
+    "description": "Unsubscribe from resource successfully",
+    "status": "FAILURE",
+    "timestamp": "2026-07-31T12:22:55.398Z",
+    "errorMessage": "Failed: method not found: \"resources/subscribe\"",
+    "specReferences": [
+      {
+        "id": "MCP-Resources-Subscribe",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/resources#resource-subscriptions"
+      }
+    ]
+  },
+  {
+    "id": "server-initialize",
+    "name": "ServerInitialize",
+    "description": "Server responds to initialize request with valid structure",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:54.719Z",
+    "specReferences": [
+      {
+        "id": "MCP-Initialize",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle#initialization"
+      }
+    ],
+    "details": {
+      "serverUrl": "http://127.0.0.1:3003/mcp",
+      "connected": true
+    }
+  },
+  {
+    "id": "server-session-id-visible-ascii",
+    "name": "ServerSessionIdVisibleAscii",
+    "description": "Server-provided session ID uses only visible ASCII characters",
+    "status": "INFO",
+    "timestamp": "2026-07-31T12:22:54.726Z",
+    "specReferences": [
+      {
+        "id": "MCP-Session-Management",
+        "url": "https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#session-management"
+      }
+    ],
+    "details": {
+      "message": "Server did not provide an MCP-Session-Id header (session ID is optional)"
+    }
+  },
+  {
+    "id": "server-sse-multiple-streams-session",
+    "name": "ServerSSEMultipleStreamsSession",
+    "description": "Server provides session ID for multiple streams test",
+    "status": "WARNING",
+    "timestamp": "2026-07-31T12:22:55.209Z",
+    "specReferences": [
+      {
+        "id": "SEP-1699",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1699"
+      }
+    ],
+    "details": {
+      "message": "Server did not provide session ID - multiple streams test may not work correctly"
+    }
+  },
+  {
+    "id": "server-sse-polling-session",
+    "name": "ServerSSEPollingSession",
+    "description": "Server provides session ID for SSE polling tests",
+    "status": "WARNING",
+    "timestamp": "2026-07-31T12:22:55.18Z",
+    "specReferences": [
+      {
+        "id": "SEP-1699",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1699"
+      }
+    ],
+    "details": {
+      "message": "Server did not provide session ID - SSE polling tests may not work correctly"
+    }
+  },
+  {
+    "id": "outgoing-request",
+    "name": "OutgoingRequest",
+    "description": "Sending POST tools/call",
+    "status": "INFO",
+    "timestamp": "2026-07-31T12:22:55.18Z",
+    "details": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3003/mcp",
+      "headers": {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream, application/json",
+        "mcp-protocol-version": "2025-11-25"
+      },
+      "body": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "test_reconnection",
+          "arguments": {}
+        }
+      }
+    }
+  },
+  {
+    "id": "incoming-response",
+    "name": "IncomingResponse",
+    "description": "Received 200 response for POST",
+    "status": "INFO",
+    "timestamp": "2026-07-31T12:22:55.185Z",
+    "details": {
+      "statusCode": 200,
+      "headers": {
+        "cache-control": "no-cache, no-transform",
+        "connection": "keep-alive",
+        "content-type": "text/event-stream",
+        "date": "Fri, 31 Jul 2026 12:22:55 GMT",
+        "transfer-encoding": "chunked"
+      }
+    }
+  },
+  {
+    "id": "stream-closed",
+    "name": "StreamClosed",
+    "description": "POST SSE stream closed after 1 event(s)",
+    "status": "INFO",
+    "timestamp": "2026-07-31T12:22:55.185Z",
+    "details": {
+      "eventCount": 1,
+      "receivedToolResponse": false
+    }
+  },
+  {
+    "id": "server-sse-priming-event",
+    "name": "ServerSendsPrimingEvent",
+    "description": "Server SHOULD send priming event with id and empty data on POST SSE streams",
+    "status": "WARNING",
+    "timestamp": "2026-07-31T12:22:55.185Z",
+    "specReferences": [
+      {
+        "id": "SEP-1699",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1699"
+      }
+    ],
+    "details": {
+      "hasPrimingEvent": false,
+      "primingEventIsFirst": false,
+      "hasEventId": false,
+      "eventCount": 1
+    },
+    "errorMessage": "Server did not send priming event with id and empty data on POST SSE stream. This is recommended for resumability."
+  },
+  {
+    "id": "server-sse-retry-field",
+    "name": "ServerSendsRetryField",
+    "description": "Server SHOULD send retry field to control client reconnection timing",
+    "status": "WARNING",
+    "timestamp": "2026-07-31T12:22:55.185Z",
+    "specReferences": [
+      {
+        "id": "SEP-1699",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1699"
+      }
+    ],
+    "details": {
+      "hasRetryField": false
+    },
+    "errorMessage": "Server did not send retry field. This is recommended for controlling client reconnection timing."
+  },
+  {
+    "id": "server-sse-disconnect-resume",
+    "name": "ServerDisconnectResume",
+    "description": "Server closes SSE stream mid-call and resumes after reconnection",
+    "status": "INFO",
+    "timestamp": "2026-07-31T12:22:55.185Z",
+    "specReferences": [
+      {
+        "id": "SEP-1699",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1699"
+      }
+    ],
+    "details": {
+      "message": "Could not test disconnect/resume - no last event ID or session ID available"
+    }
+  },
+  {
+    "id": "tools-call-audio",
+    "name": "ToolsCallAudio",
+    "description": "Tool returns audio content",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:54.868Z",
+    "specReferences": [
+      {
+        "id": "MCP-Tools-Call",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools#calling-tools"
+      }
+    ],
+    "details": {
+      "hasAudioContent": true,
+      "audioDataLength": 60
+    }
+  },
+  {
+    "id": "tools-call-elicitation",
+    "name": "ToolsCallElicitation",
+    "description": "Tool requests user input from client",
+    "status": "FAILURE",
+    "timestamp": "2026-07-31T12:22:55.117Z",
+    "errorMessage": "Failed: MCP error -32602: unknown tool \"test_elicitation\"",
+    "specReferences": [
+      {
+        "id": "MCP-Elicitation",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/elicitation"
+      }
+    ]
+  },
+  {
+    "id": "tools-call-embedded-resource",
+    "name": "ToolsCallEmbeddedResource",
+    "description": "Tool returns embedded resource content",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:54.885Z",
+    "specReferences": [
+      {
+        "id": "MCP-Tools-Call",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools#calling-tools"
+      }
+    ],
+    "details": {
+      "hasResourceContent": true,
+      "resourceUri": "test://embedded-resource"
+    }
+  },
+  {
+    "id": "tools-call-error",
+    "name": "ToolsCallError",
+    "description": "Tool returns error correctly",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:54.946Z",
+    "specReferences": [
+      {
+        "id": "MCP-Error-Handling",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle"
+      }
+    ],
+    "details": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "device policy warning: run-context (rule \"interactive-session\"): non-interactive session 0"
+          },
+          {
+            "type": "text",
+            "text": "This tool intentionally returns an error for testing"
+          }
+        ],
+        "isError": true
+      }
+    }
+  },
+  {
+    "id": "tools-call-image",
+    "name": "ToolsCallImage",
+    "description": "Tool returns image content",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:54.85Z",
+    "specReferences": [
+      {
+        "id": "MCP-Tools-Call",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools#calling-tools"
+      }
+    ],
+    "details": {
+      "mimeType": "image/png",
+      "hasData": true
+    }
+  },
+  {
+    "id": "tools-call-mixed-content",
+    "name": "ToolsCallMixedContent",
+    "description": "Tool returns multiple content types",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:54.897Z",
+    "specReferences": [
+      {
+        "id": "MCP-Tools-Call",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools#calling-tools"
+      }
+    ],
+    "details": {
+      "contentCount": 4,
+      "contentTypes": [
+        "text",
+        "text",
+        "image",
+        "resource"
+      ]
+    }
+  },
+  {
+    "id": "tools-call-sampling",
+    "name": "ToolsCallSampling",
+    "description": "Tool requests LLM sampling from client",
+    "status": "FAILURE",
+    "timestamp": "2026-07-31T12:22:55.102Z",
+    "errorMessage": "Failed: MCP error -32602: unknown tool \"test_sampling\"",
+    "specReferences": [
+      {
+        "id": "MCP-Sampling",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/sampling"
+      }
+    ]
+  },
+  {
+    "id": "tools-call-simple-text",
+    "name": "ToolsCallSimpleText",
+    "description": "Tool returns simple text content",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:54.84Z",
+    "specReferences": [
+      {
+        "id": "MCP-Tools-Call",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools#calling-tools"
+      }
+    ],
+    "details": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "device policy warning: run-context (rule \"interactive-session\"): non-interactive session 0"
+          },
+          {
+            "type": "text",
+            "text": "This is a simple text response for testing."
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "tools-call-with-logging",
+    "name": "ToolsCallWithLogging",
+    "description": "Tool sends log messages during execution",
+    "status": "FAILURE",
+    "timestamp": "2026-07-31T12:22:54.909Z",
+    "errorMessage": "Failed: MCP error -32602: unknown tool \"test_tool_with_logging\"",
+    "specReferences": [
+      {
+        "id": "MCP-Logging",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/logging"
+      }
+    ]
+  },
+  {
+    "id": "tools-call-with-progress",
+    "name": "ToolsCallWithProgress",
+    "description": "Tool reports progress notifications",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:55.08Z",
+    "specReferences": [
+      {
+        "id": "MCP-Progress",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/progress"
+      }
+    ],
+    "details": {
+      "progressCount": 3,
+      "progressNotifications": [
+        {
+          "progress": 0,
+          "total": 100,
+          "progressToken": "progress-test-1"
+        },
+        {
+          "progress": 50,
+          "total": 100,
+          "progressToken": "progress-test-1"
+        },
+        {
+          "progress": 100,
+          "total": 100,
+          "progressToken": "progress-test-1"
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "device policy warning: run-context (rule \"interactive-session\"): non-interactive session 0"
+          },
+          {
+            "type": "text",
+            "text": "Progress tool completed"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "tools-list",
+    "name": "ToolsList",
+    "description": "Server lists available tools with valid structure",
+    "status": "SUCCESS",
+    "timestamp": "2026-07-31T12:22:54.828Z",
+    "specReferences": [
+      {
+        "id": "MCP-Tools-List",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools#listing-tools"
+      }
+    ],
+    "details": {
+      "toolCount": 37,
+      "tools": [
+        "App",
+        "Assert",
+        "CaptureEvidence",
+        "Click",
+        "Clipboard",
+        "Credentials",
+        "DisplayInventory",
+        "FileSystem",
+        "GetText",
+        "GuardrailStatus",
+        "Invoke",
+        "Kill",
+        "Move",
+        "MultiEdit",
+        "MultiSelect",
+        "Notification",
+        "PowerShell",
+        "Process",
+        "Recording",
+        "Registry",
+        "Scrape",
+        "Screenshot",
+        "Scroll",
+        "Service",
+        "Shortcut",
+        "Snapshot",
+        "SystemInfo",
+        "Type",
+        "Wait",
+        "WaitFor",
+        "test_audio_content",
+        "test_embedded_resource",
+        "test_error_handling",
+        "test_image_content",
+        "test_multiple_content_types",
+        "test_simple_text",
+        "test_tool_with_progress"
+      ]
+    }
+  },
+  {
+    "id": "tools-name-format",
+    "name": "ToolsNameFormat",
+    "description": "Tool names are 1-64 characters and match ^[A-Za-z0-9_./-]+$",
+    "specReferences": [
+      {
+        "id": "MCP-Tools-List",
+        "url": "https://modelcontextprotocol.io/specification/2025-11-25/server/tools#listing-tools"
+      },
+      {
+        "id": "SEP-986",
+        "url": "https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-names"
+      }
+    ],
+    "timestamp": "2026-07-31T12:22:54.828Z",
+    "status": "SUCCESS",
+    "details": {
+      "toolCount": 37,
+      "results": {
+        "App": "valid",
+        "Assert": "valid",
+        "CaptureEvidence": "valid",
+        "Click": "valid",
+        "Clipboard": "valid",
+        "Credentials": "valid",
+        "DisplayInventory": "valid",
+        "FileSystem": "valid",
+        "GetText": "valid",
+        "GuardrailStatus": "valid",
+        "Invoke": "valid",
+        "Kill": "valid",
+        "Move": "valid",
+        "MultiEdit": "valid",
+        "MultiSelect": "valid",
+        "Notification": "valid",
+        "PowerShell": "valid",
+        "Process": "valid",
+        "Recording": "valid",
+        "Registry": "valid",
+        "Scrape": "valid",
+        "Screenshot": "valid",
+        "Scroll": "valid",
+        "Service": "valid",
+        "Shortcut": "valid",
+        "Snapshot": "valid",
+        "SystemInfo": "valid",
+        "Type": "valid",
+        "Wait": "valid",
+        "WaitFor": "valid",
+        "test_audio_content": "valid",
+        "test_embedded_resource": "valid",
+        "test_error_handling": "valid",
+        "test_image_content": "valid",
+        "test_multiple_content_types": "valid",
+        "test_simple_text": "valid",
+        "test_tool_with_progress": "valid"
+      }
+    }
+  }
+]
