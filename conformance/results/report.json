@@ -1,0 +1,1248 @@
+{
+  "server_version": "dev",
+  "commit": "d239ad3c5a8660ce497e8e876f1e9d1bcc668e35",
+  "generated_at": "2026-07-31T12:22:56Z",
+  "run_url": "https://github.com/deploymenttheory/windows-mcp-server/actions/runs/30630276261",
+  "passes": [
+    {
+      "name": "product",
+      "description": "Run against the manifest this server actually ships. Scenarios needing the suite's named fixtures cannot execute here and are listed in the baseline; what this pass covers is the transport and wire conformance that the 2026-07-28 revision is about.",
+      "spec_version": "2026-07-28",
+      "harness_version": "0.2.0-alpha.10",
+      "baseline": "conformance/baseline-product.yml",
+      "checks": [
+        {
+          "id": "sep-2549-tools-list-caching-hints",
+          "name": "ToolsListCachingHints",
+          "description": "tools/list response includes ttlMs and cacheScope caching hints",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-prompts-list-caching-hints",
+          "name": "PromptsListCachingHints",
+          "description": "prompts/list response includes ttlMs and cacheScope caching hints",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-resources-list-caching-hints",
+          "name": "ResourcesListCachingHints",
+          "description": "resources/list response includes ttlMs and cacheScope caching hints",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-resources-templates-list-caching-hints",
+          "name": "ResourcesTemplatesListCachingHints",
+          "description": "resources/templates/list response includes ttlMs and cacheScope caching hints",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-resources-read-caching-hints",
+          "name": "ResourcesReadCachingHints",
+          "description": "resources/read response includes ttlMs and cacheScope caching hints",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-ttl-non-negative",
+          "name": "TtlNonNegative",
+          "description": "All ttlMs values are non-negative integers",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-cache-scope-valid",
+          "name": "CacheScopeValid",
+          "description": "All cacheScope values are \"public\" or \"private\"",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "completion-complete",
+          "name": "CompletionComplete",
+          "description": "Server responds to completion requests",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "localhost-host-rebinding-rejected",
+          "name": "DNSRebindingRejected",
+          "description": "Server rejects requests with non-localhost Host/Origin headers",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "localhost-host-valid-accepted",
+          "name": "LocalhostHostAccepted",
+          "description": "Server accepts requests with valid localhost Host/Origin headers",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-no-xmcp-tool",
+          "name": "HttpCustomHeaderServerNoTool",
+          "description": "Server has no tools with x-mcp-header annotations to test",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations, so none of the custom-header validation requirements could be exercised"
+        },
+        {
+          "id": "sep-2243-server-decode-base64",
+          "name": "NotTestable",
+          "description": "Declared check sep-2243-server-decode-base64 is not testable against this server",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
+        },
+        {
+          "id": "sep-2243-server-validate-param-match",
+          "name": "NotTestable",
+          "description": "Declared check sep-2243-server-validate-param-match is not testable against this server",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-param-chars",
+          "name": "NotTestable",
+          "description": "Declared check sep-2243-server-reject-invalid-param-chars is not testable against this server",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
+        },
+        {
+          "id": "sep-2243-server-reject-param-mismatch",
+          "name": "NotTestable",
+          "description": "Declared check sep-2243-server-reject-param-mismatch is not testable against this server",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-headers",
+          "name": "ServerRejectsMismatchedMethodHeader",
+          "description": "Server rejects requests where Mcp-Method header does not match body method",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-error-code",
+          "name": "ServerRejectsMismatchedMethodHeaderErrorCode",
+          "description": "Server rejects requests where Mcp-Method header does not match body method — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-headers",
+          "name": "ServerRejectsMissingMethodHeader",
+          "description": "Server rejects requests with missing Mcp-Method header",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-error-code",
+          "name": "ServerRejectsMissingMethodHeaderErrorCode",
+          "description": "Server rejects requests with missing Mcp-Method header — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-headers",
+          "name": "ServerRejectsMismatchedNameHeader",
+          "description": "Server rejects tools/call where Mcp-Name does not match body params.name",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-error-code",
+          "name": "ServerRejectsMismatchedNameHeaderErrorCode",
+          "description": "Server rejects tools/call where Mcp-Name does not match body params.name — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-accepts-whitespace-header-value",
+          "name": "ServerAcceptsWhitespaceHeaderValue",
+          "description": "Server MUST accept leading/trailing whitespace in Mcp-Name value (RFC 9110 §5.5: field parsing MUST exclude OWS before evaluating)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-headers",
+          "name": "ServerRejectsMissingNameHeader",
+          "description": "Server MUST reject tools/call with missing Mcp-Name header when body has params.name",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-error-code",
+          "name": "ServerRejectsMissingNameHeaderErrorCode",
+          "description": "Server MUST reject tools/call with missing Mcp-Name header when body has params.name — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-header-name-case-insensitive",
+          "name": "ServerAcceptsLowercaseHeaderName",
+          "description": "Server MUST accept lowercase header name (mcp-method)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-header-name-case-insensitive",
+          "name": "ServerAcceptsUppercaseHeaderName",
+          "description": "Server MUST accept uppercase header name (MCP-METHOD)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-headers",
+          "name": "ServerRejectsCaseMismatchValue",
+          "description": "Server MUST reject uppercase method value (TOOLS/LIST) since values are case-sensitive",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-error-code",
+          "name": "ServerRejectsCaseMismatchValueErrorCode",
+          "description": "Server MUST reject uppercase method value (TOOLS/LIST) since values are case-sensitive — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-elicitation-incomplete",
+          "name": "InputRequiredResultElicitationIncomplete",
+          "description": "Server returns InputRequiredResult with elicitation inputRequest",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_elicitation\""
+        },
+        {
+          "id": "sep-2322-list-roots-incomplete",
+          "name": "InputRequiredResultListRootsIncomplete",
+          "description": "Server returns InputRequiredResult with roots/list inputRequest",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_list_roots\""
+        },
+        {
+          "id": "sep-2322-sampling-incomplete",
+          "name": "InputRequiredResultSamplingIncomplete",
+          "description": "Server returns InputRequiredResult with sampling inputRequest",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_sampling\""
+        },
+        {
+          "id": "sep-2322-respect-client-capabilities",
+          "name": "RespectClientCapabilities",
+          "description": "Server only includes inputRequests for declared client capabilities",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_capabilities\""
+        },
+        {
+          "id": "sep-2322-ignore-unexpected-params",
+          "name": "IgnoreUnexpectedParams",
+          "description": "Server ignores extra unrecognized keys in inputResponses",
+          "status": "WARNING",
+          "errorMessage": "Server returned JSON-RPC error when extra params were included: unknown tool \"test_input_required_result_elicitation\". Servers SHOULD ignore unrecognized information."
+        },
+        {
+          "id": "sep-2322-missing-response-rerequests",
+          "name": "InputRequiredResultMissingResponseRerequests",
+          "description": "Server re-requests missing inputResponses via new InputRequiredResult",
+          "status": "WARNING",
+          "errorMessage": "Server returned JSON-RPC error instead of re-requesting via InputRequiredResult. SEP-2322 recommends servers re-request missing information."
+        },
+        {
+          "id": "sep-2322-multi-round-r1",
+          "name": "InputRequiredResultMultiRoundR1",
+          "description": "Round 1: Server returns InputRequiredResult with requestState",
+          "status": "FAILURE",
+          "errorMessage": "Expected InputRequiredResult with inputRequests and requestState"
+        },
+        {
+          "id": "sep-2322-multiple-inputs-incomplete",
+          "name": "InputRequiredResultMultipleInputsIncomplete",
+          "description": "Server returns InputRequiredResult with multiple inputRequests of different types",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_multiple_inputs\""
+        },
+        {
+          "id": "sep-2322-non-tool-incomplete",
+          "name": "InputRequiredResultNonToolIncomplete",
+          "description": "prompts/get returns InputRequiredResult with inputRequests",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown prompt \"test_input_required_result_prompt\""
+        },
+        {
+          "id": "sep-2322-request-state-incomplete",
+          "name": "InputRequiredResultRequestStateIncomplete",
+          "description": "Server returns InputRequiredResult with both inputRequests and requestState",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_request_state\""
+        },
+        {
+          "id": "sep-2322-result-type-included",
+          "name": "ResultTypeIncluded",
+          "description": "Server includes resultType field in InputRequiredResult response",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_elicitation\""
+        },
+        {
+          "id": "sep-2322-reject-tampered-state",
+          "name": "RejectTamperedState",
+          "description": "Server rejects tampered requestState with error",
+          "status": "FAILURE",
+          "errorMessage": "Prerequisite failed: could not get initial InputRequiredResult with requestState"
+        },
+        {
+          "id": "sep-2322-not-on-unsupported-requests",
+          "name": "NotOnUnsupportedRequests",
+          "description": "Server does not return InputRequiredResult on unsupported methods",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-validate-input-responses",
+          "name": "ValidateInputResponses",
+          "description": "Server validates InputResponses structure",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-error-on-protocol-error",
+          "name": "ErrorOnProtocolError",
+          "description": "Server returns JSON-RPC error for protocol-level input errors",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "json-schema-2020-12-tool-found",
+          "name": "JsonSchema2020_12ToolFound",
+          "description": "Server advertises tool 'json_schema_2020_12_tool'",
+          "status": "FAILURE",
+          "errorMessage": "Tool 'json_schema_2020_12_tool' not found. Available tools: App, Assert, CaptureEvidence, Click, Clipboard, Credentials, DisplayInventory, FileSystem, GetText, GuardrailStatus, Invoke, Kill, Move, MultiEdit, MultiSelect, Notification, PowerShell, Process, Recording, Registry, Scrape, Screenshot, Scroll, Service, Shortcut, Snapshot, SystemInfo, Type, Wait, WaitFor"
+        },
+        {
+          "id": "prompts-get-embedded-resource",
+          "name": "PromptsGetEmbeddedResource",
+          "description": "Get prompt with embedded resource",
+          "status": "FAILURE",
+          "errorMessage": "Failed: unknown prompt \"test_prompt_with_embedded_resource\""
+        },
+        {
+          "id": "prompts-get-simple",
+          "name": "PromptsGetSimple",
+          "description": "Get simple prompt successfully",
+          "status": "FAILURE",
+          "errorMessage": "Failed: unknown prompt \"test_simple_prompt\""
+        },
+        {
+          "id": "prompts-get-with-args",
+          "name": "PromptsGetWithArgs",
+          "description": "Get parameterized prompt with argument substitution",
+          "status": "FAILURE",
+          "errorMessage": "Failed: unknown prompt \"test_prompt_with_arguments\""
+        },
+        {
+          "id": "prompts-get-with-image",
+          "name": "PromptsGetWithImage",
+          "description": "Get prompt with image content",
+          "status": "FAILURE",
+          "errorMessage": "Failed: unknown prompt \"test_prompt_with_image\""
+        },
+        {
+          "id": "prompts-list",
+          "name": "PromptsList",
+          "description": "Server lists available prompts with valid structure",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "resources-list",
+          "name": "ResourcesList",
+          "description": "Server lists available resources with valid structure",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "resources-read-binary",
+          "name": "ResourcesReadBinary",
+          "description": "Read binary resource successfully",
+          "status": "FAILURE",
+          "errorMessage": "Failed: Resource not found"
+        },
+        {
+          "id": "resources-read-text",
+          "name": "ResourcesReadText",
+          "description": "Read text resource successfully",
+          "status": "FAILURE",
+          "errorMessage": "Failed: Resource not found"
+        },
+        {
+          "id": "resources-templates-read",
+          "name": "ResourcesTemplateRead",
+          "description": "Read resource from template with parameter substitution",
+          "status": "FAILURE",
+          "errorMessage": "Failed: Resource not found"
+        },
+        {
+          "id": "sep-2164-no-empty-contents",
+          "name": "ResourcesNotFoundNoEmptyContents",
+          "description": "Server does not return an empty contents array for a non-existent resource",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2164-error-code",
+          "name": "ResourcesNotFoundErrorCode",
+          "description": "Server returns -32602 (Invalid Params) for non-existent resource (SHOULD)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2164-data-uri",
+          "name": "ResourcesNotFoundDataUri",
+          "description": "Server includes the requested URI in the error data field (SHOULD)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "server-accepts-multiple-post-streams",
+          "name": "ServerAcceptsMultiplePostStreams",
+          "description": "Server allows multiple concurrent POST requests (each may return SSE or JSON)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "server-sse-streams-functional",
+          "name": "ServerSSEStreamsFunctional",
+          "description": "Multiple POST SSE streams should be functional",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-request-meta-invalid-missing-meta",
+          "name": "RequestMetaInvalid",
+          "description": "Rejects request with missing _meta with -32602 Invalid params",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-meta-invalid-400",
+          "name": "HttpServerMetaInvalid400",
+          "description": "Rejections of requests missing required _meta fields use HTTP 400 Bad Request.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-request-meta-invalid-missing-protocol-version",
+          "name": "RequestMetaInvalid",
+          "description": "Rejects request with _meta missing io.modelcontextprotocol/protocolVersion",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-meta-invalid-400",
+          "name": "HttpServerMetaInvalid400",
+          "description": "Rejections of requests missing required _meta fields use HTTP 400 Bad Request.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-request-meta-invalid-missing-client-capabilities",
+          "name": "RequestMetaInvalid",
+          "description": "Rejects request with _meta missing io.modelcontextprotocol/clientCapabilities",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-meta-invalid-400",
+          "name": "HttpServerMetaInvalid400",
+          "description": "Rejections of requests missing required _meta fields use HTTP 400 Bad Request.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-request-meta-client-info-optional",
+          "name": "RequestMetaClientInfoOptional",
+          "description": "Serves requests whose _meta omits io.modelcontextprotocol/clientInfo (clientInfo is a SHOULD).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-implements-discover",
+          "name": "ServerImplementsDiscover",
+          "description": "Servers MUST implement server/discover.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-identifies-in-result-meta",
+          "name": "ServerIdentifiesInResultMeta",
+          "description": "Servers SHOULD identify themselves via _meta['io.modelcontextprotocol/serverInfo'] on responses (spec PR #3002).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-declares-prompts-in-discover",
+          "name": "ServerDeclaresPromptsInDiscover",
+          "description": "Servers that support prompts MUST declare the prompts capability in their DiscoverResult.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-discover-capabilities-match-handlers",
+          "name": "DiscoverCapabilitiesMatchHandlers",
+          "description": "capabilities matches what the server honors on real RPC calls",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-unsupported-version-error",
+          "name": "ServerUnsupportedVersionError",
+          "description": "If the server does not implement the requested version (whether the version is unknown to the server, or is a known version the server has chosen not to support), it MUST respond with an UnsupportedProtocolVersionError listing the versions it does support; the error data carries the supported versions and echoes the requested version.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-unsupported-version-400",
+          "name": "HttpServerUnsupportedVersion400",
+          "description": "If the server does not implement the requested protocol version, it MUST respond with 400 Bad Request and an UnsupportedProtocolVersionError listing its supported versions.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-header-mismatch-400",
+          "name": "HttpServerHeaderMismatch400",
+          "description": "If the values do not match, the server MUST reject the request with 400 Bad Request and a HeaderMismatch JSON-RPC error.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-rejects-undeclared-capability",
+          "name": "ServerRejectsUndeclaredCapability",
+          "description": "A server MUST NOT rely on capabilities the client has not declared. If processing a request requires a capability the client did not include in io.modelcontextprotocol/clientCapabilities, the server MUST return a MissingRequiredClientCapabilityError (-32021).",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_missing_capability' in tools/list and the probe call did not exercise it (required for the undeclared-capability rejection)"
+        },
+        {
+          "id": "sep-2575-missing-capability-http-400",
+          "name": "MissingCapabilityHttp400",
+          "description": "On HTTP, the response status MUST be 400 Bad Request [for MissingRequiredClientCapabilityError].",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_missing_capability' in tools/list, so the -32021 HTTP status could not be validated"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404-initialize",
+          "name": "HttpServerMethodNotFound404initialize",
+          "description": "If the server does not implement the removed RPC method 'initialize', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404-ping",
+          "name": "HttpServerMethodNotFound404ping",
+          "description": "If the server does not implement the removed RPC method 'ping', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404-logging-setlevel",
+          "name": "HttpServerMethodNotFound404loggingsetLevel",
+          "description": "If the server does not implement the removed RPC method 'logging/setLevel', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404-resources-subscribe",
+          "name": "HttpServerMethodNotFound404resourcessubscribe",
+          "description": "If the server does not implement the removed RPC method 'resources/subscribe', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404-resources-unsubscribe",
+          "name": "HttpServerMethodNotFound404resourcesunsubscribe",
+          "description": "If the server does not implement the removed RPC method 'resources/unsubscribe', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404",
+          "name": "HttpServerMethodNotFound404",
+          "description": "If the server does not implement the requested RPC method, it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-no-independent-requests-on-stream",
+          "name": "HttpServerNoIndependentRequestsOnStream",
+          "description": "Request stream contains only IncompleteResult, never independent JSON-RPC requests",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_streaming_elicitation' in tools/list, so the response stream could not be exercised"
+        },
+        {
+          "id": "sep-2575-server-no-log-without-loglevel",
+          "name": "ServerNoLogWithoutLogLevel",
+          "description": "No notifications/message for requests that didn't set _meta.../logLevel",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_logging_tool' in tools/list, so the no-log-without-logLevel requirement could not be exercised"
+        },
+        {
+          "id": "sep-2575-server-sends-subscription-ack",
+          "name": "ServerSendsSubscriptionAck",
+          "description": "notifications/subscriptions/acknowledged is the first message on a subscriptions/listen stream",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-tags-subscription-id",
+          "name": "ServerTagsSubscriptionId",
+          "description": "Listen-stream notifications carry _meta.../subscriptionId",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-honors-notification-filter",
+          "name": "ServerHonorsNotificationFilter",
+          "description": "Server doesn't send notification types the client didn't request",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-sends-prompts-list-changed-on-subscription",
+          "name": "ServerSendsPromptsListChangedOnSubscription",
+          "description": "List-changed-capable servers notify listen streams with promptsListChanged: true (SHOULD)",
+          "status": "SKIPPED"
+        },
+        {
+          "id": "sep-2575-server-sends-tools-list-changed-on-subscription",
+          "name": "ServerSendsToolsListChangedOnSubscription",
+          "description": "List-changed-capable servers notify listen streams with toolsListChanged: true (SHOULD)",
+          "status": "SKIPPED"
+        },
+        {
+          "id": "sep-2575-http-server-error-jsonrpc-id",
+          "name": "HttpServerErrorJsonrpcId",
+          "description": "All error responses carry the request JSON-RPC id",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "tools-call-audio",
+          "name": "ToolsCallAudio",
+          "description": "Tool returns audio content",
+          "status": "FAILURE",
+          "errorMessage": "Failed: unknown tool \"test_audio_content\""
+        },
+        {
+          "id": "tools-call-embedded-resource",
+          "name": "ToolsCallEmbeddedResource",
+          "description": "Tool returns embedded resource content",
+          "status": "FAILURE",
+          "errorMessage": "Failed: unknown tool \"test_embedded_resource\""
+        },
+        {
+          "id": "tools-call-error",
+          "name": "ToolsCallError",
+          "description": "Tool returns error correctly",
+          "status": "FAILURE",
+          "errorMessage": "Failed: unknown tool \"test_error_handling\""
+        },
+        {
+          "id": "tools-call-image",
+          "name": "ToolsCallImage",
+          "description": "Tool returns image content",
+          "status": "FAILURE",
+          "errorMessage": "Failed: unknown tool \"test_image_content\""
+        },
+        {
+          "id": "tools-call-mixed-content",
+          "name": "ToolsCallMixedContent",
+          "description": "Tool returns multiple content types",
+          "status": "FAILURE",
+          "errorMessage": "Failed: unknown tool \"test_multiple_content_types\""
+        },
+        {
+          "id": "tools-call-simple-text",
+          "name": "ToolsCallSimpleText",
+          "description": "Tool returns simple text content",
+          "status": "FAILURE",
+          "errorMessage": "Failed: unknown tool \"test_simple_text\""
+        },
+        {
+          "id": "tools-call-with-progress",
+          "name": "ToolsCallWithProgress",
+          "description": "Tool reports progress notifications",
+          "status": "FAILURE",
+          "errorMessage": "Failed: unknown tool \"test_tool_with_progress\""
+        },
+        {
+          "id": "tools-list",
+          "name": "ToolsList",
+          "description": "Server lists available tools with valid structure",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "tools-name-format",
+          "name": "ToolsNameFormat",
+          "description": "Tool names are 1-64 characters and match ^[A-Za-z0-9_./-]+$",
+          "status": "SUCCESS"
+        }
+      ]
+    },
+    {
+      "name": "fixtures",
+      "description": "Run with the suite's fixture tools, resources and prompts registered, so tools/call, resources/read, resources/templates/list and prompts/get are exercised through the real middleware and result constructors. The fixtures exist only under the `conformance` build tag and are never present in a released binary.",
+      "spec_version": "2026-07-28",
+      "harness_version": "0.2.0-alpha.10",
+      "baseline": "conformance/baseline-fixtures.yml",
+      "checks": [
+        {
+          "id": "sep-2549-tools-list-caching-hints",
+          "name": "ToolsListCachingHints",
+          "description": "tools/list response includes ttlMs and cacheScope caching hints",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-prompts-list-caching-hints",
+          "name": "PromptsListCachingHints",
+          "description": "prompts/list response includes ttlMs and cacheScope caching hints",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-resources-list-caching-hints",
+          "name": "ResourcesListCachingHints",
+          "description": "resources/list response includes ttlMs and cacheScope caching hints",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-resources-templates-list-caching-hints",
+          "name": "ResourcesTemplatesListCachingHints",
+          "description": "resources/templates/list response includes ttlMs and cacheScope caching hints",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-resources-read-caching-hints",
+          "name": "ResourcesReadCachingHints",
+          "description": "resources/read response includes ttlMs and cacheScope caching hints",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-ttl-non-negative",
+          "name": "TtlNonNegative",
+          "description": "All ttlMs values are non-negative integers",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2549-cache-scope-valid",
+          "name": "CacheScopeValid",
+          "description": "All cacheScope values are \"public\" or \"private\"",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "completion-complete",
+          "name": "CompletionComplete",
+          "description": "Server responds to completion requests",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "localhost-host-rebinding-rejected",
+          "name": "DNSRebindingRejected",
+          "description": "Server rejects requests with non-localhost Host/Origin headers",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "localhost-host-valid-accepted",
+          "name": "LocalhostHostAccepted",
+          "description": "Server accepts requests with valid localhost Host/Origin headers",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-no-xmcp-tool",
+          "name": "HttpCustomHeaderServerNoTool",
+          "description": "Server has no tools with x-mcp-header annotations to test",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations, so none of the custom-header validation requirements could be exercised"
+        },
+        {
+          "id": "sep-2243-server-decode-base64",
+          "name": "NotTestable",
+          "description": "Declared check sep-2243-server-decode-base64 is not testable against this server",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
+        },
+        {
+          "id": "sep-2243-server-validate-param-match",
+          "name": "NotTestable",
+          "description": "Declared check sep-2243-server-validate-param-match is not testable against this server",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-param-chars",
+          "name": "NotTestable",
+          "description": "Declared check sep-2243-server-reject-invalid-param-chars is not testable against this server",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
+        },
+        {
+          "id": "sep-2243-server-reject-param-mismatch",
+          "name": "NotTestable",
+          "description": "Declared check sep-2243-server-reject-param-mismatch is not testable against this server",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-headers",
+          "name": "ServerRejectsMismatchedMethodHeader",
+          "description": "Server rejects requests where Mcp-Method header does not match body method",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-error-code",
+          "name": "ServerRejectsMismatchedMethodHeaderErrorCode",
+          "description": "Server rejects requests where Mcp-Method header does not match body method — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-headers",
+          "name": "ServerRejectsMissingMethodHeader",
+          "description": "Server rejects requests with missing Mcp-Method header",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-error-code",
+          "name": "ServerRejectsMissingMethodHeaderErrorCode",
+          "description": "Server rejects requests with missing Mcp-Method header — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-headers",
+          "name": "ServerRejectsMismatchedNameHeader",
+          "description": "Server rejects tools/call where Mcp-Name does not match body params.name",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-error-code",
+          "name": "ServerRejectsMismatchedNameHeaderErrorCode",
+          "description": "Server rejects tools/call where Mcp-Name does not match body params.name — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-accepts-whitespace-header-value",
+          "name": "ServerAcceptsWhitespaceHeaderValue",
+          "description": "Server MUST accept leading/trailing whitespace in Mcp-Name value (RFC 9110 §5.5: field parsing MUST exclude OWS before evaluating)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-headers",
+          "name": "ServerRejectsMissingNameHeader",
+          "description": "Server MUST reject tools/call with missing Mcp-Name header when body has params.name",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-error-code",
+          "name": "ServerRejectsMissingNameHeaderErrorCode",
+          "description": "Server MUST reject tools/call with missing Mcp-Name header when body has params.name — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-header-name-case-insensitive",
+          "name": "ServerAcceptsLowercaseHeaderName",
+          "description": "Server MUST accept lowercase header name (mcp-method)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-header-name-case-insensitive",
+          "name": "ServerAcceptsUppercaseHeaderName",
+          "description": "Server MUST accept uppercase header name (MCP-METHOD)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-headers",
+          "name": "ServerRejectsCaseMismatchValue",
+          "description": "Server MUST reject uppercase method value (TOOLS/LIST) since values are case-sensitive",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-error-code",
+          "name": "ServerRejectsCaseMismatchValueErrorCode",
+          "description": "Server MUST reject uppercase method value (TOOLS/LIST) since values are case-sensitive — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-elicitation-incomplete",
+          "name": "InputRequiredResultElicitationIncomplete",
+          "description": "Server returns InputRequiredResult with elicitation inputRequest",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_elicitation\""
+        },
+        {
+          "id": "sep-2322-list-roots-incomplete",
+          "name": "InputRequiredResultListRootsIncomplete",
+          "description": "Server returns InputRequiredResult with roots/list inputRequest",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_list_roots\""
+        },
+        {
+          "id": "sep-2322-sampling-incomplete",
+          "name": "InputRequiredResultSamplingIncomplete",
+          "description": "Server returns InputRequiredResult with sampling inputRequest",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_sampling\""
+        },
+        {
+          "id": "sep-2322-respect-client-capabilities",
+          "name": "RespectClientCapabilities",
+          "description": "Server only includes inputRequests for declared client capabilities",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_capabilities\""
+        },
+        {
+          "id": "sep-2322-ignore-unexpected-params",
+          "name": "IgnoreUnexpectedParams",
+          "description": "Server ignores extra unrecognized keys in inputResponses",
+          "status": "WARNING",
+          "errorMessage": "Server returned JSON-RPC error when extra params were included: unknown tool \"test_input_required_result_elicitation\". Servers SHOULD ignore unrecognized information."
+        },
+        {
+          "id": "sep-2322-missing-response-rerequests",
+          "name": "InputRequiredResultMissingResponseRerequests",
+          "description": "Server re-requests missing inputResponses via new InputRequiredResult",
+          "status": "WARNING",
+          "errorMessage": "Server returned JSON-RPC error instead of re-requesting via InputRequiredResult. SEP-2322 recommends servers re-request missing information."
+        },
+        {
+          "id": "sep-2322-multi-round-r1",
+          "name": "InputRequiredResultMultiRoundR1",
+          "description": "Round 1: Server returns InputRequiredResult with requestState",
+          "status": "FAILURE",
+          "errorMessage": "Expected InputRequiredResult with inputRequests and requestState"
+        },
+        {
+          "id": "sep-2322-multiple-inputs-incomplete",
+          "name": "InputRequiredResultMultipleInputsIncomplete",
+          "description": "Server returns InputRequiredResult with multiple inputRequests of different types",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_multiple_inputs\""
+        },
+        {
+          "id": "sep-2322-non-tool-incomplete",
+          "name": "InputRequiredResultNonToolIncomplete",
+          "description": "prompts/get returns InputRequiredResult with inputRequests",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown prompt \"test_input_required_result_prompt\""
+        },
+        {
+          "id": "sep-2322-request-state-incomplete",
+          "name": "InputRequiredResultRequestStateIncomplete",
+          "description": "Server returns InputRequiredResult with both inputRequests and requestState",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_request_state\""
+        },
+        {
+          "id": "sep-2322-result-type-included",
+          "name": "ResultTypeIncluded",
+          "description": "Server includes resultType field in InputRequiredResult response",
+          "status": "FAILURE",
+          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_elicitation\""
+        },
+        {
+          "id": "sep-2322-reject-tampered-state",
+          "name": "RejectTamperedState",
+          "description": "Server rejects tampered requestState with error",
+          "status": "FAILURE",
+          "errorMessage": "Prerequisite failed: could not get initial InputRequiredResult with requestState"
+        },
+        {
+          "id": "sep-2322-not-on-unsupported-requests",
+          "name": "NotOnUnsupportedRequests",
+          "description": "Server does not return InputRequiredResult on unsupported methods",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-validate-input-responses",
+          "name": "ValidateInputResponses",
+          "description": "Server validates InputResponses structure",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-error-on-protocol-error",
+          "name": "ErrorOnProtocolError",
+          "description": "Server returns JSON-RPC error for protocol-level input errors",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "json-schema-2020-12-tool-found",
+          "name": "JsonSchema2020_12ToolFound",
+          "description": "Server advertises tool 'json_schema_2020_12_tool'",
+          "status": "FAILURE",
+          "errorMessage": "Tool 'json_schema_2020_12_tool' not found. Available tools: App, Assert, CaptureEvidence, Click, Clipboard, Credentials, DisplayInventory, FileSystem, GetText, GuardrailStatus, Invoke, Kill, Move, MultiEdit, MultiSelect, Notification, PowerShell, Process, Recording, Registry, Scrape, Screenshot, Scroll, Service, Shortcut, Snapshot, SystemInfo, Type, Wait, WaitFor, test_audio_content, test_embedded_resource, test_error_handling, test_image_content, test_multiple_content_types, test_simple_text, test_tool_with_progress"
+        },
+        {
+          "id": "prompts-get-embedded-resource",
+          "name": "PromptsGetEmbeddedResource",
+          "description": "Get prompt with embedded resource",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "prompts-get-simple",
+          "name": "PromptsGetSimple",
+          "description": "Get simple prompt successfully",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "prompts-get-with-args",
+          "name": "PromptsGetWithArgs",
+          "description": "Get parameterized prompt with argument substitution",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "prompts-get-with-image",
+          "name": "PromptsGetWithImage",
+          "description": "Get prompt with image content",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "prompts-list",
+          "name": "PromptsList",
+          "description": "Server lists available prompts with valid structure",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "resources-list",
+          "name": "ResourcesList",
+          "description": "Server lists available resources with valid structure",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "resources-read-binary",
+          "name": "ResourcesReadBinary",
+          "description": "Read binary resource successfully",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "resources-read-text",
+          "name": "ResourcesReadText",
+          "description": "Read text resource successfully",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "resources-templates-read",
+          "name": "ResourcesTemplateRead",
+          "description": "Read resource from template with parameter substitution",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2164-no-empty-contents",
+          "name": "ResourcesNotFoundNoEmptyContents",
+          "description": "Server does not return an empty contents array for a non-existent resource",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2164-error-code",
+          "name": "ResourcesNotFoundErrorCode",
+          "description": "Server returns -32602 (Invalid Params) for non-existent resource (SHOULD)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2164-data-uri",
+          "name": "ResourcesNotFoundDataUri",
+          "description": "Server includes the requested URI in the error data field (SHOULD)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "server-accepts-multiple-post-streams",
+          "name": "ServerAcceptsMultiplePostStreams",
+          "description": "Server allows multiple concurrent POST requests (each may return SSE or JSON)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "server-sse-streams-functional",
+          "name": "ServerSSEStreamsFunctional",
+          "description": "Multiple POST SSE streams should be functional",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-request-meta-invalid-missing-meta",
+          "name": "RequestMetaInvalid",
+          "description": "Rejects request with missing _meta with -32602 Invalid params",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-meta-invalid-400",
+          "name": "HttpServerMetaInvalid400",
+          "description": "Rejections of requests missing required _meta fields use HTTP 400 Bad Request.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-request-meta-invalid-missing-protocol-version",
+          "name": "RequestMetaInvalid",
+          "description": "Rejects request with _meta missing io.modelcontextprotocol/protocolVersion",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-meta-invalid-400",
+          "name": "HttpServerMetaInvalid400",
+          "description": "Rejections of requests missing required _meta fields use HTTP 400 Bad Request.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-request-meta-invalid-missing-client-capabilities",
+          "name": "RequestMetaInvalid",
+          "description": "Rejects request with _meta missing io.modelcontextprotocol/clientCapabilities",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-meta-invalid-400",
+          "name": "HttpServerMetaInvalid400",
+          "description": "Rejections of requests missing required _meta fields use HTTP 400 Bad Request.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-request-meta-client-info-optional",
+          "name": "RequestMetaClientInfoOptional",
+          "description": "Serves requests whose _meta omits io.modelcontextprotocol/clientInfo (clientInfo is a SHOULD).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-implements-discover",
+          "name": "ServerImplementsDiscover",
+          "description": "Servers MUST implement server/discover.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-identifies-in-result-meta",
+          "name": "ServerIdentifiesInResultMeta",
+          "description": "Servers SHOULD identify themselves via _meta['io.modelcontextprotocol/serverInfo'] on responses (spec PR #3002).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-declares-prompts-in-discover",
+          "name": "ServerDeclaresPromptsInDiscover",
+          "description": "Servers that support prompts MUST declare the prompts capability in their DiscoverResult.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-discover-capabilities-match-handlers",
+          "name": "DiscoverCapabilitiesMatchHandlers",
+          "description": "capabilities matches what the server honors on real RPC calls",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-unsupported-version-error",
+          "name": "ServerUnsupportedVersionError",
+          "description": "If the server does not implement the requested version (whether the version is unknown to the server, or is a known version the server has chosen not to support), it MUST respond with an UnsupportedProtocolVersionError listing the versions it does support; the error data carries the supported versions and echoes the requested version.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-unsupported-version-400",
+          "name": "HttpServerUnsupportedVersion400",
+          "description": "If the server does not implement the requested protocol version, it MUST respond with 400 Bad Request and an UnsupportedProtocolVersionError listing its supported versions.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-header-mismatch-400",
+          "name": "HttpServerHeaderMismatch400",
+          "description": "If the values do not match, the server MUST reject the request with 400 Bad Request and a HeaderMismatch JSON-RPC error.",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-rejects-undeclared-capability",
+          "name": "ServerRejectsUndeclaredCapability",
+          "description": "A server MUST NOT rely on capabilities the client has not declared. If processing a request requires a capability the client did not include in io.modelcontextprotocol/clientCapabilities, the server MUST return a MissingRequiredClientCapabilityError (-32021).",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_missing_capability' in tools/list and the probe call did not exercise it (required for the undeclared-capability rejection)"
+        },
+        {
+          "id": "sep-2575-missing-capability-http-400",
+          "name": "MissingCapabilityHttp400",
+          "description": "On HTTP, the response status MUST be 400 Bad Request [for MissingRequiredClientCapabilityError].",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_missing_capability' in tools/list, so the -32021 HTTP status could not be validated"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404-initialize",
+          "name": "HttpServerMethodNotFound404initialize",
+          "description": "If the server does not implement the removed RPC method 'initialize', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404-ping",
+          "name": "HttpServerMethodNotFound404ping",
+          "description": "If the server does not implement the removed RPC method 'ping', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404-logging-setlevel",
+          "name": "HttpServerMethodNotFound404loggingsetLevel",
+          "description": "If the server does not implement the removed RPC method 'logging/setLevel', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404-resources-subscribe",
+          "name": "HttpServerMethodNotFound404resourcessubscribe",
+          "description": "If the server does not implement the removed RPC method 'resources/subscribe', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404-resources-unsubscribe",
+          "name": "HttpServerMethodNotFound404resourcesunsubscribe",
+          "description": "If the server does not implement the removed RPC method 'resources/unsubscribe', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-method-not-found-404",
+          "name": "HttpServerMethodNotFound404",
+          "description": "If the server does not implement the requested RPC method, it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-http-server-no-independent-requests-on-stream",
+          "name": "HttpServerNoIndependentRequestsOnStream",
+          "description": "Request stream contains only IncompleteResult, never independent JSON-RPC requests",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_streaming_elicitation' in tools/list, so the response stream could not be exercised"
+        },
+        {
+          "id": "sep-2575-server-no-log-without-loglevel",
+          "name": "ServerNoLogWithoutLogLevel",
+          "description": "No notifications/message for requests that didn't set _meta.../logLevel",
+          "status": "FAILURE",
+          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_logging_tool' in tools/list, so the no-log-without-logLevel requirement could not be exercised"
+        },
+        {
+          "id": "sep-2575-server-sends-subscription-ack",
+          "name": "ServerSendsSubscriptionAck",
+          "description": "notifications/subscriptions/acknowledged is the first message on a subscriptions/listen stream",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-tags-subscription-id",
+          "name": "ServerTagsSubscriptionId",
+          "description": "Listen-stream notifications carry _meta.../subscriptionId",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-honors-notification-filter",
+          "name": "ServerHonorsNotificationFilter",
+          "description": "Server doesn't send notification types the client didn't request",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2575-server-sends-prompts-list-changed-on-subscription",
+          "name": "ServerSendsPromptsListChangedOnSubscription",
+          "description": "List-changed-capable servers notify listen streams with promptsListChanged: true (SHOULD)",
+          "status": "SKIPPED"
+        },
+        {
+          "id": "sep-2575-server-sends-tools-list-changed-on-subscription",
+          "name": "ServerSendsToolsListChangedOnSubscription",
+          "description": "List-changed-capable servers notify listen streams with toolsListChanged: true (SHOULD)",
+          "status": "SKIPPED"
+        },
+        {
+          "id": "sep-2575-http-server-error-jsonrpc-id",
+          "name": "HttpServerErrorJsonrpcId",
+          "description": "All error responses carry the request JSON-RPC id",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "tools-call-audio",
+          "name": "ToolsCallAudio",
+          "description": "Tool returns audio content",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "tools-call-embedded-resource",
+          "name": "ToolsCallEmbeddedResource",
+          "description": "Tool returns embedded resource content",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "tools-call-error",
+          "name": "ToolsCallError",
+          "description": "Tool returns error correctly",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "tools-call-image",
+          "name": "ToolsCallImage",
+          "description": "Tool returns image content",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "tools-call-mixed-content",
+          "name": "ToolsCallMixedContent",
+          "description": "Tool returns multiple content types",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "tools-call-simple-text",
+          "name": "ToolsCallSimpleText",
+          "description": "Tool returns simple text content",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "tools-call-with-progress",
+          "name": "ToolsCallWithProgress",
+          "description": "Tool reports progress notifications",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "tools-list",
+          "name": "ToolsList",
+          "description": "Server lists available tools with valid structure",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "tools-name-format",
+          "name": "ToolsNameFormat",
+          "description": "Tool names are 1-64 characters and match ^[A-Za-z0-9_./-]+$",
+          "status": "SUCCESS"
+        }
+      ]
+    }
+  ]
+}
