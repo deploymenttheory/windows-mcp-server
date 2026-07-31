@@ -30,7 +30,7 @@ reporting.
 This server exists to drive the Windows desktop on behalf of an AI agent, and
 several of its tools (`PowerShell`, `Registry`, `FileSystem`, `Process`, `App`)
 intentionally have **full user-context system access with no sandboxing**. This
-is documented in the [README](README.md#safety) and is the design, not a flaw.
+is documented in the [README](README.md) and is the design, not a flaw.
 Reports amounting to "the PowerShell tool can run PowerShell" are out of scope.
 
 Likewise, the local pre-flight and posture checks (`dsregcmd`, registry, WMI) are

@@ -27,8 +27,8 @@ func enforceHTTPSScheme(u *url.URL, enforceHTTPS bool) error {
 		return nil
 	}
 	if strings.EqualFold(u.Scheme, "http") {
-		return fmt.Errorf("%w: retry with https://%s%s, or ask the operator to start the server "+
-			"without --enforce-https if this site genuinely has no HTTPS endpoint",
+		return fmt.Errorf("%w: retry with https://%s%s, or ask the operator to clear "+
+			"enforce_https in the policy document if this site genuinely has no HTTPS endpoint",
 			ErrPlaintextHTTP, u.Host, u.Path)
 	}
 	return nil

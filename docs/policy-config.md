@@ -209,10 +209,18 @@ never admitted without having looked at the device.
 | `tpm-present` / `tpm-attestation-capable` | TPM state | `tpmtool` |
 | `tpm-attested` | Nonce-fresh TPM platform attestation | `tpmtool`, elevated |
 | `remote-policy` | External may-run endpoint authorizes (`arg` = URL) | network |
-| `graph-*` | Entra + Intune compliance | network |
+| `graph-entra-registered` | The device exists in Entra ID | network |
+| `graph-entra-compliant` | Entra reports the device compliant | network |
+| `graph-intune-enrolled` | The device is enrolled in Intune | network |
+| `graph-intune-compliant` | Intune reports the device compliant | network |
+| `graph-attested` | Intune holds a health-attestation record | network |
 
-The `graph-*` and `remote-policy` credentials come from the environment, never
-from flags or this document — argv is world-readable and a policy is meant to be
+Write the id you want; there is no `graph-*` wildcard, and a signal name the
+build does not know is refused at load. See [Remote signals](remote-signals.md)
+for the app registration and permissions these need.
+
+The Graph and `remote-policy` credentials come from the environment, never from
+flags or this document — argv is world-readable and a policy is meant to be
 checked in:
 
 ```
@@ -266,12 +274,12 @@ because the extra part would silently not mean what it says.
 |---|---|
 | `proxy-only` | The allowlist binds whatever is configured to use the proxy. Nothing stops an application ignoring it. No elevation needed. |
 | `scoped` | The applications named in `applications` are given outbound-block firewall rules, so they cannot reach anything except the proxy. Needs elevation. |
-| `global` | The machine's default outbound action becomes block, with an exception set for DNS, DHCP, NCSI, update and Defender. Needs elevation. |
+| `global` | The machine's default outbound action becomes block, with an exception set for DNS, DHCP, NCSI, time, update and certificate revocation. Needs elevation. |
 
-The tier in force is reported by `GuardrailStatus` and the status endpoint under
-`egress.enforcement`, and the server logs a warning at startup when it is
+The tier in force is reported by `GuardrailStatus` and the status endpoint at
+`server.egress.enforcement`, and the server logs a warning at startup when it is
 `proxy-only` — so a proxy nothing is forced through is never mistaken for
-enforcement.
+enforcement. See [Egress setup](egress.md) for the end-to-end procedure.
 
 All three tiers are implemented. `global` is the disruptive one — read the
 section below before enabling it.

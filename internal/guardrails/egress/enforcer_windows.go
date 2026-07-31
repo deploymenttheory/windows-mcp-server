@@ -67,11 +67,21 @@ func (WindowsEnforcer) Elevated() bool { return contain.CurrentUserIsAdmin() }
 // not starting.
 func (e WindowsEnforcer) Apply(spec EnforceSpec) (func() error, error) {
 	logger := e.logger()
-	if len(spec.Applications) == 0 && !spec.GlobalBlock {
+
+	// The firewall work and the WinINET work are gated separately. Pointing this
+	// user's proxy settings at the listener needs no elevation and is useful on
+	// its own, so a proxy-only policy asking for it must not be silently dropped
+	// on the way past the firewall early-return — that would leave an operator
+	// believing traffic was being routed when nothing had been configured.
+	needsFirewall := len(spec.Applications) > 0 || spec.GlobalBlock
+	if !needsFirewall && !spec.SetSystemProxy {
 		return func() error { return nil }, nil
 	}
-	if !e.Elevated() {
+	if needsFirewall && !e.Elevated() {
 		return nil, ErrNotElevated
+	}
+	if !needsFirewall {
+		return e.applySystemProxyOnly(spec)
 	}
 
 	blockNames := ruleNames(spec.Applications)
@@ -202,6 +212,35 @@ func (e WindowsEnforcer) Apply(spec EnforceSpec) (func() error, error) {
 		return clearState()
 	}
 	return restore, nil
+}
+
+// applySystemProxyOnly handles the proxy-only tier's WinINET configuration,
+// where there is no firewall state to record beyond the settings replaced.
+func (e WindowsEnforcer) applySystemProxyOnly(spec EnforceSpec) (func() error, error) {
+	saved, err := setSystemProxy(spec.ProxyAddr)
+	if err != nil {
+		return nil, fmt.Errorf("point WinINET at the egress proxy: %w", err)
+	}
+	state := enforcementState{
+		PID: os.Getpid(), Listen: spec.ProxyAddr, Group: ruleGroup, SystemProxy: saved,
+	}
+	if err := writeState(state); err != nil {
+		_ = restoreSystemProxy(saved)
+		return nil, err
+	}
+	e.logger().Info("WinINET proxy settings point at the egress proxy", "addr", spec.ProxyAddr)
+
+	var undone bool
+	return func() error {
+		if undone {
+			return nil
+		}
+		undone = true
+		if err := restoreSystemProxy(saved); err != nil {
+			return err
+		}
+		return clearState()
+	}, nil
 }
 
 // Suspend weakens egress without touching the machine's default actions.

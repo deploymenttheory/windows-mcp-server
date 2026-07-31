@@ -2,8 +2,8 @@
 
 This server's tools have **full, unsandboxed system access** (PowerShell,
 Registry, FileSystem, Process, synthetic input). The in-process
-[security model](../README.md#security--four-layers) contains a *session* —
-pre-flight admission, guardrails, audit, kill switch — but the strongest
+[security model](../README.md#security) contains a *session* —
+startup admission, the policy engine, audit, kill switch, egress — but the strongest
 containment for untrusted workloads is to run the whole server inside a
 **disposable virtual machine** whose blast radius is the VM, not the host.
 
@@ -37,7 +37,7 @@ alongside Hyper-V yet:
 - **Can be network-isolated** via HNS/HCN endpoints (create the VM on an
   isolated network, or none) — complementing the kill switch's firewall isolate.
 
-This pairs naturally with the existing model: the four containment layers guard
+This pairs naturally with the existing model: the containment layers guard
 what happens *inside* a session; an ephemeral HCS VM bounds *where* it can
 happen.
 
@@ -79,7 +79,7 @@ Hypervisor.
   session and terminate on completion.
 - **Console.** HCS has no vmconnect; a headed view is the supervisor's own —
   framebuffer capture or RDP-over-HvSocket (the Windows Sandbox model). For an
-  RPA agent this is usually headless with `--record-dir` capturing evidence.
+  RPA agent this is usually headless with `transparency.recording_dir` capturing evidence.
 
 ## Status
 
