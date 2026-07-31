@@ -5,6 +5,7 @@ package egress
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/contain"
@@ -37,9 +38,23 @@ const firewallTestEnv = "WINDOWS_MCP_FIREWALL_TEST"
 // program that cannot exist.
 const selfTestApp = `C:\Windows\System32\windows-mcp-egress-selftest-does-not-exist.exe`
 
+// optedIn reads the gate tolerantly. `set VAR=1 && go test` in cmd.exe assigns
+// "1 " — everything between the = and the && , trailing space included — so an
+// exact comparison silently skips the very run an operator just asked for. The
+// spellings accepted here match the coercion the tool layer already does in
+// pkg/windows/params.go.
+func optedIn() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(firewallTestEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func requireElevatedOptIn(t *testing.T) WindowsEnforcer {
 	t.Helper()
-	if os.Getenv(firewallTestEnv) != "1" {
+	if !optedIn() {
 		t.Skipf("set %s=1 to run the tests that install real firewall rules", firewallTestEnv)
 	}
 	e := WindowsEnforcer{}
