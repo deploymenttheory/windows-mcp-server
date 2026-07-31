@@ -55,6 +55,7 @@ env:
   BACKCOMPAT_SPEC_VERSION: '2025-11-25'
   PRODUCT_PORT: '3001'
   FIXTURES_PORT: '3002'
+  BACKCOMPAT_PORT: '3003'
 
 jobs:
   conformance:
@@ -105,75 +106,55 @@ jobs:
         # If this fails, nothing below is evidence about the shipped server.
         run: go test -tags conformance ./internal/winmcp/ -run 'ConformanceHost|ConformanceFixtures' -count=1 -v
 
-      - name: Start both hosts
-        run: |
-          $ErrorActionPreference = 'Stop'
-          function Start-Host($port, $extra, $log) {
-            $args = @('conformance-serve', '--addr', "127.0.0.1:$port")
-            if ($extra) { $args += $extra }
-            Start-Process -FilePath "$env:RUNNER_TEMP/conformance-host.exe" -ArgumentList $args `
-              -RedirectStandardOutput "$env:RUNNER_TEMP/$log.out" -RedirectStandardError "$env:RUNNER_TEMP/$log.err" `
-              -PassThru | Out-Null
-          }
-          Start-Host $env:PRODUCT_PORT  $null         'product'
-          Start-Host $env:FIXTURES_PORT '--fixtures'  'fixtures'
-
-          # Health-check with a real server/discover POST. A GET returns 405 under the
-          # stateless transport, so curling the URL proves nothing.
-          $body = '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{' +
-                  '"io.modelcontextprotocol/protocolVersion":"' + $env:SPEC_VERSION + '",' +
-                  '"io.modelcontextprotocol/clientCapabilities":{}}}}'
-          $headers = @{
-            'Mcp-Method' = 'server/discover'
-            'Mcp-Protocol-Version' = $env:SPEC_VERSION
-            'Accept' = 'application/json, text/event-stream'
-          }
-          foreach ($port in @($env:PRODUCT_PORT, $env:FIXTURES_PORT)) {
-            $ready = $false
-            foreach ($attempt in 1..40) {
-              try {
-                $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port/mcp" -Method Post -Headers $headers `
-                  -ContentType 'application/json' -Body $body -UseBasicParsing -TimeoutSec 5
-                if ($r.StatusCode -eq 200) { $ready = $true; break }
-              } catch { Start-Sleep -Milliseconds 500 }
-            }
-            if (-not $ready) {
-              Get-Content "$env:RUNNER_TEMP/product.err","$env:RUNNER_TEMP/fixtures.err" -ErrorAction SilentlyContinue
-              throw "conformance host on port $port never became ready"
-            }
-            "host on $port ready"
-          }
-
+      # Each pass starts its own host, runs the suite against it, and stops it
+      # again — all inside one step, via .github/scripts/run-conformance-pass.ps1.
+      #
+      # This is not stylistic. A Windows runner terminates a step's process tree
+      # when the step ends, so a host started in an earlier step is already gone
+      # by the time the suite runs. Every request then comes back "fetch failed"
+      # and the suite reports the server as wholly non-conformant — which reads
+      # as a catastrophic protocol failure and is actually an empty socket.
       - name: Run the suite — product pass
         id: product
         continue-on-error: true
-        run: |
-          npx -y "@modelcontextprotocol/conformance@$env:HARNESS_VERSION" server `
-            --url "http://127.0.0.1:$env:PRODUCT_PORT/mcp" `
-            --suite all --spec-version $env:SPEC_VERSION `
-            --expected-failures conformance/baseline-product.yml `
-            --output-dir "$env:RUNNER_TEMP/results/product"
+        run: >
+          .github/scripts/run-conformance-pass.ps1
+          -Name product
+          -HostExe "$env:RUNNER_TEMP/conformance-host.exe"
+          -Port $env:PRODUCT_PORT
+          -SpecVersion $env:SPEC_VERSION
+          -HarnessVersion $env:HARNESS_VERSION
+          -Baseline conformance/baseline-product.yml
+          -OutputDir "$env:RUNNER_TEMP/results/product"
+          -LogDir "$env:RUNNER_TEMP"
 
       - name: Run the suite — fixtures pass
         id: fixtures
         continue-on-error: true
-        run: |
-          npx -y "@modelcontextprotocol/conformance@$env:HARNESS_VERSION" server `
-            --url "http://127.0.0.1:$env:FIXTURES_PORT/mcp" `
-            --suite all --spec-version $env:SPEC_VERSION `
-            --expected-failures conformance/baseline-fixtures.yml `
-            --output-dir "$env:RUNNER_TEMP/results/fixtures"
+        run: >
+          .github/scripts/run-conformance-pass.ps1
+          -Name fixtures -Fixtures
+          -HostExe "$env:RUNNER_TEMP/conformance-host.exe"
+          -Port $env:FIXTURES_PORT
+          -SpecVersion $env:SPEC_VERSION
+          -HarnessVersion $env:HARNESS_VERSION
+          -Baseline conformance/baseline-fixtures.yml
+          -OutputDir "$env:RUNNER_TEMP/results/fixtures"
+          -LogDir "$env:RUNNER_TEMP"
 
       - name: Run the suite — 2025-11-25 backward compatibility
         id: backcompat
         continue-on-error: true
-        run: |
-          npx -y "@modelcontextprotocol/conformance@$env:HARNESS_VERSION" server `
-            --url "http://127.0.0.1:$env:FIXTURES_PORT/mcp" `
-            --suite all --spec-version $env:BACKCOMPAT_SPEC_VERSION `
-            --expected-failures conformance/baseline-fixtures.yml `
-            --output-dir "$env:RUNNER_TEMP/results/backcompat"
-
+        run: >
+          .github/scripts/run-conformance-pass.ps1
+          -Name backcompat -Fixtures
+          -HostExe "$env:RUNNER_TEMP/conformance-host.exe"
+          -Port $env:BACKCOMPAT_PORT
+          -SpecVersion $env:BACKCOMPAT_SPEC_VERSION
+          -HarnessVersion $env:HARNESS_VERSION
+          -Baseline conformance/baseline-fixtures.yml
+          -OutputDir "$env:RUNNER_TEMP/results/backcompat"
+          -LogDir "$env:RUNNER_TEMP"
       - name: Collect the evidence
         run: |
           $ErrorActionPreference = 'Stop'
@@ -227,8 +208,7 @@ jobs:
           name: conformance-results
           path: |
             conformance/results/
-            ${{ runner.temp }}/product.err
-            ${{ runner.temp }}/fixtures.err
+            ${{ runner.temp }}/*.err
 
       - name: Check for a newer spec revision
         id: sync
