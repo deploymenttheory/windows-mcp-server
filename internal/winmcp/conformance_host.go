@@ -20,10 +20,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/contain"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/enforce"
@@ -61,20 +64,22 @@ const shutdownGrace = 5 * time.Second
 // What makes the evidence meaningful is that the surface is built by
 // newMCPSurface and wrapped in the same middleware chain as RunStdio, in the same
 // order: inject-deps and cache hints from the shared constructor, then audit,
-// rug-pull and the devicePolicy engine. Only the transport differs.
+// rug-pull and the policy engine. Only the transport differs.
 //
-// Two deliberate differences from a production run, both to avoid measuring
+// Three deliberate differences from a production run, each to avoid measuring
 // something other than protocol conformance:
 //
-//   - No desktop engine is created. The suite calls tools/list and, with the
-//     fixtures built in, the fixture tools; it never drives the real desktop.
-//     A real tool call here would reach a nil engine, which is a bug in the run
-//     rather than a supported path.
-//   - The devicePolicy engine runs under the built-in default devicePolicy, which evaluates
+//   - The policy engine runs under the built-in default policy, which evaluates
 //     and records but refuses nothing. The engine has to be in the chain — a
 //     conformance result gathered without it would describe a server nobody runs
-//     — but a devicePolicy that refused calls partway through would report its own
+//     — but a policy that refused calls partway through would report its own
 //     refusals as protocol failures.
+//   - The desktop engine is best-effort. It is created when the environment can
+//     host one, so resources/read returns real state; where it cannot, the server
+//     still serves, because most of the suite needs no engine and losing the run
+//     to obtain one would be a bad trade.
+//   - Handler panics are recovered rather than fatal. Finishing the run and
+//     reporting is the whole job here; see recoverMiddleware.
 func RunConformanceHost(ctx context.Context, cfg Config, hostCfg ConformanceConfig) error {
 	if err := requireLoopback(hostCfg.Addr); err != nil {
 		return err
@@ -150,9 +155,30 @@ func buildConformanceServer(
 		return nil, fmt.Errorf("build inventory: %w", err)
 	}
 
-	deps := windows.NewBaseDeps(nil, logger, nil).WithEnforceHTTPS(enforceHTTPS(cfg))
+	// A real engine when the runner can host one, so resources/read returns real
+	// desktop state and the suite's caching checks measure something. It is
+	// best-effort: a headless or UIA-less environment must degrade to a nil engine
+	// rather than refusing to serve, because most of the suite needs no engine at
+	// all and losing the whole run to get one would be a bad trade.
+	dsk, err := desktop.New(logger, desktop.Options{}) //nolint:contextcheck // owns its lifetime
+	if err != nil {
+		logger.Warn("no desktop engine for the conformance host; "+
+			"engine-backed resources will report an error rather than data", "error", err)
+		dsk = nil
+	}
+
+	deps := windows.NewBaseDeps(dsk, logger, nil).WithEnforceHTTPS(enforceHTTPS(cfg))
 	surface := newMCPSurface(cfg, inv, personaInstructions, deps)
 	server := surface.Server
+
+	// Outermost, so nothing a handler does can take the process down.
+	//
+	// This is not defensive padding. Without it, one handler dereferencing a nil
+	// engine killed the host mid-suite, and every scenario after that point
+	// reported "fetch failed" — indistinguishable, in the results, from a server
+	// that answered wrongly. A conformance run whose failures might mean "the
+	// server is not there" is not evidence of anything.
+	server.AddReceivingMiddleware(recoverMiddleware(logger))
 
 	// The transparency services, as RunStdio wires them. A trip here logs and
 	// records rather than actuating containment: the conformance host has no
@@ -168,10 +194,10 @@ func buildConformanceServer(
 	server.AddReceivingMiddleware(rugpull.ResourceMiddleware())
 	server.AddReceivingMiddleware(rugpull.DiscoverMiddleware())
 
-	// The devicePolicy engine under the built-in default: present, evaluating and
+	// The policy engine under the built-in default: present, evaluating and
 	// recording, refusing nothing. The suite must meet the same middleware chain a
 	// real session does — otherwise the conformance evidence describes a server
-	// nobody runs — but a devicePolicy that refused calls would report the refusals as
+	// nobody runs — but a policy that refused calls would report the refusals as
 	// protocol failures.
 	engine := policy.NewEngine(policy.Default(), newGuardrailRegistry(cfg, logger), nil,
 		func() *signals.Env { return &signals.Env{Sys: &conformanceProbe{}, Logger: logger} })
@@ -230,12 +256,40 @@ func requireLoopback(addr string) error {
 	return nil
 }
 
+// recoverMiddleware turns a panicking handler into a JSON-RPC error instead of a
+// dead process.
+//
+// It belongs on the conformance host and not on the stdio server. Here the whole
+// point is to finish the run and produce results, so one broken handler must not
+// cost the evidence for every scenario after it — a run whose failures might mean
+// "the server is not there" proves nothing. A production session makes the
+// opposite trade: a panic there means the engine's state is unknown, and driving
+// a desktop from an unknown state is worse than stopping.
+func recoverMiddleware(logger *slog.Logger) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (res mcp.Result, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("handler panicked", "method", method, "panic", r,
+						"stack", string(debug.Stack()))
+					res = nil
+					err = &jsonrpc.Error{
+						Code:    jsonrpc.CodeInternalError,
+						Message: fmt.Sprintf("handler for %s panicked: %v", method, r),
+					}
+				}
+			}()
+			return next(ctx, method, req)
+		}
+	}
+}
+
 // conformanceProbe satisfies signals.SystemProbe without a desktop engine.
 //
 // The conformance host creates no engine — the suite never drives the real
-// desktop — so the default devicePolicy's signals have nothing to read. Every method
+// desktop — so the default policy's signals have nothing to read. Every method
 // returns a zero value, which makes run-context report a non-interactive session
-// and therefore fail. Under the default devicePolicy that is a warning and nothing
+// and therefore fail. Under the default policy that is a warning and nothing
 // more, which is the intended outcome: the middleware is exercised on every
 // request, and no request is refused.
 type conformanceProbe struct{}

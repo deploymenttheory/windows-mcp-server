@@ -58,7 +58,7 @@ type Config struct {
 	// logs go to stderr. stdout is reserved for the MCP stdio transport.
 	LogFile string
 
-	// PolicyConfig is the path to the device-devicePolicy document. Empty uses the
+	// PolicyConfig is the path to the device-policy document. Empty uses the
 	// embedded default, which evaluates every declared signal, records every
 	// verdict, and refuses nothing.
 	//
@@ -70,12 +70,12 @@ type Config struct {
 
 	// EnforceHTTPS blocks plaintext http:// targets: the Scrape tool, a URL-shaped
 	// App launch (which Start-Process hands to the default browser), and the
-	// remote may-run endpoint. It is set from the devicePolicy document at startup, not
+	// remote may-run endpoint. It is set from the policy document at startup, not
 	// from a flag; it lives here because it has to reach the tool dependencies and
-	// the guardrail Env, neither of which carries a devicePolicy.
+	// the guardrail Env, neither of which carries a policy.
 	EnforceHTTPS bool
 
-	// --- Presentation and capture (not devicePolicy) ---
+	// --- Presentation and capture (not policy) ---
 	Overlay     bool   // decorative window hue and click flash
 	RecordFPS   int    // session recording frame rate
 	RecordCodec string // session recording codec
@@ -98,13 +98,13 @@ func (c *Config) SetReadOnly(v bool) {
 // ErrPersonaNeedsUser reports a persona requested in a context that cannot
 // drive the desktop. Personas are desktop-automation presets, and Session 0
 // has no desktop to drive, so this is a configuration error rather than a
-// devicePolicy denial — it is not routed through the guardrail decision.
+// policy denial — it is not routed through the guardrail decision.
 var ErrPersonaNeedsUser = errors.New(
 	"persona requires an interactive user context, but the process is running as SYSTEM",
 )
 
 // ErrStartupDenied reports a device that did not meet the startup-scoped rules
-// of the active devicePolicy.
+// of the active policy.
 var ErrStartupDenied = errors.New("device devicePolicy denied startup")
 
 // RunStdio builds the server and serves the MCP protocol over stdio until the
@@ -116,7 +116,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	}
 	defer cleanup()
 
-	// The devicePolicy is loaded before anything else it configures. It names the audit
+	// The policy is loaded before anything else it configures. It names the audit
 	// sink, the heartbeat cadence, whether the session is recorded and where — so
 	// a bad document must fail before any of that is stood up, and certainly
 	// before a desktop engine exists.
@@ -126,7 +126,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		return err
 	}
 	// Carried onto Config because it has to reach the tool dependencies and the
-	// guardrail Env, neither of which holds a devicePolicy.
+	// guardrail Env, neither of which holds a policy.
 	cfg.EnforceHTTPS = devicePolicy.EnforceHTTPS
 
 	// --- Hash-chained audit log (built early so startup is recorded) ---
@@ -147,7 +147,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	//
 	// Overlay is the decorative hue and click flash, which stays a flag because it
 	// is a display choice rather than a control. SecurityOverlay starts the overlay
-	// manager without the decoration, so the devicePolicy can guarantee the kill banner
+	// manager without the decoration, so the policy can guarantee the kill banner
 	// has somewhere to draw without also putting a green border on the screen.
 	dsk, err := desktop.New(logger, desktop.Options{ //nolint:contextcheck // see above
 		Overlay:         cfg.Overlay,
@@ -256,7 +256,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	kill := contain.NewKillSwitch(executor.OnTrip)
 	defer func() { _ = executor.Restore() }() // undo firewall isolation on exit
 
-	// Kill triggers come from the devicePolicy's kill.triggers block. A trigger left off
+	// Kill triggers come from the policy's kill.triggers block. A trigger left off
 	// is report-only: still detected and audited, but it contains nothing and the
 	// server keeps serving. Transparency is never conditional on containment.
 	triggers := devicePolicy.Kill.Triggers
@@ -265,7 +265,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	tripRugpull := tripFunc("rugpull", triggers.RugPull, kill, audit, logger)
 	tripHeartbeat := tripFunc("heartbeat-gap", triggers.HeartbeatGap, kill, audit, logger)
 	// A kill verdict needs no trigger switch: the rule that produced it said
-	// `on_fail: kill` in this same devicePolicy, which is the operator arming it. Audit
+	// `on_fail: kill` in this same policy, which is the operator arming it. Audit
 	// mode still caps it to a warning, so the engine never reaches here under the
 	// default.
 	tripPolicy := tripFunc("devicePolicy", true, kill, audit, logger)
@@ -282,7 +282,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	server.AddReceivingMiddleware(rugpull.ResourceMiddleware())
 	server.AddReceivingMiddleware(rugpull.DiscoverMiddleware())
 
-	// The devicePolicy engine, innermost so nothing can route around it and so the audit
+	// The policy engine, innermost so nothing can route around it and so the audit
 	// and rug-pull layers still observe the requests it refuses.
 	server.AddReceivingMiddleware(enforce.Middleware(engine, enforce.EnforcerDeps{
 		Audit:  audit,
@@ -304,7 +304,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	)
 	server.AddTool(statusTool, statusHandler)
 	// The agent-facing Kill tool always stops the session, but only actuates the
-	// containment ladder when the devicePolicy configures containment. It is not an
+	// containment ladder when the policy configures containment. It is not an
 	// authoritative trigger: a misbehaving model must not be able to isolate or
 	// shut down the device by asking.
 	stopSession := executor.StopGracefully

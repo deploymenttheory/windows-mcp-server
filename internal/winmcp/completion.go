@@ -32,7 +32,12 @@ func completionHandler(
 	inv *inventory.Inventory,
 ) func(context.Context, *mcp.CompleteRequest) (*mcp.CompleteResult, error) {
 	return func(ctx context.Context, req *mcp.CompleteRequest) (*mcp.CompleteResult, error) {
-		var values []string
+		// Non-nil from the start. The spec requires completion.values to be an
+		// array, and a nil slice marshals to `null` — which is what the conformance
+		// suite's completion-complete scenario reports as "values is not an array".
+		// Every path below has to preserve that, which is why filterByPrefix
+		// returns an empty slice rather than passing nil through.
+		values := []string{}
 
 		// Only prompt arguments are completed; resource-URI completion would imply
 		// enumerating live desktop state, which belongs behind a tool call.
@@ -117,7 +122,14 @@ func completionValues(ctx context.Context, inv *inventory.Inventory, argument st
 
 // filterByPrefix narrows candidates to those matching what has been typed,
 // case-insensitively.
+// filterByPrefix narrows the suggestions to those the caller has started typing.
+//
+// It never returns nil: completion.values must be a JSON array, and returning a
+// nil slice anywhere on this path puts `null` on the wire.
 func filterByPrefix(values []string, typed string) []string {
+	if values == nil {
+		return []string{}
+	}
 	if typed == "" {
 		return values
 	}
