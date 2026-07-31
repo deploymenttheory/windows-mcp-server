@@ -161,6 +161,27 @@ func (c *signalCache) Refresh(ctx context.Context, args map[string]string) error
 	return nil
 }
 
+// ReadAll evaluates every declared signal, ignoring both the cache and the TTL,
+// and returns the readings in id order.
+//
+// This is for the operator-facing `policy check`, where the whole point is to
+// see the device as it is right now. It deliberately does not take the request
+// path's shortcut: a cached reading would answer a question nobody asked.
+func (c *signalCache) ReadAll(ctx context.Context, args map[string]string) []Result {
+	ids := c.ids()
+	out := make([]Result, 0, len(ids))
+	for _, id := range ids {
+		res := c.evaluate(ctx, id, args[id])
+		c.mu.Lock()
+		entry := c.entries[id]
+		entry.result, entry.readAt = res, c.now()
+		c.entries[id] = entry
+		c.mu.Unlock()
+		out = append(out, res)
+	}
+	return out
+}
+
 // Snapshot returns the current readings, for the status surface and the decision
 // document. Entries never read are included with Skip status so the reader can
 // tell "not yet evaluated" from "evaluated and passing".

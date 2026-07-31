@@ -25,7 +25,8 @@ Windows accessibility tree.
 
 This is the design, not an oversight; see
 [SECURITY.md](SECURITY.md) for what is and is not in scope as a vulnerability,
-and [Security — four layers](#security--four-layers) for the in-process controls.
+and [Security — the policy engine](#security--the-policy-engine) for the in-process
+controls.
 
 ## Requirements
 
@@ -43,9 +44,9 @@ The server speaks MCP over stdio: any MCP-capable client launches the binary
 with the `stdio` subcommand. Build it once and point your client at the full
 path to `windows-mcp-server.exe`.
 
-Subcommands: `stdio` (run the server), `check` (evaluate device guardrails once
-and print the decision), `personas` (list the presets), and `conformance-report`
-(render results from the official MCP conformance suite).
+Subcommands: `stdio` (run the server), `policy` (validate a policy document, check
+this device, explain which rules cover a tool), `personas` (list the presets), and
+`conformance-report` (render results from the official MCP conformance suite).
 
 Configuration flags (persona, toolsets, read-only, overlay) are passed either as
 extra `args` after `stdio`, or as `WINDOWS_MCP_*` environment variables — see
@@ -186,10 +187,10 @@ restating it, so `--persona` and the prompts cannot drift apart. Argument values
 are completable via `completion/complete` (persona, toolset, tool, app and
 credential *names* — never secrets).
 
-Resources and prompts are covered by the same guardrails as tools: `resources/read`
-and `prompts/get` are written to the hash-chained audit log, `resources/read` is
-rate-limited by the circuit breaker, and both manifests are fingerprinted for
-rug-pull detection.
+Resources and prompts are decided by the policy engine like tools are:
+`resources/read` and `prompts/get` are written to the hash-chained audit log, both
+are covered by any rule matching `toolset: "*"` or `annotation: read-only`, and
+both manifests are fingerprinted for rug-pull detection.
 
 ## Personas
 
@@ -260,40 +261,28 @@ Every flag has a `WINDOWS_MCP_`-prefixed env var (e.g. `--read-only` ↔
 
 | Flag | Description |
 |---|---|
+| `--policy-config` | Path to the device-policy JSON document. Omit for the built-in default, which evaluates every declared signal and records every verdict but refuses nothing. See [docs/policy-config.md](docs/policy-config.md) |
 | `--toolsets` | Comma-separated toolsets to enable (`all`, `default`, or specific IDs) |
 | `--tools` | Additionally enable individual tools (bypasses toolset filtering) |
 | `--exclude-tools` | Disable specific tools |
 | `--read-only` | Expose only read-only tools |
 | `--persona` | Select a persona preset |
 | `--overlay` | Visual feedback overlays (see below) |
-| `--record-dir` | Record the whole session to a video file in this directory (see Session recording) |
 | `--record-fps` | Recording frame rate (default 4) |
 | `--record-codec` | `h264`/`h265` (via ffmpeg; small files) or `mjpeg` (pure-Go, no dependency) |
 | `--credentials-file` | JSON file of credentials to install into the Windows Credential Manager at init (see Credentials) |
-| `--security` | Master security switch: enforce pre-flight + force-on all transparency services (see below) |
-| `--with-mdm` | Pre-flight: require the device to be MDM-enrolled |
-| `--with-logged-on-account` | Pre-flight: require the interactive user to match a regex |
-| `--with-user-context` | Pre-flight: require an interactive user (not SYSTEM / Session 0) |
-| `--is-not-admin` | Pre-flight: require the interactive user to NOT be a local admin |
-| `--run-context` | Expected process context: `user` (default) or `system` |
-| `--inflight-interval` | In-flight posture re-evaluation cadence (default 60s; 0 disables drift re-eval) |
-| `--inflight-control-dir` | Directory watched for a `kill` sentinel file |
-| `--guardrails` | Guardrail mode: `off`, `audit`, `enforce` (forced to enforce by `--security`/pre-flight) |
-| `--guardrail` | Additional guardrails to require (repeatable): `id` or `id=arg` |
-| `--circuit-breaker` / `--circuit-window` / `--circuit-threshold` | Inline destructive-action circuit breaker + tuning |
-| `--enforce-https` | Enforce HTTPS: refuse plaintext `http://` targets (see below). Forced on by `--security` |
-| `--with-video-session-recording` | Record the session to a video file in this directory |
-| `--with-logging` | Audit-log sink: empty/`stderr` for stderr JSONL, or a file path for hash-chained JSONL |
-| `--heartbeat-interval` | Heartbeat cadence written to the audit chain (default 30s) |
-| `--guardrails-status-addr` / `--guardrails-status-token` | Loopback HTTP status/may-run endpoint + bearer token |
-| `--with-kill-switch` | Arm the kill switch (master gate; default off — without it, triggers are detected and audited but contain nothing) |
-| `--kill-on-posture-drift` / `--kill-on-circuit-trip` / `--kill-on-rugpull` / `--kill-on-heartbeat-gap` | Kill triggers (all default on; each also requires `--with-kill-switch`) |
-| `--kill-action-isolate` | Kill action: firewall isolate the device (default on; requires elevation) |
-| `--kill-action-kill-procs` / `--kill-action-proc-names` | Kill action: terminate named processes (requires elevation) |
-| `--kill-action-lock` / `--kill-action-shutdown` / `--kill-action-shutdown-delay` | Kill actions: lock / shut down (requires elevation) |
-| `--guardrails-bypass` | Break-glass: skip pre-flight checks (logged) |
-| `--enable-tier2` + `--graph-*` / `--remote-policy-token` | Opt into the parked tier-2 remote checks (Graph / may-run PDP) |
 | `--log-file` | Write debug logs to a file (stdout is reserved for the transport) |
+
+Everything the security subsystem does — which device signals are read and how
+often, which rules cover which tools, what a failure does, what trips the kill
+switch and what it actuates, where the audit chain is written, whether the
+session is recorded — is configured in the policy document rather than by flags.
+The questions are relational, and a flag cannot express a relation: "PowerShell
+requires MDM enrolment but taking a screenshot does not" has no spelling as a set
+of booleans.
+
+[docs/policy-config.md](docs/policy-config.md) is the schema reference, and
+carries a table mapping each removed flag to its field.
 
 ## Enforce HTTPS
 
@@ -305,8 +294,7 @@ exposure over the network:
 ./windows-mcp-server.exe stdio --enforce-https
 ```
 
-Off by default, so existing behaviour is unchanged. `--security` force-enables it,
-the same way the master switch force-enables the transparency services.
+Off by default. Turn it on with `"enforce_https": true` in the policy document.
 
 ### What it covers
 
@@ -331,7 +319,7 @@ Closing that gap needs enforcement below the tool layer — a device proxy that
 filters egress by scheme and host, so it applies however the browser got there.
 That is not implemented here.
 
-Also unaffected: the loopback guardrail status endpoint (`--guardrails-status-addr`)
+Also unaffected: the loopback status endpoint (`transparency.status_addr`)
 is an inbound HTTP listener bound to localhost and protected by a bearer token,
 not a website computer use interacts with. Microsoft Graph URLs are `https://`
 constants in the code and are not operator-overridable.
@@ -408,7 +396,8 @@ reports them as `injectable: false` rather than failing opaquely.
   persistence is rejected rather than silently overridden.
 - **Installed only after admission.** A startup blocked by pre-flight guardrails
   never provisions credentials. A partial install is rolled back.
-- `Credentials` counts as a sensitive tool, so the circuit breaker rate-limits it.
+- `Credentials` is a destructive tool, so any rate limit matching that annotation
+  covers it.
 
 > Secrets are held in process memory between reading the file and installing
 > them. Buffers are zeroed, and the JSON decoder avoids materializing an
@@ -511,7 +500,8 @@ Overlays never intercept input or take focus.
 
 ## Session recording
 
-For audit and playback, `--record-dir <dir>` records the **entire session** to a
+For audit and playback, `transparency.recording_dir` in the policy document records
+the **entire session** to a
 single video file, automatically, for every persona — so all sessions can be
 tracked. Recording starts when the server starts and finalizes on shutdown,
 producing `<dir>/session-<timestamp>.<ext>` plus a `.jsonl` marker log.
@@ -530,123 +520,174 @@ producing `<dir>/session-<timestamp>.<ext>` plus a `.jsonl` marker log.
 
 ```sh
 windows-mcp-server.exe stdio --persona qa-test-engineer \
-  --record-dir C:\sessions --record-codec h265 --record-fps 4
+  --policy-config policy.json --record-codec h265 --record-fps 4
 ```
 
-## Security — four layers
+## Security — the policy engine
 
 > 📐 **Full architecture with diagrams:** [docs/security-architecture.md](docs/security-architecture.md)
-> (layer overview, startup admission, middleware chain, in-flight monitor, audit
-> hash chain, rug-pull detection, and the tiered kill-switch ladder, all in Mermaid).
+> 📄 **Schema reference and flag migration:** [docs/policy-config.md](docs/policy-config.md)
 
-For managed deployments the server gates and contains itself. Turn the whole
-model on with `--security`, then opt into specific checks and kill actions:
+A policy engine sits between the MCP caller and the tools. Before a tool runs, a
+resource is read or a prompt is fetched, it evaluates device signals — MDM
+enrolment, Entra join, Secure Boot, BitLocker, VBS/HVCI, TPM attestation — against
+rules in a policy document, and decides what happens.
 
-```sh
-windows-mcp-server.exe stdio --security \
-  --with-mdm --is-not-admin --with-logged-on-account "^CONTOSO\\svc-rpa\d+$" \
-  --with-logging C:\mcp\audit.jsonl --guardrails-status-addr 127.0.0.1:8177 \
-  --guardrails-status-token "$TOKEN" --with-kill-switch --kill-action-isolate
+```
+MCP client ──▶ audit ──▶ rug-pull ──▶ policy engine ──▶ tool handler
+                                            │
+                                      device signals
 ```
 
-`--security` forces enforce mode and force-on the transparency services (audit
-log, heartbeat, rug-pull detection, on-screen banner, recording capture). The
-model has four layers:
+```sh
+windows-mcp-server.exe stdio --policy-config C:\ProgramData\windows-mcp\policy.json
+```
 
-**1 — Pre-flight (must pass before the LLM can do anything).** Opt-in, evaluated
-once at startup; a failure refuses to start (exit ≠ 0). `--with-mdm` (device is
-MDM-enrolled), `--with-logged-on-account=<regex>` (interactive user matches),
-`--with-user-context` (interactive user, not SYSTEM/Session 0), `--is-not-admin`
-(user is not a local administrator). Add more with `--guardrail` (repeatable):
-`secure-boot`, `tpm-present`, `vbs`/`hvci`/`credential-guard`, `bitlocker`,
-`domain-joined`, `os-enterprise-sku`, `device-allowlist=<path>`. Run
-`windows-mcp-server check` to evaluate once and print the decision (exit 2 if
-not admitted) — a posture dry-run for operators and CI.
+With no `--policy-config` the built-in default applies: the engine is present,
+every declared signal is evaluated and every verdict recorded, and nothing is
+refused. Adopting the engine cannot break a working deployment before its policy
+is written.
 
-**2 — In-flight polling.** Every `--inflight-interval` the posture is
-re-evaluated and a `kill` sentinel file (`--inflight-control-dir`) is watched;
-the server + device status stay pollable and the agent cannot disable them.
+### Verdicts
 
-**3 — Guardrails (inline tool-call policy).** `--circuit-breaker` (auto-on in
-enforce) runs on every tool call on the receiving path — the agent cannot bypass
-it — rate-limiting sensitive tools and tripping on destructive tripwires
-(disabling Defender/BitLocker/firewall, clearing MDM enrollment).
+| `on_fail` | | Effect |
+|---|---|---|
+| `allow` | green | Proceeds; the failure is still recorded |
+| `warn` | amber | Proceeds, and the warning is attached to the result so the model sees it |
+| `deny` | red | This call is refused, and re-evaluated next time — a signal that recovers restores service with no restart |
+| `kill` | out of bounds | The kill switch trips and the containment ladder runs |
 
-**4 — Transparency / always-on (agent cannot switch off).**
-- **On-screen security banner** — any security event raises a persistent red
-  banner, drawn on-screen and captured by the session recording, so a human sees
-  it and it is on the video.
-- **Hash-chained audit log** (`--with-logging`) — every action and security
-  event is an append-only, tamper-evident entry that commits to the previous
-  entry's hash; any edit/insert/delete/reorder breaks the chain. Tool calls log
-  the tool name and an **argument digest**, never the raw arguments.
-- **Heartbeat** — periodic chained entries so an external watcher (or the
-  in-process watchdog) detects a stall.
-- **Rug-pull detection** — the tool manifest is fingerprinted at startup; if the
-  advertised tools mutate afterwards (added/removed/renamed tools, changed
-  descriptions or schemas — a "rug pull"), the served `tools/list` and the
-  periodic monitor both catch it and trip the kill switch.
+The verdict is the highest severity among the failures. `"mode": "audit"` caps it
+at `warn` while still evaluating everything and recording what enforcing *would*
+have done.
 
-**Kill switch — tiered, out-of-band.** Triggers are configured separately from
-actions, and **arming is a two-step gate**: `--with-kill-switch` is the master
-switch (default **off**), and each trigger additionally honours its own
-`--kill-on-posture-drift`/`-circuit-trip`/`-rugpull`/`-heartbeat-gap` flag
-(all default on, so arming the master enables them all). A sentinel file and
-`POST /revoke` are gated on the master switch alone.
+### Rules scale with what a call can do
 
-Detection is never gated. When a trigger fires while disarmed it is still
-detected, logged, and written to the audit chain as `killswitch.disarmed`
-(recording the trigger and reason) — you always see that something fired, even
-when you chose not to act on it — and the server keeps serving and keeps
-monitoring.
+Rules match on tool, toolset, or MCP annotation, so a screenshot is not gated on
+the posture a shell command is gated on:
 
-Once armed, a trip **always** raises the banner, seals the audit log, finalizes
-the recording, and aborts the session. Opt-in escalations run in order:
-`--kill-action-isolate` (firewall block-all; loopback stays exempt so the status
-endpoint survives — default on), `--kill-action-kill-procs`
-(`--kill-action-proc-names`), `--kill-action-lock`, `--kill-action-shutdown`.
-The **default once armed is isolate + abort, no shutdown.**
+```jsonc
+{
+  "version": 1,
+  "mode": "enforce",
+  "signals": {
+    "run-context": { "ttl": "0s" },        // live on every call
+    "bitlocker":   { "ttl": "60s" },       // cached, refreshed in the background
+    "mdm-enrolled":{ "ttl": "5m" }
+  },
+  "rules": [
+    { "name": "baseline",    "match": { "toolset": "*" },              "require": ["run-context"],  "on_fail": "deny" },
+    { "name": "destructive", "match": { "annotation": "destructive" }, "require": ["bitlocker"],    "on_fail": "deny" },
+    { "name": "shell",       "match": { "tool": "PowerShell" },        "require": ["mdm-enrolled"], "on_fail": "kill" }
+  ]
+}
+```
+
+Requirements are the union across matching rules, so adding a rule never drops a
+requirement. Severity is attributed per signal to the most specific rule
+requiring it: tool > annotation > named toolset > `"*"`.
+
+`policy explain --tool PowerShell` prints exactly which rules cover a tool and
+what they require, evaluating nothing — so a refusal in the field is
+attributable without re-running device probes.
+
+### Signal freshness
+
+Device probes are expensive: `dsregcmd`, WMI and `tpmtool` cost hundreds of
+milliseconds each, and a desktop session makes many small tool calls. Each signal
+carries a `ttl`; readings are cached and refreshed in the background by the
+in-flight monitor. `"ttl": "0s"` opts a signal into live evaluation on every
+request. The cache starts *unread* rather than passing, so the first calls of a
+session are never admitted without having looked at the device.
+
+### Always-on transparency
+
+The agent cannot switch any of this off, and none of it is conditional on
+containment — you always see that something fired, even when you chose not to act
+on it.
+
+- **Hash-chained audit log** — every decision, action and security event is an
+  append-only, tamper-evident entry committing to the previous entry's hash. Tool
+  calls record the tool name and an **argument digest**, never raw arguments.
+  Every policy verdict is recorded, including allows.
+- **On-screen security banner** — a security event raises a persistent red banner,
+  drawn on screen and captured by the session recording.
+- **Heartbeat** — periodic chained entries, so an external watcher or the
+  in-process watchdog detects a stall.
+- **Rug-pull detection** — the tool manifest, the prompt and resource manifests,
+  and the `server/discover` advertisement are all fingerprinted at startup. If any
+  mutates afterwards, the served response and the periodic monitor both catch it.
+
+### Kill switch — tiered, out-of-band
+
+A trip **always** raises the banner, seals the audit log, finalizes the recording
+and aborts the session, before any containment. Containment is opt-in and runs in
+a fixed order: isolate (firewall block-all; loopback stays exempt so the status
+endpoint survives), kill named processes, lock, shut down.
+
+Two things arm it, both in the policy document: a rule's `on_fail: "kill"`, and
+the `kill.triggers` block for the sources that have no rule severity of their own
+— posture drift, rug-pull, heartbeat gap, and the sentinel file.
 
 The agent-facing `Kill` tool is deliberately not an authoritative trigger. It
-always stops the session cleanly (audit, seal, finalize the recording, abort),
-but it only actuates the containment ladder when the master switch is armed — an
-agent can never escalate "stop this session" into network isolation or a
-shutdown on an operator who did not arm it.
+always stops the session cleanly, but actuates the containment ladder only when
+the policy configures containment — an agent can never escalate "stop this
+session" into network isolation on an operator who did not ask for it.
 
-**Privilege model — best-effort degrade.** The server runs in the (non-admin)
-user context. The elevation-only actions (isolate / kill-procs / shutdown) run
-only when the process is actually elevated; otherwise they are skipped and
-audited (`killaction.skip … not elevated`) while the banner, log-seal,
-recording-finalize, and abort still happen.
+**Privilege model — best-effort degrade.** The server runs in the non-admin user
+context. Elevation-only actions run only when the process is actually elevated;
+otherwise they are skipped and audited (`killaction.skip … not elevated`) while
+the banner, log seal, recording finalize and abort still happen.
+
+### Working with a policy
+
+```sh
+windows-mcp-server.exe policy validate --policy-config policy.json   # document + signal ids
+windows-mcp-server.exe policy check    --policy-config policy.json   # this device, right now
+windows-mcp-server.exe policy explain  --policy-config policy.json --tool PowerShell
+```
+
+`validate` reads no device state, reports every problem at once and exits 1, so it
+runs in CI. `check` reads every declared signal live and exits 2 when the device is
+not admitted, so health probes can gate on posture.
+
+Four starting points ship in `policy/examples/`: `audit.json` (adopt first —
+refuses nothing), `secure.json`, `enterprise.json` and `locked-down.json`.
 
 ### Threats this addresses
 
 - **Dynamic rug pulls** — tool-manifest fingerprint + `tools/list` interception +
   periodic recheck (silent `tools/list_changed` is suppressed).
-- **Indirect prompt injection / data-exfil loops** — the circuit breaker blocks the
-  call and, when the kill switch is armed, escalates to network isolation, cutting
-  the exfil channel, then aborts.
+- **Indirect prompt injection / data-exfil loops** — a rate limit refuses the call
+  and, at `on_exceed: "kill"`, escalates to network isolation, cutting the exfil
+  channel, then aborts.
+- **Posture drift mid-session** — every call is decided against signals that are
+  refreshed continuously, so a device that loses BitLocker or drops off MDM stops
+  being allowed to act within one TTL rather than at the next restart.
 - **Out-of-band control** — the status endpoint, audit log, heartbeat, monitor,
   and kill switch are not exposed as tools; the only agent-facing tools are the
   read-only `GuardrailStatus` and `Kill`, which stops the session but cannot
-  actuate containment unless the operator armed the switch.
+  actuate containment unless the policy configures it.
 
 ### Trust model — read this
 
-The local pre-flight/posture checks (`dsregcmd`, registry, WMI) are **auditable
-defense-in-depth, not a hard boundary** — a local admin can spoof those signals.
-The containment layers raise the cost of, and record, in-session compromise but
-do not replace the OS controls you already own — pair them with **WDAC/AppLocker**,
-Conditional Access, and **code signing**. The authoritative remote tier
-(Microsoft Graph device compliance, TPM attestation, external may-run PDP) is
-**parked** behind `--enable-tier2` for later re-integration.
+The local device signals (`dsregcmd`, registry, WMI) are **auditable
+defense-in-depth, not a hard boundary** — a local admin can spoof them. The
+containment layers raise the cost of, and record, in-session compromise but do not
+replace the OS controls you already own — pair them with **WDAC/AppLocker**,
+Conditional Access, and **code signing**. The authoritative remote signals
+(Microsoft Graph device compliance, external may-run PDP) register only when their
+credentials are present in the environment; TPM attestation (`tpm-attested`)
+requires elevation.
 
 ## Architecture
 
 ```
 cmd/windows-mcp-server   Cobra/Viper CLI (stdio transport)
-internal/guardrails      admission/runtime policy: decision doc, providers,
-                         run-context, circuit breaker, kill switch, status
+internal/guardrails      the policy engine: document schema, signal registry +
+                         TTL cache, rule matcher, enforcement middleware,
+                         audit chain, rug-pull detection, kill switch, status
+policy/examples          starting-point policy documents
 internal/winmcp          server bootstrap: inventory + MCP server + deps middleware
 internal/desktop         the Windows engine — a dedicated COM STA thread serving
                          UIA traversal, SendInput, GDI screenshots, overlays,

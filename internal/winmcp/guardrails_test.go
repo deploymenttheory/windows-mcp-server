@@ -9,60 +9,39 @@ import (
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
 )
 
-func TestEffectiveModeEnforceImpliedByPreflight(t *testing.T) {
-	if m := effectiveMode(Config{}); m != guardrails.ModeOff {
-		t.Errorf("bare config → off, got %s", m)
-	}
-	if m := effectiveMode(Config{Security: true}); m != guardrails.ModeEnforce {
-		t.Errorf("--security → enforce, got %s", m)
-	}
-	if m := effectiveMode(Config{WithMDM: true}); m != guardrails.ModeEnforce {
-		t.Errorf("a pre-flight check → enforce, got %s", m)
-	}
-	if m := effectiveMode(Config{IsNotAdmin: true}); m != guardrails.ModeEnforce {
-		t.Errorf("is-not-admin → enforce, got %s", m)
-	}
-	// Explicit audit is respected (not downgraded).
-	if m := effectiveMode(Config{Guardrails: "audit"}); m != guardrails.ModeAudit {
-		t.Errorf("explicit audit respected, got %s", m)
-	}
-}
-
-func TestPreflightExtrasMapping(t *testing.T) {
-	got := preflightExtras(Config{
-		WithMDM:             true,
-		WithUserContext:     true,
-		IsNotAdmin:          true,
-		WithLoggedOnAccount: `^svc-\d+$`,
-		Guardrail:           []string{"secure-boot"},
-	})
-	joined := strings.Join(got, ",")
-	for _, want := range []string{"secure-boot", "mdm-enrolled", "run-context", "not-admin", `logged-on-account=^svc-\d+$`} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("preflightExtras missing %q (have %s)", want, joined)
-		}
-	}
-}
-
-// TestEnforceHTTPSResolution pins the toggle's resolution, including that the
-// --security master switch force-enables it the same way it force-enables the
-// transparency services.
+// TestEnforceHTTPSResolution pins that the setting comes from Config, which
+// RunStdio populates from the policy document. It is on Config rather than read
+// from the policy at each call site because it has to reach the tool
+// dependencies and the guardrail Env, neither of which carries a policy.
 func TestEnforceHTTPSResolution(t *testing.T) {
-	for name, tc := range map[string]struct {
-		cfg  Config
-		want bool
-	}{
-		"off by default":            {Config{}, false},
-		"explicit flag":             {Config{EnforceHTTPS: true}, true},
-		"forced by --security":      {Config{Security: true}, true},
-		"both":                      {Config{EnforceHTTPS: true, Security: true}, true},
-		"unrelated flag leaves off": {Config{CircuitBreaker: true}, false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := enforceHTTPS(tc.cfg); got != tc.want {
-				t.Errorf("enforceHTTPS = %t, want %t", got, tc.want)
-			}
-		})
+	if enforceHTTPS(Config{}) {
+		t.Error("enforceHTTPS must default off")
+	}
+	if !enforceHTTPS(Config{EnforceHTTPS: true}) {
+		t.Error("enforceHTTPS must follow the policy-derived setting")
+	}
+}
+
+// TestKillPolicyConfigMapsContainment checks the policy's containment actions
+// reach the executor, and that a policy configuring none produces none.
+func TestKillPolicyConfigMapsContainment(t *testing.T) {
+	none := killPolicyConfig(&guardrails.Policy{})
+	if none.Isolate || none.Lock || none.Shutdown || none.KillProcs {
+		t.Errorf("a policy with no actions must contain nothing, got %+v", none)
+	}
+
+	full := killPolicyConfig(&guardrails.Policy{Kill: guardrails.KillPolicy{
+		Actions: guardrails.KillActions{
+			Isolate:   true,
+			Lock:      true,
+			KillProcs: []string{"evil.exe"},
+		},
+	}})
+	if !full.Isolate || !full.Lock || !full.KillProcs || full.Shutdown {
+		t.Errorf("containment actions did not map through: %+v", full)
+	}
+	if len(full.ProcNames) != 1 || full.ProcNames[0] != "evil.exe" {
+		t.Errorf("process names did not map through: %+v", full.ProcNames)
 	}
 }
 
@@ -74,13 +53,6 @@ func TestGuardrailEnvCarriesEnforceHTTPS(t *testing.T) {
 	}
 	if env := guardrailEnv(Config{}, nil, nil); env.EnforceHTTPS {
 		t.Error("guardrailEnv must not set EnforceHTTPS when off")
-	}
-}
-
-func TestKillActionConfigDefaultIsolate(t *testing.T) {
-	kc := killActionConfig(Config{KillActionIsolate: true})
-	if !kc.Isolate || kc.Shutdown || kc.KillProcs || kc.Lock {
-		t.Errorf("default kill action should be isolate-only, got %+v", kc)
 	}
 }
 

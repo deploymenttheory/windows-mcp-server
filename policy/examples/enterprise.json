@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "mode": "enforce",
+  "signals": {
+    "run-context": { "ttl": "0s" },
+    "mdm-enrolled": { "ttl": "5m" },
+    "entra-joined": { "ttl": "5m" },
+    "os-enterprise-sku": { "ttl": "30m" },
+    "not-admin": { "ttl": "5m" },
+    "secure-boot": { "ttl": "5m" },
+    "bitlocker": { "ttl": "60s" },
+    "vbs": { "ttl": "5m" },
+    "hvci": { "ttl": "5m" },
+    "credential-guard": { "ttl": "5m" }
+  },
+  "rules": [
+    {
+      "name": "startup-admission",
+      "match": { "scope": "startup" },
+      "require": ["run-context", "mdm-enrolled", "entra-joined", "os-enterprise-sku"],
+      "on_fail": "deny"
+    },
+    {
+      "name": "managed-device",
+      "match": { "toolset": "*" },
+      "require": ["run-context", "mdm-enrolled", "entra-joined"],
+      "on_fail": "deny"
+    },
+    {
+      "name": "hardware-posture-for-destructive-tools",
+      "match": { "annotation": "destructive" },
+      "require": ["secure-boot", "bitlocker", "vbs", "hvci"],
+      "on_fail": "deny"
+    },
+    {
+      "name": "credential-guard-for-shell",
+      "match": { "toolset": "shell" },
+      "require": ["credential-guard"],
+      "on_fail": "deny"
+    },
+    {
+      "name": "least-privilege",
+      "match": { "toolset": "*" },
+      "require": ["not-admin"],
+      "on_fail": "warn"
+    }
+  ],
+  "rate_limits": [
+    {
+      "name": "destructive-burst",
+      "match": { "annotation": "destructive" },
+      "window": "10s",
+      "max": 3,
+      "on_exceed": "deny"
+    }
+  ],
+  "kill": {
+    "triggers": {
+      "posture_drift": true,
+      "rugpull": true,
+      "heartbeat_gap": true,
+      "sentinel": true
+    },
+    "actions": {
+      "isolate": true,
+      "lock": false,
+      "shutdown": false
+    }
+  },
+  "transparency": {
+    "audit_sink": "stderr",
+    "heartbeat": "30s",
+    "banner": true
+  },
+  "inflight": {
+    "interval": "60s"
+  },
+  "enforce_https": true
+}

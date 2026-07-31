@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "mode": "enforce",
+  "signals": {
+    "run-context": { "ttl": "0s" },
+    "not-admin": { "ttl": "0s" },
+    "mdm-enrolled": { "ttl": "60s" },
+    "entra-joined": { "ttl": "60s" },
+    "device-allowlist": { "ttl": "60s", "arg": "C:\\ProgramData\\windows-mcp\\allowed-devices.txt" },
+    "secure-boot": { "ttl": "60s" },
+    "bitlocker": { "ttl": "30s" },
+    "vbs": { "ttl": "60s" },
+    "hvci": { "ttl": "60s" },
+    "tpm-attested": { "ttl": "5m" }
+  },
+  "rules": [
+    {
+      "name": "startup-admission",
+      "match": { "scope": "startup" },
+      "require": ["run-context", "device-allowlist", "mdm-enrolled", "tpm-attested"],
+      "on_fail": "deny"
+    },
+    {
+      "name": "device-must-stay-in-bounds",
+      "match": { "toolset": "*" },
+      "require": ["device-allowlist", "mdm-enrolled", "entra-joined"],
+      "on_fail": "kill"
+    },
+    {
+      "name": "baseline-posture",
+      "match": { "toolset": "*" },
+      "require": ["run-context", "not-admin", "secure-boot", "bitlocker", "vbs", "hvci"],
+      "on_fail": "deny"
+    },
+    {
+      "name": "attested-hardware-for-destructive-tools",
+      "match": { "annotation": "destructive" },
+      "require": ["tpm-attested"],
+      "on_fail": "deny"
+    }
+  ],
+  "rate_limits": [
+    {
+      "name": "destructive-burst",
+      "match": { "annotation": "destructive" },
+      "window": "10s",
+      "max": 2,
+      "on_exceed": "kill"
+    }
+  ],
+  "kill": {
+    "triggers": {
+      "posture_drift": true,
+      "rugpull": true,
+      "heartbeat_gap": true,
+      "sentinel": true
+    },
+    "actions": {
+      "isolate": true,
+      "lock": true,
+      "shutdown": false
+    }
+  },
+  "transparency": {
+    "audit_sink": "C:\\ProgramData\\windows-mcp\\audit.jsonl",
+    "heartbeat": "15s",
+    "recording_dir": "C:\\ProgramData\\windows-mcp\\recordings",
+    "banner": true
+  },
+  "inflight": {
+    "interval": "30s",
+    "control_dir": "C:\\ProgramData\\windows-mcp\\control"
+  },
+  "enforce_https": true
+}

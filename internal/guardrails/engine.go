@@ -155,6 +155,14 @@ func (e *Engine) Signals() []Result { return e.cache.Snapshot() }
 // Refresh re-evaluates expired signals. Register it as a monitor VerifyFunc.
 func (e *Engine) Refresh(ctx context.Context) error { return e.cache.Refresh(ctx, e.args) }
 
+// ReadAll evaluates every declared signal now, bypassing the cache. It backs the
+// operator-facing `policy check`, which exists to report the device as it is
+// rather than as it was last read.
+func (e *Engine) ReadAll(ctx context.Context) []Result { return e.cache.ReadAll(ctx, e.args) }
+
+// Rules returns the policy's rules, for explain output.
+func (e *Engine) Rules() []Rule { return e.policy.Rules }
+
 // SubjectForTool builds a call subject from a tool name, resolving its facts
 // through the index.
 //
