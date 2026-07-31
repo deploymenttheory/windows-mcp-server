@@ -1,197 +1,180 @@
 # Security Architecture
 
 `windows-mcp-server` hands a non-deterministic LLM real control over a Windows
-desktop — UI automation, PowerShell, the registry, processes, the filesystem.
-For managed use it therefore **gates and contains itself**. The security model
-is organized into **four layers** plus an out-of-band **kill switch**, all
-enforced on the server's *receiving* path so the agent cannot bypass or disable
-them.
+desktop — UI automation, PowerShell, the registry, processes, the filesystem. For
+managed use it therefore **gates and contains itself**.
 
-Turn the whole model on with `--security`; then opt into specific checks, kill
-triggers, and kill actions. `--security` forces `enforce` mode and force-enables
-every transparency service.
+A **policy engine** sits between the MCP caller and the tools. Before a tool runs,
+a resource is read or a prompt is fetched, it evaluates live device signals
+against rules in a policy document and decides what happens. It runs on the
+server's *receiving* path, innermost in the middleware chain, so the agent can
+neither bypass nor disable it.
 
-> **Scope.** This document describes the design. For the flag reference and a
-> quick start, see the [Security section of the README](../README.md#security--four-layers).
-> The local checks are **auditable defense-in-depth, not a hard boundary** — see
+```sh
+windows-mcp-server stdio --policy-config C:\ProgramData\windows-mcp\policy.json
+```
+
+With no document the built-in default applies: the engine is present, every
+declared signal is evaluated and every verdict recorded, and nothing is refused.
+
+> **Scope.** This document describes the design. For the document schema, the
+> signal catalogue and the flag migration table, see
+> [docs/policy-config.md](policy-config.md); for a quick start, the
+> [Security section of the README](../README.md#security--the-policy-engine).
+> The local signals are **auditable defense-in-depth, not a hard boundary** — see
 > [Trust model](#trust-model).
 
 ---
 
-## The four layers at a glance
+## The decision path
 
 ```mermaid
 flowchart TB
     Client["MCP Client / LLM"]
 
-    subgraph L1["Layer 1 — Pre-flight (once, at startup)"]
+    subgraph CHAIN["Receiving middleware (agent cannot bypass)"]
         direction TB
-        PF["Runner.Evaluate → Decision document<br/>with-mdm · with-user-context<br/>is-not-admin · logged-on-account · run-context"]
-        GATE{"admit?"}
-        PF --> GATE
+        DEPS["inject deps · cache hints"]
+        AUD["audit — hash-chained record of every call"]
+        RUG["rug-pull — manifest + discover fingerprints"]
+        ENG["policy engine"]
     end
 
-    subgraph L3["Layer 3 — Guardrails (every tool call, receiving path)"]
+    subgraph EVAL["Engine (internal/guardrails)"]
         direction TB
-        MW["Middleware chain:<br/>inject-deps → audit → rug-pull → circuit-breaker"]
+        SUBJ["subject: tool / resource / prompt<br/>facts: toolset · read-only · destructive · open-world"]
+        MATCH["match rules → union requirements<br/>severity per signal from the most specific rule"]
+        CACHE[("signal cache<br/>per-signal TTL")]
+        VERDICT{"verdict"}
     end
 
-    subgraph L2["Layer 2 — In-flight polling (every tick)"]
-        direction TB
-        MON["Monitor loop:<br/>posture re-eval · sentinel file<br/>+ force-on verifiers (heartbeat, rug-pull recheck)"]
-    end
+    Tool["tool handler"]
+    KILL["kill switch → containment ladder"]
 
-    subgraph L4["Layer 4 — Transparency / always-on (agent cannot disable)"]
-        direction TB
-        AUD["Hash-chained audit log"]
-        HB["Heartbeat"]
-        RP["Rug-pull detector"]
-        BAN["On-screen security banner"]
-    end
-
-    KILL(["Kill switch<br/>(out-of-band)"])
-    STATUS["Status surface<br/>GuardrailStatus tool · loopback HTTP"]
-
-    Client -->|"initialize"| GATE
-    GATE -->|"deny → banner + exit≠0"| STOP["Refuse to start"]
-    GATE -->|"admit"| L3
-    Client -->|"tools/call · tools/list"| MW
-    MW --> Handler["Tool handler"]
-
-    MW -. "tripwire / rate / rug-pull" .-> KILL
-    MON -. "posture drift / sentinel / heartbeat gap" .-> KILL
-    Client -. "Kill tool" .-> KILL
-    STATUS -. "POST /revoke" .-> KILL
-
-    L3 --> AUD
-    MON --> HB
-    MON --> RP
-    KILL --> BAN
-    AUD --> STATUS
-    HB --> STATUS
-    RP --> STATUS
-
-    classDef kill fill:#7a1f1f,stroke:#e33,color:#fff;
-    class KILL,BAN kill;
+    Client --> DEPS --> AUD --> RUG --> ENG
+    ENG --> SUBJ --> MATCH --> CACHE --> VERDICT
+    VERDICT -->|allow| Tool
+    VERDICT -->|warn| Tool
+    VERDICT -->|deny| Client
+    VERDICT -->|kill| KILL
 ```
 
-**Policy-decision / policy-enforcement split (PDP/PEP).** A `Runner` (the PDP)
-evaluates pluggable checks into a single **decision document**. Enforcement
-points (the PEPs) act on it: the startup gate (Layer 1), the tool-call
-middleware (Layer 3), and the periodic monitor (Layer 2).
+Every verdict is written to the audit chain first — including allows, and
+including in audit mode — so the record exists before anything acts on it.
 
 ---
 
-## Layer 1 — Pre-flight (startup admission)
+## Verdicts
 
-Pre-flight checks are evaluated **once**, before the MCP server serves anything.
-A failure in `enforce` mode refuses to start (exit ≠ 0) — the LLM never gets a
-usable server. Any pre-flight flag implies `enforce`.
+A rule states what happens when a signal it requires fails. The verdict for a
+request is the **highest** severity among its failures, then capped by the
+policy's mode.
 
-| Check | Flag | Passes when |
+| `on_fail` | | Effect |
 |---|---|---|
-| MDM enrolled | `--with-mdm` | `dsregcmd` reports an `MdmUrl` |
-| Interactive user | `--with-user-context` | not SYSTEM and not Session 0 |
-| Not a local admin | `--is-not-admin` | `IsUserAnAdmin()` is false |
-| Logged-on account | `--with-logged-on-account=<regex>` | the interactive user matches the regex |
-| Extra posture | `--guardrail <id[=arg]>` | e.g. `secure-boot`, `bitlocker`, `vbs`, `device-allowlist=<path>` |
+| `allow` | green | Proceeds. The failure is still recorded. |
+| `warn` | amber | Proceeds, and the warning is attached to the result, so the model sees it and not only the operator. |
+| `deny` | red | This call is refused. Nothing latches — the next call is evaluated afresh, so a signal that recovers restores service without a restart. |
+| `kill` | out of bounds | The kill switch trips and the containment ladder runs. |
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Op as Operator
-    participant Srv as RunStdio
-    participant Reg as Registry + Runner (PDP)
-    participant Dev as Device (dsregcmd / token / WMI)
-    participant Aud as Audit log
-    participant Dsk as Desktop (banner)
+`mode: "audit"` caps severity at `warn`. It **caps rather than skips**: signals
+are still read and every verdict is still recorded, including the `intended`
+severity enforcing would have applied. That record is the whole value of audit
+mode — it is how an operator sees what a policy would refuse before switching it
+on. It is also the shipped default, so adopting the engine cannot break a working
+deployment before its policy is written.
 
-    Op->>Srv: start --security --with-mdm --is-not-admin ...
-    Srv->>Aud: append "server.start" (genesis)
-    Srv->>Reg: Evaluate(env)
-    Reg->>Dev: read live posture (JIT, no cache)
-    Dev-->>Reg: facts
-    Reg-->>Srv: Decision {results, admit, reasons}
-    Srv->>Aud: append "preflight.decision"
-    alt admit == false (enforce)
-        Srv->>Aud: append "preflight.deny" + Flush (seal)
-        Srv->>Dsk: ShowSecurityBanner("STARTUP BLOCKED")
-        Srv-->>Op: exit ≠ 0 (LLM gets no server)
-    else admit == true
-        Srv->>Srv: build inventory, register tools, serve
-    end
-```
-
-`windows-mcp-server check` runs exactly this evaluation once and prints the
-decision document (exit 2 if not admitted) — a posture dry-run for operators and
-CI.
+A refusal takes the shape the method requires. `tools/call` gets an `IsError`
+result with a nil Go error, so the model can read the reason and adapt.
+`resources/read` and `prompts/get` have no `IsError` envelope — their results are
+`ReadResourceResult` and `GetPromptResult` — so a refusal there is a JSON-RPC
+error. Answering either with a `CallToolResult` would put the wrong shape on the
+wire.
 
 ---
 
-## Layer 2 — In-flight polling
+## Rules
 
-Continuous verification: on every tick the monitor re-evaluates device posture,
-watches a `kill` sentinel file, and runs the **force-on verifiers** (heartbeat +
-rug-pull recheck). None of it is exposed as an agent-controllable tool; the
-interval only tunes cadence (5 s floor).
+Rules match on what a call can actually do, so posture requirements scale with
+risk rather than applying uniformly:
 
-Each detection routes to its **own gated trip function** (see
-[Arming](#arming--a-two-step-gate)), so the four triggers arm independently. The
-loop continues unless the trip was real — a report-only trip must not end
-monitoring.
+- `tool` — by name.
+- `toolset` — by id; `"*"` matches every tool.
+- `annotation` — `read-only`, `destructive`, `open-world`, from the tool's MCP
+  annotations.
+- `scope` — `call` (default) or `startup`.
 
-```mermaid
-flowchart LR
-    T(["tick — every inflight-interval / 5s floor"]) --> S{"sentinel<br/>kill file?"}
-    S -- "yes (once)" --> K["gated trip<br/>(contain, or audit-only)"]
-    S -- no --> V["run force-on verifiers"]
-    V --> HB["heartbeat.Beat → audit chain"]
-    V --> RP["rug-pull recheck"]
-    V --> P{"posture<br/>re-eval admit?"}
-    HB -->|error| K
-    RP -->|drift| K
-    P -- "no (drift)" --> K
-    P -- yes --> T
-    K --> Q{"Stopped()?"}
-    Q -- "no (report-only)" --> T
-    Q -- yes --> X(["exit loop"])
+Selectors within one match are ANDed; values within a selector are ORed.
 
-    classDef kill fill:#7a1f1f,stroke:#e33,color:#fff;
-    class K kill;
+**Requirements are the union** across every matching rule, so adding a rule can
+never drop a requirement another imposed. **Severity is attributed per signal** to
+the most specific rule that requires it:
+
 ```
+tool  >  annotation  >  named toolset  >  toolset "*"
+```
+
+Ties break by document order, last wins. `policy explain --tool <name>` prints
+exactly this attribution, evaluating nothing — so a refusal in the field is
+attributable without re-running device probes, and from a different machine.
+
+`resources/read` and `prompts/get` are decided as read-only subjects with no
+toolset. A resource exposing the same desktop state as a tool must not be a way
+around the rule covering that tool.
 
 ---
 
-## Layer 3 — Guardrails (inline tool-call policy)
+## Startup admission
 
-Every `tools/call` and `tools/list` passes through receiving middleware, applied
-outermost-first. Because it runs on the server's receiving path, the agent
-cannot remove it.
+Rules scoped `startup` are evaluated once, before any tool surface is assembled.
+A refused device never gets as far as registering tools or provisioning
+credentials.
 
 ```mermaid
 flowchart LR
-    Req["tools/call"] --> D["inject-deps"]
-    D --> A["audit<br/>(name + args digest)"]
-    A --> R["rug-pull<br/>(tools/list only)"]
-    R --> C{"circuit breaker<br/>tripwire? rate?"}
-    C -- "clean" --> H["tool handler"]
-    C -- "tripwire / N-in-window" --> B["block (isError)"]
-    C -. "OnTrip" .-> K(["Kill switch"])
-
-    classDef kill fill:#7a1f1f,stroke:#e33,color:#fff;
-    class K kill;
+    START["process start"] --> POL["load + validate policy"]
+    POL -->|invalid| FAIL["refuse to start"]
+    POL --> SIG["evaluate startup-scoped rules"]
+    SIG --> Q{"verdict"}
+    Q -->|deny/kill| BLOCK["banner · audit · seal · exit ≠ 0"]
+    Q -->|allow| SERVE["build inventory · serve"]
 ```
 
-The circuit breaker (`--circuit-breaker`, auto-on in `enforce`) rate-limits
-sensitive tools (PowerShell/Registry/Process/Service/FileSystem/App) over a
-sliding window and trips immediately on **destructive tripwires** — attempts to
-disable Defender, the firewall, or BitLocker, or to clear MDM enrollment.
+A named policy that fails to load is fatal. Falling back to the default would
+silently run a device under weaker policy than its operator wrote.
 
 ---
 
-## Layer 4 — Transparency / always-on
+## Signal freshness
 
-These services are force-on under `--security` and are **never exposed as
+Device probes are expensive: `dsregcmd`, WMI and `tpmtool` cost hundreds of
+milliseconds each, and a desktop-automation session makes many small tool calls.
+Evaluating every signal per request would dominate the session.
+
+Each signal carries a `ttl`. Readings are cached, and the in-flight monitor
+refreshes expired ones in the background so staleness is bounded by
+`inflight.interval` as well as by the TTL itself. `"ttl": "0s"` opts a signal into
+live evaluation on every request — correct for cheap in-process signals such as
+`run-context`, expensive on anything backed by a shell or WMI.
+
+Two properties matter:
+
+- **The cache starts unread, not passing.** A cache that began life holding a pass
+  would admit the first calls of a session without having looked at the device.
+- **A failing signal is not a monitor error.** `signalCache.Refresh` runs as a
+  monitor `VerifyFunc`, and a `VerifyFunc` returning an error fires that check's
+  kill trigger. Reporting a failing signal that way would escalate every failure
+  to containment regardless of the severity its policy assigned.
+
+Posture drift falls out of the same mechanism: a signal that flips to failing is
+picked up by whichever rules require it, on the next call and by the monitor's
+own re-evaluation of the startup rules.
+
+---
+
+## Always-on transparency
+
+These services are configured by the policy's `transparency` block and are **never exposed as
 tools**, so a "bout of madness" cannot switch them off.
 
 ### Hash-chained audit log
@@ -212,12 +195,12 @@ flowchart LR
     note["entry_hash = SHA-256( seq · ts · event · payload · prev_hash )"]
 ```
 
-`--with-logging` selects the sink: empty/`stderr` → JSON lines on stderr; a path
+`transparency.audit_sink` selects the sink: empty/`stderr` → JSON lines on stderr; a path
 → append-only JSONL, fsync-ed on flush (so the chain survives an abrupt kill).
 
 ### Heartbeat
 
-Periodic chained entries (`--heartbeat-interval`) prove liveness. An external
+Periodic chained entries (`transparency.heartbeat`) prove liveness. An external
 watcher polling the status snapshot, or an in-process watchdog independent of the
 monitor loop, detects a gap and can trigger a kill.
 
@@ -274,25 +257,30 @@ session recording**, so the event is on the video timeline.
 
 Triggers are configured **separately** from actions.
 
-### Arming — a two-step gate
+### Arming
 
-`--with-kill-switch` is the master gate (default **off**). Each trigger
-additionally honours its own flag — `--kill-on-posture-drift`,
-`--kill-on-circuit-trip`, `--kill-on-rugpull`, `--kill-on-heartbeat-gap` — all of
-which default on, so arming the master enables the full set. The sentinel file
-and `POST /revoke` are gated on the master switch alone.
+Two things arm the switch, both stated in the policy document.
 
-**Detection is never gated.** A trigger that fires while disarmed is still
-detected, logged at Warn, and written to the audit chain as `killswitch.disarmed`
-with the trigger and reason. Layer 4 transparency does not depend on Layer 4
+**A rule's `on_fail: "kill"`** (or a rate limit's `on_exceed: "kill"`). Writing
+that *is* the operator arming containment for that case, so it needs no second
+switch. Requiring one elsewhere in the file would mean a policy that reads as
+arming the kill switch quietly does not. `mode: "audit"` still caps it to a
+warning, so the default can never reach here.
+
+**The `kill.triggers` block**, for the sources that have no rule severity of their
+own — `posture_drift`, `rugpull`, `heartbeat_gap`, `sentinel`. Each defaults off.
+
+**Detection is never gated.** A trigger that fires while its switch is off is
+still detected, logged at Warn, and written to the audit chain as
+`killswitch.disarmed` with the trigger and reason. Transparency does not depend on
 containment: the operator always sees that something fired, even when they chose
 not to act on it. Critically, a report-only trip does **not** end the in-flight
-monitor loop — disarming one trigger must not silently disable all subsequent
+monitor loop — disabling one trigger must not silently disable all subsequent
 monitoring (`MonitorConfig.Stopped` gates loop exit, and only a real trip sets it).
 
 ```mermaid
 flowchart LR
-    T["trigger fires"] --> G{"--with-kill-switch<br/>AND --kill-on-&lt;trigger&gt;?"}
+    T["trigger fires"] --> G{"armed?<br/>rule on_fail: kill<br/>or kill.triggers.&lt;trigger&gt;"}
     G -- no --> R["audit: killswitch.disarmed<br/>+ log Warn<br/>keep serving, keep monitoring"]
     G -- yes --> OT2["KillExecutor.OnTrip"]
     classDef always fill:#1f4d7a,stroke:#4af,color:#fff;
@@ -417,8 +405,8 @@ The load-bearing properties:
 | Secrets never reach argv | Supply is file-only; argv is readable by any process on the machine. |
 | A disclosed file fails closed | The real DACL is read (`GetNamedSecurityInfo` + ACE walk). Go's Unix mode bits are ignored — Windows synthesizes `0666`, so a mode check proves nothing. |
 | No residue after a session | `CRED_PERSIST_SESSION` plus explicit `CredDelete` on normal exit *and* on kill-switch trip, via one `sync.Once`-guarded cleanup. Durable persistence is rejected, not silently overridden. |
-| A blocked startup provisions nothing | Installation happens after the Layer 1 admission gate; a partial install is rolled back. |
-| Injection is rate-limited | `Credentials` is in `sensitiveTools`, so the Layer 3 circuit breaker counts it. |
+| A blocked startup provisions nothing | Installation happens after startup admission; a partial install is rolled back. |
+| Injection is rate-limited | `Credentials` is annotated destructive, so any rate limit matching that annotation covers it. |
 
 **Residual risk, stated plainly.** The plaintext exists in process memory between
 reading the file and calling `CredWrite`. Buffers are zeroed and the JSON decoder
@@ -440,7 +428,7 @@ defence against a compromised host.
 | **Silent posture drift** (Secure Boot off, BitLocker suspended, MDM removed mid-session) | In-flight monitor re-evaluates live posture every interval → audited always, kill on drift when armed |
 | **Log tampering / gaps** | Hash-chained append-only audit + heartbeat; `VerifyChain` detects any break |
 | **Credential disclosure to the model** | The `Credentials` tool has no read mode and no engine function returns a secret; `inject` types it and returns only a character count. Secrets never reach argv, tool results, or the audit chain |
-| **Data exposure over plaintext HTTP** | `--enforce-https` (forced on by `--security`) refuses `http://` for `Scrape`, for a URL-shaped `App` launch that would open the browser, and for the may-run endpoint. Scheme matching is case-insensitive. Does **not** intercept navigation inside an already-open browser — that needs a device proxy |
+| **Data exposure over plaintext HTTP** | `"enforce_https": true` refuses `http://` for `Scrape`, for a URL-shaped `App` launch that would open the browser, and for the may-run endpoint. Scheme matching is case-insensitive. Does **not** intercept navigation inside an already-open browser — that needs a device proxy |
 
 ---
 
@@ -453,10 +441,16 @@ breaker, kill switch, isolation) raise the cost of, and record, in-session
 compromise, but they do **not** replace the OS controls you already own. Pair
 this with **WDAC / AppLocker**, Conditional Access, and **code signing**.
 
-The authoritative remote tier — Microsoft Graph device compliance (Entra +
-Intune), TPM-backed attestation, and an external may-run PDP — is **parked**
-behind `--enable-tier2` for later re-integration; the four-layer core never
-enables it.
+The authoritative remote signals — Microsoft Graph device compliance (Entra +
+Intune) and an external may-run PDP — register only when their credentials are
+present in the environment (`WINDOWS_MCP_GRAPH_*`, `WINDOWS_MCP_REMOTE_POLICY_TOKEN`).
+They are read from the environment rather than from flags or the policy document
+because they are secrets: argv is world-readable and a policy is meant to be
+reviewable and checked in. TPM-backed attestation (`tpm-attested`) is local but
+requires elevation.
+
+Registering a signal only makes it available for a policy to declare — nothing is
+evaluated unless a policy asks for it.
 
 ---
 
@@ -468,12 +462,17 @@ enables it.
 | Credentials init loading + lifecycle | `internal/winmcp/credentials.go` |
 | Credentials-file DACL check | `internal/winmcp/credfileacl_windows.go` |
 | Credentials tool (list/verify/inject) | `pkg/windows/credentials.go` |
-| PDP: runner, registry, decision, checks | `internal/guardrails/{runner,registry,decision,guardrail,providers,health}.go` |
-| Pre-flight providers (`not-admin`, `logged-on-account`) | `internal/guardrails/providers.go` |
+| Policy document: schema, loader, validation, embedded default | `internal/guardrails/policyconfig.go`, `policy_default.json` |
+| Signal cache (per-signal TTL, background refresh) | `internal/guardrails/signalcache.go` |
+| Rule matcher, verdict, rate limits, `Explain` | `internal/guardrails/engine.go` |
+| Enforcement middleware (the decision point) | `internal/guardrails/enforce.go` |
+| Signal registry + the signals themselves | `internal/guardrails/{registry,guardrail,providers,health,graph,remote}.go` |
+| Tool index adapter (toolset + annotations) | `internal/winmcp/guardrails.go` (`newToolIndex`) |
+| Operator commands (`policy validate/check/explain`) | `internal/winmcp/policyops.go` |
+| Example policies | `policy/examples/*.json` |
 | Audit log (hash chain, sink, middleware) | `internal/guardrails/audit.go` |
 | Heartbeat + watchdog | `internal/guardrails/heartbeat.go` |
 | Rug-pull detector | `internal/guardrails/rugpull.go` |
-| Circuit breaker (inline policy) | `internal/guardrails/policy.go` |
 | Enforce HTTPS (URL scheme policy) | `pkg/windows/urlpolicy.go`, `internal/guardrails/remote.go` |
 | Capability pinning (suppresses listChanged) | `internal/winmcp/guardrails.go` (`pinnedCapabilities`) |
 | In-flight monitor | `internal/guardrails/monitor.go` |

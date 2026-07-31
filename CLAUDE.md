@@ -20,7 +20,8 @@ built on `deploymenttheory/go-bindings-win32`, `go-bindings-wmi`, and the offici
 | `internal/desktop` | the Win32/UIA/WMI engine — one COM STA thread |
 | `pkg/windows` | tool definitions (one file per topic) + toolset/persona metadata |
 | `pkg/inventory` | domain-agnostic toolset filter/registration engine (mirrors `github-mcp-server`) |
-| `internal/guardrails` | the four-layer security core |
+| `internal/guardrails` | the device-policy engine + audit/rug-pull/kill-switch core |
+| `policy/examples` | starting-point policy documents (validated by the test suite) |
 | `internal/mcpspec` | vendored-schema loader + offline wire validation (platform-agnostic; no build tag) |
 | `internal/mcpconf` | official conformance-suite results: ingest + reporting (no build tag) |
 | `schema/` | vendored MCP protocol schemas + `versions.json` |
@@ -134,8 +135,9 @@ Checklist:
    tripwire, not an annoyance.
 7. Extend `TestReadOnlyToolsAreSafe` / `TestDestructiveToolsAreWrite` if it
    belongs in either list.
-8. If the tool is state-changing, consider adding its name to `sensitiveTools`
-   (`internal/guardrails/policy.go:37`) so the circuit breaker counts it.
+8. Set `DestructiveHint` honestly. Policy rules match on it, so it is what decides
+   whether a tool is covered by a rule requiring hardware posture, or by a rate
+   limit. It is load-bearing metadata now, not documentation.
 
 ### The `IsError` convention — read this before returning an error
 
@@ -163,28 +165,62 @@ means adding tools. `pkg/inventory` also supports resources and prompts and an
 
 ## The security subsystem
 
-Four layers plus an out-of-band kill switch; see `docs/security-architecture.md`
-for the full design and diagrams. Two invariants that are easy to break:
+A policy engine on the request path, plus an out-of-band kill switch. See
+`docs/security-architecture.md` for the design and `docs/policy-config.md` for the
+document schema.
 
-- **Transparency is never conditional on containment.** A kill trigger that fires
-  while disarmed must still be detected, logged, and appended to the audit chain
-  (`killswitch.disarmed`). `tripFunc` (`internal/winmcp/guardrails.go`) is the
-  single gate: `--with-kill-switch` is the master, each trigger also honours its
-  own `--kill-on-*` flag.
+The engine is four files in `internal/guardrails`: `policyconfig.go` (schema,
+loader, validation, embedded default), `signalcache.go` (per-signal TTL),
+`engine.go` (rule matching and verdict), `enforce.go` (the middleware).
+Everything is configured by a JSON document — `--policy-config` is the only
+security flag.
+
+### Invariants that are easy to break
+
+- **The default must never refuse.** `policy_default.json` applies whenever no
+  document is given, so an enforcing default would start denying calls on devices
+  that worked the day before. `TestDefaultPolicyIsAuditOnly` pins it, and
+  `mode: audit` *caps* severity rather than skipping evaluation — the recorded
+  `intended` verdict is what makes audit mode worth running.
+- **Transparency is never conditional on containment.** Every verdict is audited,
+  including allows and including in audit mode, and the `policy.decision` entry is
+  written *before* any trip. A trigger that fires while its policy switch is off
+  is still detected, logged and chained (`killswitch.disarmed` via `tripFunc`).
 - **A report-only trip must not end the in-flight monitor.** `MonitorConfig.Stopped`
   gates loop exit and only a real trip sets it. Returning unconditionally after a
-  trip would make disarming one trigger silently disable all monitoring.
+  trip would make disabling one trigger silently disable all monitoring.
+- **The kill ladder's ordering is deliberate** (`killaction.go`): audit, banner and
+  **seal** happen before any containment, and the recording is finalized before
+  shutdown, or the forensic trail is lost. Don't reorder it.
+- **`on_fail: kill` needs no second switch.** A rule saying it *is* the operator
+  arming containment, in the same document. `kill.triggers` covers only the
+  sources with no severity of their own — posture drift, rug-pull, heartbeat gap,
+  sentinel. Don't add rule-derived kills to that block.
+- **The agent-facing `Kill` tool is not an authoritative trigger.** It routes to
+  `StopGracefully` unless the policy configures containment actions.
+- **Refuse in the shape the method requires.** `deny` on `tools/call` is an
+  `IsError` result with a nil Go error; on `resources/read` and `prompts/get` it is
+  a JSON-RPC error, because those have no `IsError` envelope. `Engine.refuse`
+  handles both — don't collapse them.
 
-Also: the kill ladder's ordering in `killaction.go:92-159` is deliberate — audit,
-banner, and **seal** happen before any containment, and the recording is finalized
-before shutdown, or the forensic trail is lost. Don't reorder it. The agent-facing
-`Kill` tool is intentionally *not* an authoritative trigger; it routes to
-`StopGracefully` unless the operator armed the switch.
+### Cost and correctness
 
-The guardrails core stays platform-agnostic behind `SystemProbe` / `HealthProbe` /
-`SystemActuator` with `actuator_stub.go` for `!windows`, so it is unit-testable
-without a Windows host. Keep new logic behind those interfaces rather than
-reaching for Windows APIs directly in the core.
+Signals are cached with a per-signal TTL because `dsregcmd`, WMI and `tpmtool`
+cost hundreds of milliseconds each and a desktop session makes many small calls.
+`ttl: 0` means live. Two things follow: the cache starts *unread* rather than
+passing (a fresh-and-passing cache would admit the first calls without looking at
+the device), and `signalCache.Refresh` returns nil even when a signal fails — it
+runs as a monitor `VerifyFunc`, and a `VerifyFunc` error fires that check's kill
+trigger, which would escalate every failure past the severity its policy assigned.
+
+The core stays platform-agnostic behind `SystemProbe` / `HealthProbe` /
+`SystemActuator` / `ToolIndex`, with `actuator_stub.go` for `!windows`, so the
+engine is unit-testable with fakes and no Windows host. `internal/winmcp` supplies
+the adapters. Keep new logic behind those interfaces.
+
+Secrets for the tier-2 signals (Graph, remote may-run) come from environment
+variables, never from flags or the policy document: argv is world-readable and a
+policy is meant to be reviewable and checked in.
 
 ## Credentials — the never-read invariant
 
@@ -220,9 +256,12 @@ unbuffered job channel.
 
 ## Enforce HTTPS
 
-`--enforce-https` (forced on by `--security`) refuses plaintext `http://` targets.
-`pkg/windows/urlpolicy.go` owns the tool-layer policy; `internal/guardrails/remote.go`
-applies it to the may-run endpoint via `Env.EnforceHTTPS`.
+`"enforce_https": true` in the policy document refuses plaintext `http://`
+targets. `pkg/windows/urlpolicy.go` owns the tool-layer policy;
+`internal/guardrails/remote.go` applies it to the may-run endpoint via
+`Env.EnforceHTTPS`. RunStdio copies the setting onto `Config` right after loading,
+because it has to reach the tool dependencies and the guardrail `Env`, neither of
+which carries a policy.
 
 Two traps to preserve:
 
@@ -350,9 +389,9 @@ keep it that way, in `server.go` **and** `speccheck.go`.
 ### Guardrails cover the new methods
 
 `resources/read` and `prompts/get` are data-egress paths, so they are audited
-(`resource.read`, `prompt.get`, arguments digested never raw), `resources/read`
-counts against the circuit breaker's window *shared with tools* (so alternating
-between a tool and an equivalent resource cannot evade the limit), and both
+(`resource.read`, `prompt.get`, arguments digested never raw), both are decided by
+the policy engine as read-only subjects (so a resource exposing the same state as
+a tool is not a way around the rule covering that tool), and both
 manifests are rug-pull fingerprinted via `HashPrompts`/`HashResources`. A surface
 with no pinned baseline is skipped rather than treated as drift.
 

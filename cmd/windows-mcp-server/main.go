@@ -10,11 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -47,7 +47,7 @@ func rootCmd() *cobra.Command {
 	}
 
 	root.AddCommand(stdioCmd())
-	root.AddCommand(checkCmd())
+	root.AddCommand(policyCmd())
 	root.AddCommand(personasCmd())
 	root.AddCommand(conformanceReportCmd())
 	// Adds `conformance-serve` only under the `conformance` build tag. The
@@ -56,169 +56,201 @@ func rootCmd() *cobra.Command {
 	return root
 }
 
-// guardrailConfigFrom maps the four-layer security flags to a Config, shared by
-// `stdio` and `check`.
+// guardrailConfigFrom maps the security flags to a Config.
+//
+// There is one flag left. Everything else the subsystem needs comes from the
+// policy document, which RunStdio loads.
 func guardrailConfigFrom(v *viper.Viper) winmcp.Config {
-	return winmcp.Config{
-		PolicyConfig: v.GetString("policy-config"),
-		// Layer 1: pre-flight
-		Security:            v.GetBool("security"),
-		WithMDM:             v.GetBool("with-mdm"),
-		WithLoggedOnAccount: v.GetString("with-logged-on-account"),
-		WithUserContext:     v.GetBool("with-user-context"),
-		IsNotAdmin:          v.GetBool("is-not-admin"),
-		RunContext:          v.GetString("run-context"),
-		// Layer 2: in-flight
-		GuardrailsInterval:   v.GetDuration("inflight-interval"),
-		GuardrailsControlDir: v.GetString("inflight-control-dir"),
-		// Layer 3: guardrails
-		Guardrails:       v.GetString("guardrails"),
-		Guardrail:        v.GetStringSlice("guardrail"),
-		CircuitBreaker:   v.GetBool("circuit-breaker"),
-		CircuitWindow:    v.GetDuration("circuit-window"),
-		CircuitThreshold: v.GetInt("circuit-threshold"),
-		EnforceHTTPS:     v.GetBool("enforce-https"),
-		// Layer 4: transparency
-		WithVideoSessionRecording: v.GetString("with-video-session-recording"),
-		WithLogging:               v.GetString("with-logging"),
-		HeartbeatInterval:         v.GetDuration("heartbeat-interval"),
-		// Kill switch — triggers
-		WithKillSwitch:     v.GetBool("with-kill-switch"),
-		KillOnPostureDrift: v.GetBool("kill-on-posture-drift"),
-		KillOnCircuitTrip:  v.GetBool("kill-on-circuit-trip"),
-		KillOnRugpull:      v.GetBool("kill-on-rugpull"),
-		KillOnHeartbeatGap: v.GetBool("kill-on-heartbeat-gap"),
-		// Kill switch — actions
-		KillActionIsolate:       v.GetBool("kill-action-isolate"),
-		KillActionKillProcs:     v.GetBool("kill-action-kill-procs"),
-		KillActionProcNames:     v.GetStringSlice("kill-action-proc-names"),
-		KillActionLock:          v.GetBool("kill-action-lock"),
-		KillActionShutdown:      v.GetBool("kill-action-shutdown"),
-		KillActionShutdownDelay: v.GetDuration("kill-action-shutdown-delay"),
-		// Status + legacy
-		GuardrailsStatusAddr:  v.GetString("guardrails-status-addr"),
-		GuardrailsStatusToken: v.GetString("guardrails-status-token"),
-		GuardrailsBypass:      v.GetBool("guardrails-bypass"),
-		EnterpriseGuardrails:  v.GetBool("enterprise-guardrails"),
-		// Tier-2 (parked)
-		EnableTier2:       v.GetBool("enable-tier2"),
-		GraphTenant:       v.GetString("graph-tenant"),
-		GraphClientID:     v.GetString("graph-client-id"),
-		GraphClientSecret: v.GetString("graph-client-secret"),
-		RemotePolicyToken: v.GetString("remote-policy-token"),
-	}
+	return winmcp.Config{PolicyConfig: v.GetString("policy-config")}
 }
 
-// addGuardrailFlags registers the four-layer security flags, grouped, shared by
-// `stdio` and `check`. All bind to WINDOWS_MCP_* env vars via viperFor.
+// addGuardrailFlags registers the flags that configure the security subsystem.
+//
+// There is one: the path to the policy document. Everything the subsystem does —
+// which device signals are read and how often, which rules cover which tools,
+// what a failure does, what trips the kill switch and what it actuates, where the
+// audit chain is written — lives in that document instead of in flags.
+//
+// The reason is that the questions are relational, and flags cannot express a
+// relation. "PowerShell requires MDM enrolment but taking a screenshot does not"
+// has no spelling as a set of booleans; as a rule with a match and a requirement
+// it is one line. Every flag that used to live here maps to a field in the
+// document — see docs/policy-config.md for the table.
 func addGuardrailFlags(f *pflag.FlagSet) {
-	addPreflightFlags(f)
-	addInflightFlags(f)
-	addGuardrailPolicyFlags(f)
-	addTransparencyFlags(f)
-	addKillSwitchFlags(f)
-	addTier2Flags(f)
-}
-
-// addPreflightFlags — Layer 1: checks evaluated once at startup.
-func addPreflightFlags(f *pflag.FlagSet) {
 	f.String("policy-config", "", "Path to the device-policy JSON document. Omit to use the built-in "+
 		"default, which evaluates every declared signal and records every verdict but refuses nothing. "+
-		"Validate one with `policy validate`, and see which rules cover a tool with `policy explain`.")
-	f.Bool("security", false, "Master switch: enforce pre-flight checks and force-on all transparency services (audit log, heartbeat, rug-pull detection, on-screen banner, recording).")
-	f.Bool("with-mdm", false, "Pre-flight: require the device to be MDM-enrolled.")
-	f.String("with-logged-on-account", "", "Pre-flight: require the interactive user to match this regex.")
-	f.Bool("with-user-context", false, "Pre-flight: require an interactive user context (not SYSTEM / Session 0).")
-	f.Bool("is-not-admin", false, "Pre-flight: require the interactive user to NOT be a local administrator.")
-	f.String("run-context", "user", "Expected process context: 'user' (default) or 'system'. SYSTEM disables desktop-automation tools.")
+		"Validate one with `policy validate`; see which rules cover a tool with `policy explain`.")
 }
 
-// addInflightFlags — Layer 2: continuous polling (status/heartbeat/rug-pull are force-on).
-func addInflightFlags(f *pflag.FlagSet) {
-	f.Duration("inflight-interval", 60*time.Second, "In-flight posture re-evaluation cadence; posture drift self-terminates the session (0 disables drift re-eval).")
-	f.String("inflight-control-dir", "", "Directory watched for a 'kill' sentinel file that stops the session. Empty disables.")
-}
-
-// addGuardrailPolicyFlags — Layer 3: inline tool-call policy.
-func addGuardrailPolicyFlags(f *pflag.FlagSet) {
-	f.String("guardrails", "off", "Guardrail mode: off, audit (log only), or enforce (block on failure). Forced to enforce by --security or any pre-flight check.")
-	f.StringSlice("guardrail", nil, "Additional guardrails to require, repeatable: id or id=arg (e.g. secure-boot, bitlocker, vbs, device-allowlist=C:\\allow.txt).")
-	f.Bool("circuit-breaker", false, "Inline destructive-action circuit breaker (auto-on in enforce mode).")
-	f.Duration("circuit-window", 0, "Circuit-breaker sliding window (0 = default 10s).")
-	f.Int("circuit-threshold", 0, "Sensitive tool calls within the window before tripping (0 = default 3).")
-	f.Bool("enforce-https", false, "Enforce HTTPS: refuse plaintext http:// targets, so computer use only "+
-		"interacts with HTTPS sites. Covers the Scrape tool, a URL-shaped App launch (which opens the default "+
-		"browser), and the remote may-run endpoint. Forced on by --security.")
-}
-
-// addTransparencyFlags — Layer 4: always-on transparency (forced on by --security).
-func addTransparencyFlags(f *pflag.FlagSet) {
-	f.String("with-video-session-recording", "", "Record the session to a video file in this directory (implies recording capture).")
-	f.String("with-logging", "", "Audit-log sink target: empty/'stderr' for stderr JSONL, or a file path for append-only hash-chained JSONL.")
-	f.Duration("heartbeat-interval", 30*time.Second, "Heartbeat cadence written to the audit chain (also the gap watchdog basis).")
-	f.String("guardrails-status-addr", "", "Loopback HTTP address for the always-on status/may-run endpoint (e.g. 127.0.0.1:8177). Empty disables.")
-	f.String("guardrails-status-token", "", "Bearer token required by the status endpoint.")
-	f.Bool("guardrails-bypass", false, "Break-glass: skip pre-flight checks (logged prominently).")
-	f.Bool("enterprise-guardrails", false, "Legacy alias: enforce mode + the enterprise preset.")
-}
-
-// addKillSwitchFlags — kill switch triggers and (opt-in) actions, configured separately.
-func addKillSwitchFlags(f *pflag.FlagSet) {
-	f.Bool("with-kill-switch", false, "Arm the kill switch.")
-	f.Bool("kill-on-posture-drift", true, "Trigger: kill on in-flight posture drift.")
-	f.Bool("kill-on-circuit-trip", true, "Trigger: kill when the circuit breaker trips.")
-	f.Bool("kill-on-rugpull", true, "Trigger: kill on tool-manifest mutation (rug pull).")
-	f.Bool("kill-on-heartbeat-gap", true, "Trigger: kill on a heartbeat gap.")
-	f.Bool("kill-action-isolate", true, "Action: isolate the device (firewall block-all) on kill. Requires elevation.")
-	f.Bool("kill-action-kill-procs", false, "Action: terminate --kill-action-proc-names on kill. Requires elevation.")
-	f.StringSlice("kill-action-proc-names", nil, "Process image names to terminate when --kill-action-kill-procs is set.")
-	f.Bool("kill-action-lock", false, "Action: lock the workstation on kill.")
-	f.Bool("kill-action-shutdown", false, "Action: shut the device down on kill. Requires elevation.")
-	f.Duration("kill-action-shutdown-delay", 0, "Delay before shutdown when --kill-action-shutdown is set.")
-}
-
-// addTier2Flags — parked authoritative remote checks (not wired unless --enable-tier2).
-func addTier2Flags(f *pflag.FlagSet) {
-	f.Bool("enable-tier2", false, "Wire the parked tier-2 remote checks (Graph / remote may-run PDP).")
-	f.String("graph-tenant", "", "Entra tenant ID for Graph device-compliance checks (Entra + Intune).")
-	f.String("graph-client-id", "", "Entra app (client) ID with Device.Read.All + DeviceManagementManagedDevices.Read.All.")
-	f.String("graph-client-secret", "", "Client secret for the Graph app registration (prefer the environment/vault).")
-	f.String("remote-policy-token", "", "Bearer token presented to a remote-policy=<url> may-run endpoint.")
-}
-
-// checkCmd evaluates the guardrail set once and prints the decision document,
-// without starting the server. Useful as a device-posture dry-run for operators
-// and CI, and — when run elevated — to exercise the TPM platform attestation.
-func checkCmd() *cobra.Command {
+// policyCmd groups the three questions an operator asks about device policy:
+// is this document valid, what does this device look like right now, and why was
+// that call refused.
+func policyCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "check",
-		Short: "Evaluate device guardrails once and print the decision document",
+		Use:   "policy",
+		Short: "Inspect the device policy: validate a document, check this device, explain a tool",
+		Long: "The policy engine decides every tool call against live device signals. These " +
+			"subcommands answer the three questions that come up around it, without starting a server.\n\n" +
+			"With no --policy-config they operate on the built-in default: the engine present, every " +
+			"declared signal evaluated and every verdict recorded, nothing refused.",
+	}
+	cmd.AddCommand(policyValidateCmd(), policyCheckCmd(), policyExplainCmd())
+	return cmd
+}
+
+// policyValidateCmd checks a document without touching the device, so it runs in
+// CI on a machine with no TPM and no domain.
+func policyValidateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "validate",
+		Short: "Validate a policy document against this build's signal set",
+		Long: "validate parses the document, rejects unknown fields, and checks that every signal " +
+			"it names is one this build can evaluate and that every rule requires a declared signal.\n\n" +
+			"It reads no device state, so it is safe to run anywhere. Exits 1 on any problem, and " +
+			"reports all of them at once rather than one per run.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v := viperFor(cmd)
-			cfg := guardrailConfigFrom(v)
-			cfg.Version = version
-			cfg.LogFile = v.GetString("log-file")
+			cfg := winmcp.Config{Version: version, PolicyConfig: v.GetString("policy-config")}
+
+			policy, err := winmcp.ValidatePolicy(cfg)
+			if err != nil {
+				return err
+			}
+			source := cfg.PolicyConfig
+			if source == "" {
+				source = "(built-in default)"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"ok  %s\n    mode=%s  signals=%v  rules=%d  rate_limits=%d\n",
+				source, policy.Mode, policy.SignalIDs(), len(policy.Rules), len(policy.RateLimits))
+			return nil
+		},
+	}
+	addPolicyConfigFlag(cmd.Flags())
+	return cmd
+}
+
+// policyCheckCmd evaluates the device now and prints the decision document.
+func policyCheckCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "check",
+		Short: "Evaluate every declared signal against this device and print the decision",
+		Long: "check reads every signal the policy declares, live and cache-bypassed, then applies " +
+			"the startup-scoped rules and prints the decision document.\n\n" +
+			"It is deliberately slow: dsregcmd, WMI and tpmtool all run. That is the point of a " +
+			"diagnostic, and it is why the request path caches instead.\n\n" +
+			"Exits 2 when the device is not admitted, so CI and operators can gate on posture.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v := viperFor(cmd)
+			cfg := winmcp.Config{
+				Version:      version,
+				PolicyConfig: v.GetString("policy-config"),
+				LogFile:      v.GetString("log-file"),
+			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			decision, err := winmcp.EvaluateGuardrails(ctx, cfg)
+			decision, err := winmcp.EvaluatePolicy(ctx, cfg)
 			if err != nil {
 				return err
 			}
 			out, err := json.MarshalIndent(decision, "", "  ")
 			if err != nil {
-				return err
+				return fmt.Errorf("render decision: %w", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			if !decision.Admit {
-				os.Exit(2) // non-zero so CI/operators can gate on posture
+				os.Exit(2)
 			}
 			return nil
 		},
 	}
-	addGuardrailFlags(cmd.Flags())
+	addPolicyConfigFlag(cmd.Flags())
 	cmd.Flags().String("log-file", "", "Write debug logs to this file (default: info logs to stderr).")
 	return cmd
+}
+
+// policyExplainCmd answers "why was that refused". Without it a denial in the
+// field is unattributable, and the first instinct is to disable the engine.
+func policyExplainCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "explain",
+		Short: "Show which rules cover a tool and what they require",
+		Long: "explain reports every rule that covers a tool, what each requires, and what it does " +
+			"on failure.\n\n" +
+			"It evaluates nothing, so it can be run on a machine other than the one that refused the " +
+			"call, and answers instantly.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v := viperFor(cmd)
+			tool := v.GetString("tool")
+			if tool == "" {
+				return errNoToolNamed
+			}
+			cfg := winmcp.Config{
+				Version:      version,
+				PolicyConfig: v.GetString("policy-config"),
+				Persona:      v.GetString("persona"),
+				Toolsets:     splitCSV(v.GetString("toolsets")),
+			}
+			// Explain against the whole manifest by default: a tool the current
+			// selection happens to exclude is still a tool the operator may be
+			// asking about.
+			if len(cfg.Toolsets) == 0 && cfg.Persona == "" {
+				cfg.Toolsets = []string{"all"}
+			}
+
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			cov, err := winmcp.ExplainPolicy(ctx, cfg, tool)
+			if err != nil {
+				return err
+			}
+			if v.GetString("format") == "json" {
+				out, err := json.MarshalIndent(cov, "", "  ")
+				if err != nil {
+					return fmt.Errorf("render coverage: %w", err)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
+				return nil
+			}
+			printCoverage(cmd.OutOrStdout(), cov)
+			return nil
+		},
+	}
+	addPolicyConfigFlag(cmd.Flags())
+	f := cmd.Flags()
+	f.String("tool", "", "Tool name to explain (required).")
+	f.String("format", "text", "Output format: text or json.")
+	f.String("toolsets", "", "Toolsets to resolve the tool against (default: all).")
+	f.String("persona", "", "Resolve against the manifest a persona would serve.")
+	return cmd
+}
+
+// errNoToolNamed is returned when `policy explain` is run without --tool.
+var errNoToolNamed = errors.New("no tool named: use --tool <name>")
+
+func printCoverage(w io.Writer, cov winmcp.PolicyCoverage) {
+	fmt.Fprintf(w, "tool: %s\n", cov.Tool)
+	if !cov.Known {
+		fmt.Fprintf(w, "  not in the served manifest — only rules matching every tool can cover it\n")
+	} else {
+		fmt.Fprintf(w, "  toolset=%s read-only=%t destructive=%t open-world=%t\n",
+			cov.Facts.Toolset, cov.Facts.ReadOnly, cov.Facts.Destructive, cov.Facts.OpenWorld)
+	}
+	if len(cov.Rules) == 0 {
+		fmt.Fprintf(w, "\nno rule covers this tool: calls to it are never refused by policy\n")
+		return
+	}
+	fmt.Fprintf(w, "\ncovered by %d rule(s):\n", len(cov.Rules))
+	for _, r := range cov.Rules {
+		fmt.Fprintf(w, "  %-24s requires %-40v on failure: %s\n", r.Name, r.Requires, r.OnFail)
+	}
+	fmt.Fprintf(w, "\nsignals that must pass: %v\n", cov.Signals)
+}
+
+// addPolicyConfigFlag adds the flag every policy subcommand takes.
+func addPolicyConfigFlag(f *pflag.FlagSet) {
+	f.String("policy-config", "", "Path to the device-policy JSON document. Omit for the built-in default.")
 }
 
 func stdioCmd() *cobra.Command {
@@ -236,7 +268,6 @@ func stdioCmd() *cobra.Command {
 			cfg.ExcludeTools = splitCSV(v.GetString("exclude-tools"))
 			cfg.LogFile = v.GetString("log-file")
 			cfg.Overlay = v.GetBool("overlay")
-			cfg.RecordDir = v.GetString("record-dir")
 			cfg.RecordFPS = v.GetInt("record-fps")
 			cfg.RecordCodec = v.GetString("record-codec")
 			cfg.CredentialsFile = v.GetString("credentials-file")
@@ -261,8 +292,8 @@ func stdioCmd() *cobra.Command {
 	f.String("persona", "", "Persona preset selecting toolsets and read-only stance (see 'personas' subcommand).")
 	f.String("log-file", "", "Write debug logs to this file (default: info logs to stderr).")
 	f.Bool("overlay", false, "Show visual-feedback overlays: a green hue around the focused window and an orange flash at click points (for screen capture / video).")
-	f.String("record-dir", "", "Record the whole session to a video file in this directory (one file per session), so every session is tracked.")
-	f.Int("record-fps", 4, "Session recording frame rate (frames per second).")
+	f.Int("record-fps", 4, "Session recording frame rate (frames per second). Whether a session is "+
+		"recorded, and where, is set by transparency.recording_dir in the policy document.")
 	f.String("record-codec", "h264", "Session recording codec: h264 or h265 (via ffmpeg if available; smaller files), or mjpeg (pure-Go, no dependency, larger files).")
 	f.String("credentials-file", "", "JSON file of credentials to install into the Windows Credential Manager at init, "+
 		"for app/web/SSO sign-in. Enables the 'credentials' toolset. Secrets are never accepted as flags or "+

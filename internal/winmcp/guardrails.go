@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -159,86 +160,55 @@ func guardrailEnv(cfg Config, dsk *desktop.Desktop, logger *slog.Logger) *guardr
 	return &guardrails.Env{Sys: p, Health: p, Logger: logger, EnforceHTTPS: enforceHTTPS(cfg)}
 }
 
-// enforceHTTPS resolves the Enforce HTTPS setting. --security force-enables it,
-// matching how the master switch force-enables the transparency services.
-func enforceHTTPS(cfg Config) bool { return cfg.EnforceHTTPS || cfg.Security }
+// enforceHTTPS resolves the Enforce HTTPS setting.
+//
+// The value lives on Config rather than being read from the policy at each call
+// site because it has to reach the tool dependencies and the guardrail Env, and
+// neither carries a policy. RunStdio copies it across immediately after loading,
+// so the policy remains the only place an operator sets it.
+func enforceHTTPS(cfg Config) bool { return cfg.EnforceHTTPS }
 
-// newGuardrailRegistry builds the guardrail registry: tier-1 local checks, the
-// JIT at-source device-posture checks, and (when configured) the authoritative
-// tier-2 Graph and remote-policy providers.
-func newGuardrailRegistry(cfg Config, logger *slog.Logger) *guardrails.Registry {
+// Environment variables carrying the tier-2 credentials. They are read from the
+// environment rather than from flags or the policy document because they are
+// secrets: argv is world-readable, and a policy document is meant to be
+// reviewable and checked in. This mirrors the credentials invariant — a secret
+// may be used, but it is never written somewhere it can be read back.
+const (
+	envGraphTenant   = "WINDOWS_MCP_GRAPH_TENANT"
+	envGraphClientID = "WINDOWS_MCP_GRAPH_CLIENT_ID"
+	// These two are variable *names*, not values — which is the whole point of
+	// reading them from the environment.
+	envGraphClientSecret = "WINDOWS_MCP_GRAPH_CLIENT_SECRET" //nolint:gosec // an env var name, not a secret
+	envRemotePolicyToken = "WINDOWS_MCP_REMOTE_POLICY_TOKEN" //nolint:gosec // an env var name, not a secret
+)
+
+// newGuardrailRegistry builds the signal registry: the tier-1 local checks, the
+// just-in-time at-source device-posture checks, and — when the credentials are
+// present in the environment — the authoritative tier-2 Graph and remote-policy
+// providers.
+//
+// Registering a signal only makes it available for a policy to declare. Nothing
+// here decides whether it is evaluated; that is the policy's job.
+func newGuardrailRegistry(_ Config, logger *slog.Logger) *guardrails.Registry {
 	reg := guardrails.NewRegistry()
 	guardrails.RegisterBuiltins(reg)
 	guardrails.RegisterHealth(reg) // JIT at-source device-posture checks
-	// Tier-2 (Graph / remote may-run PDP) is SET ASIDE: only wired when the
-	// operator explicitly opts in, which the four-layer core never does.
-	if cfg.EnableTier2 {
-		if gc := (guardrails.GraphConfig{TenantID: cfg.GraphTenant, ClientID: cfg.GraphClientID, ClientSecret: cfg.GraphClientSecret}); gc.Configured() {
-			guardrails.RegisterGraph(reg, guardrails.NewGraphClient(gc))
-			if logger != nil {
-				logger.Info("authoritative Graph guardrails enabled (Entra + Intune compliance)")
-			}
+
+	gc := guardrails.GraphConfig{
+		TenantID:     os.Getenv(envGraphTenant),
+		ClientID:     os.Getenv(envGraphClientID),
+		ClientSecret: os.Getenv(envGraphClientSecret),
+	}
+	if gc.Configured() {
+		guardrails.RegisterGraph(reg, guardrails.NewGraphClient(gc))
+		if logger != nil {
+			logger.Info("tier-2 Graph signals available (Entra + Intune compliance)")
 		}
-		if cfg.RemotePolicyToken != "" {
-			guardrails.RegisterRemotePolicy(reg, cfg.RemotePolicyToken)
-		}
+	}
+	if token := os.Getenv(envRemotePolicyToken); token != "" {
+		guardrails.RegisterRemotePolicy(reg, token)
 	}
 	return reg
-}
-
-// preflightExtras maps the Layer-1 With* flags to guardrail selection specs.
-func preflightExtras(cfg Config) []string {
-	extra := append([]string(nil), cfg.Guardrail...)
-	if cfg.WithMDM {
-		extra = append(extra, "mdm-enrolled")
-	}
-	if cfg.WithUserContext {
-		extra = append(extra, "run-context")
-	}
-	if cfg.IsNotAdmin {
-		extra = append(extra, "not-admin")
-	}
-	if cfg.WithLoggedOnAccount != "" {
-		extra = append(extra, "logged-on-account="+cfg.WithLoggedOnAccount)
-	}
-	return extra
-}
-
-// effectiveMode resolves the guardrail mode. --security and any explicit
-// pre-flight check imply enforce (the whole point is to gate); otherwise the
-// mode comes from --guardrails (with the legacy enterprise alias).
-func effectiveMode(cfg Config) guardrails.Mode {
-	mode := guardrails.ParseMode(cfg.Guardrails)
-	preflightSet := cfg.WithMDM || cfg.WithUserContext || cfg.IsNotAdmin || cfg.WithLoggedOnAccount != ""
-	if (cfg.Security || cfg.EnterpriseGuardrails || preflightSet) && mode == guardrails.ModeOff {
-		mode = guardrails.ModeEnforce
-	}
-	return mode
-}
-
-// guardrailConfig maps the server Config to a guardrails.Config.
-func guardrailConfig(cfg Config) guardrails.Config {
-	return guardrails.Config{
-		Mode:       effectiveMode(cfg),
-		Enterprise: cfg.EnterpriseGuardrails,
-		Extra:      preflightExtras(cfg),
-		Bypass:     cfg.GuardrailsBypass,
-		BypassNote: "operator --guardrails-bypass",
-	}
-}
-
-// killActionConfig maps the Config kill-action flags to the executor config.
-// The default (kill switch armed with no explicit actions) is isolate + abort,
-// which the --kill-action-isolate flag defaults to true.
-func killActionConfig(cfg Config) guardrails.KillActionConfig {
-	return guardrails.KillActionConfig{
-		Isolate:       cfg.KillActionIsolate,
-		KillProcs:     cfg.KillActionKillProcs,
-		Lock:          cfg.KillActionLock,
-		Shutdown:      cfg.KillActionShutdown,
-		ProcNames:     cfg.KillActionProcNames,
-		ShutdownDelay: cfg.KillActionShutdownDelay,
-	}
 }
 
 // tripFunc returns the trip function for one kill trigger. When the kill switch

@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "mode": "audit",
+  "signals": {
+    "run-context": { "ttl": "0s" },
+    "mdm-enrolled": { "ttl": "5m" },
+    "entra-joined": { "ttl": "5m" },
+    "secure-boot": { "ttl": "5m" },
+    "bitlocker": { "ttl": "60s" },
+    "vbs": { "ttl": "5m" }
+  },
+  "rules": [
+    {
+      "name": "interactive-session",
+      "match": { "toolset": "*" },
+      "require": ["run-context"],
+      "on_fail": "deny"
+    },
+    {
+      "name": "managed-device",
+      "match": { "toolset": "*" },
+      "require": ["mdm-enrolled", "entra-joined"],
+      "on_fail": "deny"
+    },
+    {
+      "name": "hardware-posture-for-destructive-tools",
+      "match": { "annotation": "destructive" },
+      "require": ["secure-boot", "bitlocker", "vbs"],
+      "on_fail": "deny"
+    }
+  ],
+  "rate_limits": [],
+  "kill": {
+    "triggers": {
+      "posture_drift": false,
+      "rugpull": false,
+      "heartbeat_gap": false,
+      "sentinel": false
+    },
+    "actions": {
+      "isolate": false,
+      "lock": false,
+      "shutdown": false
+    }
+  },
+  "transparency": {
+    "audit_sink": "stderr",
+    "heartbeat": "30s",
+    "banner": true
+  },
+  "inflight": {
+    "interval": "60s"
+  },
+  "enforce_https": false
+}

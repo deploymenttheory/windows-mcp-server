@@ -52,47 +52,27 @@ type Config struct {
 	// logs go to stderr. stdout is reserved for the MCP stdio transport.
 	LogFile string
 
-	// Security is the master switch for the four-layer security architecture. It
-	// forces enforce mode, the always-on transparency services (audit log,
-	// heartbeat, rug-pull detection, status), and auto-enables the overlay +
-	// recording so the security banner is shown and captured.
-	Security bool
-
 	// PolicyConfig is the path to the device-policy document. Empty uses the
 	// embedded default, which evaluates every declared signal, records every
 	// verdict, and refuses nothing.
+	//
+	// Everything the security subsystem does is configured there rather than
+	// here: which signals are read and how often, which rules cover which tools,
+	// what a failure does, what trips the kill switch and what it actuates, and
+	// where the audit chain is written.
 	PolicyConfig string
 
-	// --- Layer 1: pre-flight checks (evaluated once at startup) ---
-	WithMDM             bool   // device is MDM-enrolled (local dsregcmd MdmUrl)
-	WithLoggedOnAccount string // regex the interactive user must match
-	WithUserContext     bool   // require an interactive user (not SYSTEM/Session 0)
-	IsNotAdmin          bool   // interactive user must NOT be a local admin
-	RunContext          string // legacy: expected context "user"|"system"
-
-	// --- Layer 2: in-flight polling ---
-	GuardrailsInterval   time.Duration // posture re-eval cadence (0 = default)
-	GuardrailsControlDir string        // local "kill" sentinel dir (empty disables)
-
-	// --- Layer 3: guardrails (inline tool-call policy) ---
-	Guardrails       string        // mode: off|audit|enforce
-	Guardrail        []string      // additive guardrails: "id" or "id=arg"
-	CircuitBreaker   bool          // inline destructive-action circuit breaker
-	CircuitWindow    time.Duration // sliding window (0 = default 10s)
-	CircuitThreshold int           // sensitive calls before tripping (0 = default 3)
 	// EnforceHTTPS blocks plaintext http:// targets: the Scrape tool, a URL-shaped
 	// App launch (which Start-Process hands to the default browser), and the
-	// remote may-run endpoint. Forced on by --security.
+	// remote may-run endpoint. It is set from the policy document at startup, not
+	// from a flag; it lives here because it has to reach the tool dependencies and
+	// the guardrail Env, neither of which carries a policy.
 	EnforceHTTPS bool
 
-	// --- Layer 4: transparency / always-on ---
-	WithVideoSessionRecording string        // record path (implies recording)
-	WithLogging               string        // audit-log sink target ("" = stderr)
-	HeartbeatInterval         time.Duration // heartbeat cadence (0 = default)
-	Overlay                   bool          // decorative overlays
-	RecordDir                 string        // legacy recording dir
-	RecordFPS                 int
-	RecordCodec               string
+	// --- Presentation and capture (not policy) ---
+	Overlay     bool   // decorative window hue and click flash
+	RecordFPS   int    // session recording frame rate
+	RecordCodec string // session recording codec
 
 	// --- Credentials ---
 	// CredentialsFile is a JSON document of credentials to install into the
@@ -100,34 +80,6 @@ type Config struct {
 	// argv is readable by any process on the machine. Enabling this also enables
 	// the "credentials" toolset.
 	CredentialsFile string
-
-	// --- Kill switch: triggers (separate from actions) ---
-	WithKillSwitch     bool
-	KillOnPostureDrift bool
-	KillOnCircuitTrip  bool
-	KillOnRugpull      bool
-	KillOnHeartbeatGap bool
-
-	// --- Kill switch: actions (opt-in, applied in order) ---
-	KillActionIsolate       bool
-	KillActionKillProcs     bool
-	KillActionProcNames     []string
-	KillActionLock          bool
-	KillActionShutdown      bool
-	KillActionShutdownDelay time.Duration
-
-	GuardrailsStatusAddr  string // loopback HTTP status endpoint (empty disables)
-	GuardrailsStatusToken string // bearer token for the status endpoint
-	GuardrailsBypass      bool   // break-glass (logged)
-	EnterpriseGuardrails  bool   // legacy alias ⇒ enforce + enterprise preset
-
-	// Tier-2 (SET ASIDE): only wired when EnableTier2 is true, which the
-	// four-layer core never sets. Kept for later re-integration.
-	EnableTier2       bool
-	GraphTenant       string
-	GraphClientID     string
-	GraphClientSecret string
-	RemotePolicyToken string
 }
 
 // SetReadOnly records an explicit read-only choice (distinguishing it from the
@@ -158,8 +110,21 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	}
 	defer cleanup()
 
-	// --- Layer 4a: hash-chained audit log (built first so startup is recorded) ---
-	sink, err := guardrails.NewSink(cfg.WithLogging)
+	// The policy is loaded before anything else it configures. It names the audit
+	// sink, the heartbeat cadence, whether the session is recorded and where — so
+	// a bad document must fail before any of that is stood up, and certainly
+	// before a desktop engine exists.
+	reg := newGuardrailRegistry(cfg, logger)
+	policy, err := loadPolicy(cfg, reg, logger)
+	if err != nil {
+		return err
+	}
+	// Carried onto Config because it has to reach the tool dependencies and the
+	// guardrail Env, neither of which holds a policy.
+	cfg.EnforceHTTPS = policy.EnforceHTTPS
+
+	// --- Hash-chained audit log (built early so startup is recorded) ---
+	sink, err := guardrails.NewSink(policy.Transparency.AuditSink)
 	if err != nil {
 		return fmt.Errorf("audit log: %w", err)
 	}
@@ -167,34 +132,30 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	defer func() { _ = audit.Close() }()
 	_, _ = audit.Append("server.start", map[string]any{"version": cfg.Version})
 
-	// Under --security, force transparency capture: overlay (for the banner) and
-	// recording, even if the decorative --overlay flag is off.
-	recordDir := cfg.RecordDir
-	if cfg.WithVideoSessionRecording != "" {
-		recordDir = cfg.WithVideoSessionRecording
-	}
 	// contextcheck reports the recorder's ffmpeg child here because it does not
 	// inherit this context. That is deliberate: the encoder must survive the
 	// cancellation that ends the session, or the kill path would kill ffmpeg
 	// mid-write and truncate the very recording the transparency layer exists to
 	// produce. It has its own bounded lifetime instead — see ffmpeg.go's
 	// ffmpegFinalizeTimeout, which Close enforces.
+	//
+	// Overlay is the decorative hue and click flash, which stays a flag because it
+	// is a display choice rather than a control. SecurityOverlay starts the overlay
+	// manager without the decoration, so the policy can guarantee the kill banner
+	// has somewhere to draw without also putting a green border on the screen.
 	dsk, err := desktop.New(logger, desktop.Options{ //nolint:contextcheck // see above
-		Overlay:         cfg.Overlay || cfg.Security,
-		SecurityOverlay: cfg.Security,
-		Record:          desktop.RecorderOptions{Dir: recordDir, FPS: cfg.RecordFPS, Codec: cfg.RecordCodec},
+		Overlay:         cfg.Overlay,
+		SecurityOverlay: policy.Transparency.Banner,
+		Record: desktop.RecorderOptions{
+			Dir:   policy.Transparency.RecordingDir,
+			FPS:   cfg.RecordFPS,
+			Codec: cfg.RecordCodec,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to start desktop engine: %w", err)
 	}
 	defer func() { _ = dsk.Close() }()
-
-	// --- The policy engine: one decision point for startup and every request ---
-	reg := newGuardrailRegistry(cfg, logger)
-	policy, err := loadPolicy(cfg, reg, logger)
-	if err != nil {
-		return err
-	}
 	envFn := func() *guardrails.Env { return guardrailEnv(cfg, dsk, logger) }
 	// The index is supplied once the manifest exists; a startup decision has no
 	// tool to resolve.
@@ -212,8 +173,11 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	holder.set(decision)
 	_, _ = audit.Append("policy.startup", decision)
 
-	requestedSystem := strings.EqualFold(cfg.RunContext, "system")
-	autoLimit := requestedSystem || runContext.IsSystem
+	// Session 0 has no desktop to drive, so the automation toolsets are dropped
+	// there regardless of what was asked for. This is detected rather than
+	// declared: the old --run-context flag let an operator assert a context the
+	// process was not actually in, which could only ever be wrong.
+	autoLimit := runContext.IsSystem
 	if cfg.Persona != "" && autoLimit {
 		return fmt.Errorf("%w: %q", ErrPersonaNeedsUser, cfg.Persona)
 	}
@@ -401,17 +365,17 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		},
 		Verify: verifiers,
 	})
-	if cfg.HeartbeatInterval > 0 {
+	if heartbeatInterval := policy.Transparency.Heartbeat.Std(); heartbeatInterval > 0 {
 		// Started regardless of arming: a stalled heartbeat is reported even when
 		// the operator chose not to contain on it.
-		heartbeat.StartWatchdog(runCtx, 3*cfg.HeartbeatInterval, tripHeartbeat)
+		heartbeat.StartWatchdog(runCtx, 3*heartbeatInterval, tripHeartbeat)
 	}
 
 	// --- Status endpoint (always-on when an address is configured) ---
-	if cfg.GuardrailsStatusAddr != "" {
+	if policy.Transparency.StatusAddr != "" {
 		ss := &guardrails.StatusServer{
-			Addr:     cfg.GuardrailsStatusAddr,
-			Token:    cfg.GuardrailsStatusToken,
+			Addr:     policy.Transparency.StatusAddr,
+			Token:    policy.Transparency.StatusToken,
 			Current:  holder.get,
 			Snapshot: snapshotFn(startedAt, rugpull, heartbeat, audit, kill),
 			Kill:     kill,
@@ -520,32 +484,6 @@ func monitorVerifiers(
 		{Name: "heartbeat", Run: hb.Beat, Trip: tripHeartbeat},
 		{Name: "rug-pull", Run: func(context.Context) error { return rp.Recheck(tools()) }, Trip: tripRugpull},
 	}
-}
-
-// EvaluateGuardrails runs the guardrail set once against the live device and
-// returns the decision document, without starting the MCP server. It backs the
-// `check` subcommand: a dry-run of device posture for operators, CI, and health
-// probes — and the way to exercise the elevated TPM platform attestation.
-func EvaluateGuardrails(ctx context.Context, cfg Config) (guardrails.Decision, error) {
-	logger, cleanup, err := newLogger(cfg.LogFile)
-	if err != nil {
-		return guardrails.Decision{}, err
-	}
-	defer cleanup()
-
-	// The engine owns its own lifetime; see the note in RunStdio.
-	dsk, err := desktop.New(logger, desktop.Options{}) //nolint:contextcheck // owns its lifetime
-	if err != nil {
-		return guardrails.Decision{}, fmt.Errorf("failed to start desktop engine: %w", err)
-	}
-	defer func() { _ = dsk.Close() }()
-
-	reg := newGuardrailRegistry(cfg, logger)
-	runner := guardrails.NewRunner(reg, guardrailConfig(cfg), logger)
-	for _, u := range runner.Unknown() {
-		logger.Warn("unknown guardrail requested", "guardrail", u)
-	}
-	return runner.Evaluate(ctx, guardrailEnv(cfg, dsk, logger)), nil
 }
 
 // buildInventory applies persona, toolset, read-only, and allow/deny
