@@ -106,7 +106,5 @@ type CheckFunc func(ctx context.Context, env *Env) Result
 type Guardrail struct {
 	ID          string
 	Description string
-	// Enterprise marks membership in the --enterprise-guardrails preset.
-	Enterprise bool
-	Check      CheckFunc
+	Check       CheckFunc
 }

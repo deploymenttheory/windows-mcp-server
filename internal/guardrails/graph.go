@@ -232,25 +232,21 @@ func RegisterGraph(reg *Registry, c *GraphClient) {
 	reg.Register(Guardrail{
 		ID:          "graph-entra-registered",
 		Description: "Device is registered and enabled in Entra ID (Graph)",
-		Enterprise:  true,
 		Check:       c.checkEntraRegistered,
 	})
 	reg.Register(Guardrail{
 		ID:          "graph-entra-compliant",
 		Description: "Entra ID reports the device compliant (Graph)",
-		Enterprise:  true,
 		Check:       c.checkEntraCompliant,
 	})
 	reg.Register(Guardrail{
 		ID:          "graph-intune-enrolled",
 		Description: "Device is enrolled in Intune (Graph)",
-		Enterprise:  true,
 		Check:       c.checkIntuneEnrolled,
 	})
 	reg.Register(Guardrail{
 		ID:          "graph-intune-compliant",
 		Description: "Intune reports the device compliant (Graph)",
-		Enterprise:  true,
 		Check:       c.checkIntuneCompliant,
 	})
 	reg.Register(Guardrail{

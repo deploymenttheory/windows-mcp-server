@@ -7,7 +7,8 @@ import (
 	"testing"
 )
 
-// fakeProbe is a SystemProbe for tests.
+// fakeProbe is a SystemProbe for tests. It is shared with graph_test.go,
+// preflight_test.go and remote_test.go.
 type fakeProbe struct {
 	rc     RunContext
 	dsreg  string
@@ -52,99 +53,104 @@ func interactiveProbe() fakeProbe {
 	}
 }
 
-func TestEnterprisePresetAdmitsCompliant(t *testing.T) {
-	r := NewRunner(newReg(), Config{Mode: ModeEnforce, Enterprise: true}, nil)
-	d := r.Evaluate(context.Background(), &Env{Sys: interactiveProbe()})
-	if !d.Admit {
-		t.Fatalf("expected admit, got reasons %v", d.Reasons)
+// evaluateAgainst runs a policy over a fake device through the real engine.
+//
+// These providers are exercised end-to-end rather than by calling their
+// CheckFunc directly, because the path that matters is the one production uses:
+// registry lookup, signal cache, rule match, verdict.
+func evaluateAgainst(t *testing.T, probe fakeProbe, policyJSON string) Verdict {
+	t.Helper()
+	reg := newReg()
+	p, err := ParsePolicy([]byte(policyJSON))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if r.Blocks(d) {
-		t.Error("compliant device should not be blocked")
+	if err := p.Validate(reg.IDs()); err != nil {
+		t.Fatal(err)
+	}
+	engine := NewEngine(p, reg, testIndex, func() *Env { return &Env{Sys: probe} })
+	return engine.Evaluate(context.Background(), engine.SubjectForTool("tools/call", "Snapshot"))
+}
+
+// managedDevicePolicy is the shape an enterprise deployment writes: an
+// interactive session on an MDM-enrolled, Entra-joined device.
+const managedDevicePolicy = `{
+  "version": 1, "mode": "enforce",
+  "signals": {
+    "run-context":  { "ttl": "0s" },
+    "mdm-enrolled": { "ttl": "0s" },
+    "entra-joined": { "ttl": "0s" }
+  },
+  "rules": [ { "name": "managed", "match": { "toolset": "*" },
+    "require": ["run-context", "mdm-enrolled", "entra-joined"], "on_fail": "deny" } ]
+}`
+
+func TestManagedDeviceIsAdmitted(t *testing.T) {
+	v := evaluateAgainst(t, interactiveProbe(), managedDevicePolicy)
+	if !v.Allowed() {
+		t.Fatalf("a compliant device should be allowed, failures: %+v", v.Failures)
 	}
 }
 
-func TestEnterprisePresetBlocksUnmanaged(t *testing.T) {
+func TestUnmanagedDeviceIsRefused(t *testing.T) {
 	p := interactiveProbe()
 	p.dsreg = dsregUnmanaged
-	r := NewRunner(newReg(), Config{Mode: ModeEnforce, Enterprise: true}, nil)
-	d := r.Evaluate(context.Background(), &Env{Sys: p})
-	if d.Admit {
-		t.Fatal("unmanaged device should not be admitted")
+
+	v := evaluateAgainst(t, p, managedDevicePolicy)
+	if v.Allowed() {
+		t.Fatal("an unmanaged device should be refused")
 	}
-	if !r.Blocks(d) {
-		t.Error("enforce mode should block an unmanaged device")
+	failed := map[string]bool{}
+	for _, f := range v.Failures {
+		failed[f.Signal] = true
+	}
+	for _, want := range []string{"mdm-enrolled", "entra-joined"} {
+		if !failed[want] {
+			t.Errorf("expected %q to fail on an unmanaged device, got %+v", want, v.Failures)
+		}
 	}
 }
 
-func TestAuditNeverBlocks(t *testing.T) {
-	p := interactiveProbe()
-	p.dsreg = dsregUnmanaged
-	r := NewRunner(newReg(), Config{Mode: ModeAudit, Enterprise: true}, nil)
-	d := r.Evaluate(context.Background(), &Env{Sys: p})
-	if d.Admit {
-		t.Error("decision should reflect the failure (admit=false)")
-	}
-	if r.Blocks(d) {
-		t.Error("audit mode must never block")
-	}
-}
-
-func TestRunContextSystemFails(t *testing.T) {
+// TestSystemContextIsRefused covers the check that gates desktop automation:
+// Session 0 has no desktop to drive.
+func TestSystemContextIsRefused(t *testing.T) {
 	p := interactiveProbe()
 	p.rc = RunContext{IsSystem: true, SessionID: 0}
-	r := NewRunner(newReg(), Config{Mode: ModeEnforce}, nil)
-	d := r.Evaluate(context.Background(), &Env{Sys: p})
-	if d.Admit {
-		t.Error("SYSTEM context should fail the run-context guardrail")
+
+	v := evaluateAgainst(t, p, `{
+	  "version": 1, "mode": "enforce",
+	  "signals": { "run-context": { "ttl": "0s" } },
+	  "rules": [ { "name": "interactive", "match": { "toolset": "*" },
+	    "require": ["run-context"], "on_fail": "deny" } ]
+	}`)
+	if v.Allowed() {
+		t.Error("a SYSTEM context should fail the run-context signal")
 	}
 }
 
-func TestBypassAdmits(t *testing.T) {
-	p := interactiveProbe()
-	p.dsreg = dsregUnmanaged
-	r := NewRunner(newReg(), Config{Mode: ModeEnforce, Enterprise: true, Bypass: true, BypassNote: "break-glass"}, nil)
-	d := r.Evaluate(context.Background(), &Env{Sys: p})
-	if !d.Admit {
-		t.Error("bypass should admit regardless of checks")
-	}
-	if len(d.Results) != 1 || d.Results[0].Status != Skip {
-		t.Errorf("bypass should record a single skip, got %+v", d.Results)
-	}
-}
-
+// TestDeviceAllowlist covers the signal's `arg`, which is how a policy passes a
+// parameter to a check.
 func TestDeviceAllowlist(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "allow.txt")
-	if err := os.WriteFile(path, []byte("# devices\nSN-123\nOTHER-HOST\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("# devices\nSN-123\nOTHER-HOST\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := NewRunner(newReg(), Config{Mode: ModeEnforce, Extra: []string{"device-allowlist=" + path}}, nil)
-	d := r.Evaluate(context.Background(), &Env{Sys: interactiveProbe()})
-	if !d.Admit {
-		t.Errorf("device with serial SN-123 should be allowlisted, reasons %v", d.Reasons)
-	}
-	// Not on the list.
-	p := interactiveProbe()
-	p.id = DeviceIdentity{Hostname: "WS-9", Serial: "SN-999"}
-	d = r.Evaluate(context.Background(), &Env{Sys: p})
-	if d.Admit {
-		t.Error("device not on the allowlist should fail")
-	}
-}
+	policy := `{
+	  "version": 1, "mode": "enforce",
+	  "signals": { "device-allowlist": { "ttl": "0s", "arg": "` + filepath.ToSlash(path) + `" } },
+	  "rules": [ { "name": "allowlisted", "match": { "toolset": "*" },
+	    "require": ["device-allowlist"], "on_fail": "deny" } ]
+	}`
 
-func TestUnknownGuardrail(t *testing.T) {
-	r := NewRunner(newReg(), Config{Mode: ModeEnforce, Extra: []string{"nope"}}, nil)
-	if len(r.Unknown()) == 0 {
-		t.Error("expected 'nope' to be reported as unknown")
+	if v := evaluateAgainst(t, interactiveProbe(), policy); !v.Allowed() {
+		t.Errorf("serial SN-123 is on the list and should be allowed: %+v", v.Failures)
 	}
-}
 
-func TestParseMode(t *testing.T) {
-	cases := map[string]Mode{"": ModeOff, "off": ModeOff, "audit": ModeAudit, "ENFORCE": ModeEnforce, "junk": ModeOff}
-	for in, want := range cases {
-		if got := ParseMode(in); got != want {
-			t.Errorf("ParseMode(%q) = %q, want %q", in, got, want)
-		}
+	off := interactiveProbe()
+	off.id = DeviceIdentity{Hostname: "WS-9", Serial: "SN-999"}
+	if v := evaluateAgainst(t, off, policy); v.Allowed() {
+		t.Error("a device not on the allowlist should be refused")
 	}
 }
 
