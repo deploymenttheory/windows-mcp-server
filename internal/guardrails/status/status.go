@@ -40,6 +40,24 @@ type ServerStatus struct {
 	AuditChainHead   string  `json:"audit_chain_head,omitempty"`
 	Killed           bool    `json:"killed"`
 	KillReason       string  `json:"kill_reason,omitempty"`
+	// Egress is nil when the device egress proxy is off, so an operator polling
+	// this cannot read "no traffic denied" as "the proxy is running".
+	Egress *EgressStatus `json:"egress,omitempty"`
+}
+
+// EgressStatus reports what the device egress proxy is doing.
+//
+// Enforcement is the field that matters most: "proxy-only" means the allowlist
+// binds whatever was configured to use the proxy, where "scoped" and "global"
+// mean the named workloads cannot go around it.
+type EgressStatus struct {
+	Listen        string `json:"listen"`
+	Enforcement   string `json:"enforcement"`
+	AllowPatterns int    `json:"allow_patterns"`
+	Allowed       uint64 `json:"allowed"`
+	Denied        uint64 `json:"denied"`
+	DeniedHost    uint64 `json:"denied_host"`
+	DeniedAddress uint64 `json:"denied_address"`
 }
 
 // SnapshotProvider returns the current server/device status snapshot.

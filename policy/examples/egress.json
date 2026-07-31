@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "mode": "enforce",
+  "signals": {
+    "run-context": { "ttl": "0s" },
+    "mdm-enrolled": { "ttl": "5m" }
+  },
+  "rules": [
+    {
+      "name": "interactive-session",
+      "match": { "toolset": "*" },
+      "require": ["run-context"],
+      "on_fail": "deny"
+    },
+    {
+      "name": "startup-admission",
+      "match": { "scope": "startup" },
+      "require": ["run-context", "mdm-enrolled"],
+      "on_fail": "deny"
+    }
+  ],
+  "kill": {
+    "triggers": {
+      "posture_drift": true,
+      "rugpull": true,
+      "heartbeat_gap": true,
+      "sentinel": true
+    },
+    "actions": {
+      "isolate": false,
+      "lock": false,
+      "shutdown": false
+    }
+  },
+  "transparency": {
+    "audit_sink": "stderr",
+    "heartbeat": "30s",
+    "banner": true
+  },
+  "inflight": {
+    "interval": "60s"
+  },
+  "enforce_https": true,
+  "egress": {
+    "enabled": true,
+    "allow": [
+      "*.contoso.com",
+      "login.microsoftonline.com",
+      "*.office.com"
+    ],
+    "listen": "127.0.0.1:8181",
+    "allow_ports": [443],
+    "allow_private_networks": false,
+    "auth_token_env": "WINDOWS_MCP_EGRESS_TOKEN"
+  }
+}

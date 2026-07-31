@@ -176,7 +176,9 @@ acyclic in that order:
 |---|---|---|
 | `signals` | signal vocabulary, probes, `Registry`, the checks, `Decision` | — |
 | `audit` | hash chain, sink, `VerifyChain` | — |
-| `policy` | document schema, signal cache, engine, verdict | `signals` |
+| `hostmatch` | egress allowlist compiler, wildcard matcher, forbidden-address ranges | — |
+| `policy` | document schema, signal cache, engine, verdict | `signals`, `hostmatch` |
+| `egress` | device egress proxy, counters, `Enforcer` | `hostmatch` |
 | `enforce` | the MCP middleware | `policy`, `audit` |
 | `watch` | heartbeat, rug-pull, monitor | `audit`, `signals` |
 | `contain` | kill switch, ladder, actuator, firewall | `audit`, `signals` |
@@ -184,8 +186,10 @@ acyclic in that order:
 
 Two properties are worth preserving:
 
-- **`signals` and `audit` are leaves.** Recording must never be contingent on the
-  thing being recorded, and the signal catalogue must stay evaluable on its own.
+- **`signals`, `audit` and `hostmatch` are leaves.** Recording must never be
+  contingent on the thing being recorded, the signal catalogue must stay evaluable
+  on its own, and `hostmatch` has to be importable by `policy` (so a malformed
+  allowlist fails at load) without dragging the proxy in behind it.
 - **`policy` has no MCP dependency.** The decision is testable against fake
   signals and a fake tool index, with no transport. Anything MCP-shaped about
   enforcement belongs in `enforce`.
@@ -220,6 +224,36 @@ security flag.
   `IsError` result with a nil Go error; on `resources/read` and `prompts/get` it is
   a JSON-RPC error, because those have no `IsError` envelope. `Engine.refuse`
   handles both — don't collapse them.
+
+### The egress proxy: two orderings and a listener
+
+`internal/guardrails/egress` is a loopback forward proxy admitting only the
+domains `policy.EgressPolicy` declares. Three properties are load-bearing:
+
+- **The allowlist is checked before the name is resolved.** A refused host must
+  produce no DNS query, or the refusal itself becomes the outbound signal. This is
+  the opposite of what caddyserver/forwardproxy does, and it is why we did not
+  take that dependency.
+- **Forbidden addresses are checked on the resolved answers, and the dial goes to
+  the vetted address, not the name.** An allowed name resolving to loopback,
+  RFC1918 or `169.254.169.254` is the bypass the allowlist exists to prevent, and
+  re-resolving at dial time would reopen it.
+- **It binds loopback only, asserted at the bind as well as at load.**
+  `egress.requireLoopback` sits next to `net.Listen` so no future caller can
+  construct a `Config` by hand and get a proxy the network can reach — the same
+  reason the transport is stdio-only.
+
+Egress defaults **off**, pinned by `TestDefaultPolicyIsAuditOnly`: a server that
+began proxying traffic on upgrade, with no operator action, is the same class of
+regression as one that began refusing tool calls. Per-request events go to `slog`
+only — the audit chain gets periodic `egress.summary` aggregates and a capped
+first-sighting record, because the chain is hashed and fsynced and a
+host-rotating client must not be able to drive its length.
+
+`Enforcement()` names the tier (`proxy-only`/`scoped`/`global`) and the startup
+path warns when it is `proxy-only`. Keep that distinction visible: a proxy nothing
+is forced through is not enforcement, and an operator must never read one as the
+other.
 
 ### Cost and correctness
 
@@ -418,9 +452,12 @@ with no pinned baseline is skipped rather than treated as drift.
 Everything is `//go:build windows && (amd64 || arm64)` **except** the
 deliberately platform-agnostic files: `pkg/windows/{toolsets,params,result}.go`,
 all of `pkg/inventory`, all of `internal/mcpspec`, all of `internal/mcpconf`, and
-and all of `internal/guardrails` except its `contain` actuators and the`signals` run-context detector. Preserve that split — it is what keeps the filter
-engine, the schema validation, the conformance reporting and the security logic
-testable in isolation.
+all of `internal/guardrails` except its `contain` actuators and the `signals`
+run-context detector. `hostmatch` and `egress` are untagged for the same reason —
+the allowlist decision and the proxy's request path are pure Go and must stay
+runnable without a Windows host; only the future `egress` OS enforcer is tagged.
+Preserve that split — it is what keeps the filter engine, the schema validation,
+the conformance reporting and the security logic testable in isolation.
 
 There is one extra tag: **`conformance`**. It adds the loopback HTTP host and the
 conformance-suite fixtures and nothing else, and `go build ./...` must never

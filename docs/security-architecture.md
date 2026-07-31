@@ -428,7 +428,8 @@ defence against a compromised host.
 | **Silent posture drift** (Secure Boot off, BitLocker suspended, MDM removed mid-session) | In-flight monitor re-evaluates live posture every interval → audited always, kill on drift when armed |
 | **Log tampering / gaps** | Hash-chained append-only audit + heartbeat; `VerifyChain` detects any break |
 | **Credential disclosure to the model** | The `Credentials` tool has no read mode and no engine function returns a secret; `inject` types it and returns only a character count. Secrets never reach argv, tool results, or the audit chain |
-| **Data exposure over plaintext HTTP** | `"enforce_https": true` refuses `http://` for `Scrape`, for a URL-shaped `App` launch that would open the browser, and for the may-run endpoint. Scheme matching is case-insensitive. Does **not** intercept navigation inside an already-open browser — that needs a device proxy |
+| **Data exposure over plaintext HTTP** | `"enforce_https": true` refuses `http://` for `Scrape`, for a URL-shaped `App` launch that would open the browser, and for the may-run endpoint. Scheme matching is case-insensitive. Does **not** intercept navigation inside an already-open browser; the egress proxy is what covers that |
+| **Egress to unapproved destinations** (including navigation inside an already-open browser) | `"egress"` runs a loopback CONNECT/HTTP proxy admitting only the declared domains. The allowlist is checked before the name is resolved, so a refused host emits no DNS query, and resolved addresses are re-checked against loopback/RFC1918/link-local before dialling, so an allowed name cannot be pointed at something internal. Enforcement tiers: `proxy-only` (advisory), `scoped` (firewall block rules on named applications), `global` (machine-wide default-deny) |
 
 ---
 

@@ -315,8 +315,10 @@ can click a link, use the address bar, or follow a redirect to an `http://` site
 without any tool call passing through the server. Enforce HTTPS constrains the
 URLs the *server* fetches or opens, not where a browser subsequently goes.
 
-Closing that gap needs enforcement below the tool layer — a device proxy that
-filters egress by scheme and host, so it applies however the browser got there.
+Closing that gap needs enforcement below the tool layer, which is what the
+`egress` policy block provides: a loopback proxy that filters by host, so it
+applies however the browser got there. See
+[Egress](docs/policy-config.md#egress-the-domains-the-device-may-reach).
 That is not implemented here.
 
 Also unaffected: the loopback status endpoint (`transparency.status_addr`)

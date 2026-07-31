@@ -20,6 +20,7 @@ import (
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/contain"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/egress"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/enforce"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
@@ -233,6 +234,17 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// --- Out-of-band kill switch + tiered action executor ---
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
+
+	// --- Device egress proxy ---
+	// Registered before the executor's Restore defer so the deferred stack
+	// unwinds in the right order: containment is undone first, then the egress
+	// state it was layered over.
+	egressSvc, cleanupEgress, err := provisionEgress(runCtx, devicePolicy, audit, logger)
+	if err != nil {
+		return err
+	}
+	defer cleanupEgress()
+
 	startedAt := time.Now()
 	actuator := contain.NewSystemActuator(logger)
 	executor := contain.NewKillExecutor(contain.KillExecutorDeps{
@@ -245,6 +257,9 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			// Revoke credentials before tearing the engine down: containment must not
 			// leave session credentials installed on the machine.
 			cleanupCreds()
+			// Stop admitting egress too. Containment that left an allowlisted
+			// path open would be containment in name only.
+			cleanupEgress()
 			_ = dsk.Close() // finalize recording synchronously (idempotent)
 		},
 		Abort: func(cause error) {
@@ -299,7 +314,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// Guardrail tools registered unconditionally (present under any persona).
 	statusTool, statusHandler := status.StatusTool(
 		holder.get,
-		snapshotFn(startedAt, rugpull, heartbeat, audit, kill),
+		snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress),
 		kill,
 	)
 	server.AddTool(statusTool, statusHandler)
@@ -383,7 +398,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			Addr:     devicePolicy.Transparency.StatusAddr,
 			Token:    devicePolicy.Transparency.StatusToken,
 			Current:  holder.get,
-			Snapshot: snapshotFn(startedAt, rugpull, heartbeat, audit, kill),
+			Snapshot: snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress),
 			Kill:     kill,
 			Logger:   logger,
 		}
@@ -424,6 +439,8 @@ func snapshotFn(
 	hb *watch.Heartbeat,
 	audit *audit.AuditLog,
 	kill *contain.KillSwitch,
+	egressSvc *egress.Service,
+	egressCfg policy.EgressPolicy,
 ) status.SnapshotProvider {
 	return func() status.ServerStatus {
 		beats, age := hb.Snapshot()
@@ -438,6 +455,7 @@ func snapshotFn(
 			AuditChainHead:   head,
 			Killed:           tripped,
 			KillReason:       reason,
+			Egress:           egressStatus(egressSvc, egressCfg),
 		}
 	}
 }
