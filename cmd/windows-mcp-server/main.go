@@ -60,6 +60,7 @@ func rootCmd() *cobra.Command {
 // `stdio` and `check`.
 func guardrailConfigFrom(v *viper.Viper) winmcp.Config {
 	return winmcp.Config{
+		PolicyConfig: v.GetString("policy-config"),
 		// Layer 1: pre-flight
 		Security:            v.GetBool("security"),
 		WithMDM:             v.GetBool("with-mdm"),
@@ -121,6 +122,9 @@ func addGuardrailFlags(f *pflag.FlagSet) {
 
 // addPreflightFlags — Layer 1: checks evaluated once at startup.
 func addPreflightFlags(f *pflag.FlagSet) {
+	f.String("policy-config", "", "Path to the device-policy JSON document. Omit to use the built-in "+
+		"default, which evaluates every declared signal and records every verdict but refuses nothing. "+
+		"Validate one with `policy validate`, and see which rules cover a tool with `policy explain`.")
 	f.Bool("security", false, "Master switch: enforce pre-flight checks and force-on all transparency services (audit log, heartbeat, rug-pull detection, on-screen banner, recording).")
 	f.Bool("with-mdm", false, "Pre-flight: require the device to be MDM-enrolled.")
 	f.String("with-logged-on-account", "", "Pre-flight: require the interactive user to match this regex.")

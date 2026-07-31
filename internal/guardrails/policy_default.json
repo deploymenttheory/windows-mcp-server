@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "mode": "audit",
+  "signals": {
+    "run-context": { "ttl": "0s" }
+  },
+  "rules": [
+    {
+      "name": "interactive-session",
+      "match": { "toolset": "*" },
+      "require": ["run-context"],
+      "on_fail": "deny"
+    }
+  ],
+  "rate_limits": [],
+  "kill": {
+    "triggers": {
+      "posture_drift": false,
+      "rugpull": false,
+      "heartbeat_gap": false,
+      "sentinel": false
+    },
+    "actions": {
+      "isolate": false,
+      "lock": false,
+      "shutdown": false
+    }
+  },
+  "transparency": {
+    "audit_sink": "stderr",
+    "heartbeat": "30s",
+    "banner": true
+  },
+  "inflight": {
+    "interval": "60s"
+  },
+  "enforce_https": false
+}

@@ -55,7 +55,7 @@ const shutdownGrace = 5 * time.Second
 // What makes the evidence meaningful is that the surface is built by
 // newMCPSurface and wrapped in the same middleware chain as RunStdio, in the same
 // order: inject-deps and cache hints from the shared constructor, then audit,
-// rug-pull and tool policy. Only the transport differs.
+// rug-pull and the policy engine. Only the transport differs.
 //
 // Two deliberate differences from a production run, both to avoid measuring
 // something other than protocol conformance:
@@ -64,10 +64,11 @@ const shutdownGrace = 5 * time.Second
 //     fixtures built in, the fixture tools; it never drives the real desktop.
 //     A real tool call here would reach a nil engine, which is a bug in the run
 //     rather than a supported path.
-//   - The circuit breaker is registered but not enabled, matching the shipped
-//     default (RunStdio enables it only under --circuit-breaker or enforce mode).
-//     An enabled breaker would refuse the suite's own request pattern partway
-//     through and report the refusals as conformance failures.
+//   - The policy engine runs under the built-in default policy, which evaluates
+//     and records but refuses nothing. The engine has to be in the chain — a
+//     conformance result gathered without it would describe a server nobody runs
+//     — but a policy that refused calls partway through would report its own
+//     refusals as protocol failures.
 func RunConformanceHost(ctx context.Context, cfg Config, hostCfg ConformanceConfig) error {
 	if err := requireLoopback(hostCfg.Addr); err != nil {
 		return err
@@ -160,12 +161,21 @@ func buildConformanceServer(
 	server.AddReceivingMiddleware(rugpull.PromptMiddleware())
 	server.AddReceivingMiddleware(rugpull.ResourceMiddleware())
 	server.AddReceivingMiddleware(rugpull.DiscoverMiddleware())
-	server.AddReceivingMiddleware(guardrails.ToolPolicyMiddleware(guardrails.CircuitConfig{
-		Enabled: false,
-		Logger:  logger,
+
+	// The policy engine under the built-in default: present, evaluating and
+	// recording, refusing nothing. The suite must meet the same middleware chain a
+	// real session does — otherwise the conformance evidence describes a server
+	// nobody runs — but a policy that refused calls would report the refusals as
+	// protocol failures.
+	engine := guardrails.NewEngine(guardrails.DefaultPolicy(), newGuardrailRegistry(cfg, logger), nil,
+		func() *guardrails.Env { return &guardrails.Env{Sys: &conformanceProbe{}, Logger: logger} })
+	server.AddReceivingMiddleware(engine.Middleware(guardrails.EnforcerDeps{
+		Audit:  audit,
+		Logger: logger,
 	}))
 
 	inv.RegisterAll(ctx, server, deps)
+	engine.SetIndex(newToolIndex(ctx, inv))
 
 	kill := guardrails.NewKillSwitch(nil)
 	statusTool, statusHandler := guardrails.StatusTool(
@@ -213,6 +223,26 @@ func requireLoopback(addr string) error {
 	}
 	return nil
 }
+
+// conformanceProbe satisfies guardrails.SystemProbe without a desktop engine.
+//
+// The conformance host creates no engine — the suite never drives the real
+// desktop — so the default policy's signals have nothing to read. Every method
+// returns a zero value, which makes run-context report a non-interactive session
+// and therefore fail. Under the default policy that is a warning and nothing
+// more, which is the intended outcome: the middleware is exercised on every
+// request, and no request is refused.
+type conformanceProbe struct{}
+
+func (*conformanceProbe) RunShell(context.Context, string) (string, error) { return "", nil }
+func (*conformanceProbe) DomainSKU() (guardrails.DomainSKU, error) {
+	return guardrails.DomainSKU{}, nil
+}
+func (*conformanceProbe) RunContext() guardrails.RunContext { return guardrails.RunContext{} }
+func (*conformanceProbe) DeviceIdentity() guardrails.DeviceIdentity {
+	return guardrails.DeviceIdentity{Hostname: "conformance-host"}
+}
+func (*conformanceProbe) IsAdmin() bool { return false }
 
 // conformanceAuditSink writes the hash-chained audit entries to the logger, so a
 // conformance run leaves the same transparency trail a real session would and the

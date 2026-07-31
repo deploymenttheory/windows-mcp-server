@@ -4,6 +4,7 @@ package winmcp
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
+	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
 )
 
 // systemProbe adapts the desktop engine to guardrails.SystemProbe. A fresh probe
@@ -68,6 +70,85 @@ func (p *systemProbe) DeviceIdentity() guardrails.DeviceIdentity {
 		EntraDeviceID: p.entraID,
 		TenantID:      p.tenantID,
 	}
+}
+
+// loadPolicy resolves the active device policy.
+//
+// With no --policy-config the embedded default applies: the engine is present,
+// every declared signal is evaluated and every verdict recorded, but nothing is
+// refused. That is deliberate — an engine that arrived enforcing would start
+// refusing tool calls on devices that worked the day before, with no operator
+// action and no document to point at.
+//
+// A named policy that fails to load is fatal. Falling back to the default would
+// silently run a device under weaker policy than its operator wrote, which is the
+// worst of the available outcomes.
+func loadPolicy(cfg Config, reg *guardrails.Registry, logger *slog.Logger) (*guardrails.Policy, error) {
+	if cfg.PolicyConfig == "" {
+		logger.Info("device policy: built-in default (audit only, nothing refused)")
+		return guardrails.DefaultPolicy(), nil
+	}
+	policy, err := guardrails.LoadPolicy(cfg.PolicyConfig, reg.IDs())
+	if err != nil {
+		return nil, fmt.Errorf("device policy: %w", err)
+	}
+	logger.Info("device policy loaded",
+		"path", cfg.PolicyConfig,
+		"mode", string(policy.Mode),
+		"signals", policy.SignalIDs(),
+		"rules", len(policy.Rules),
+	)
+	return policy, nil
+}
+
+// killPolicyConfig maps the policy's containment actions to the executor's config.
+func killPolicyConfig(policy *guardrails.Policy) guardrails.KillActionConfig {
+	a := policy.Kill.Actions
+	return guardrails.KillActionConfig{
+		Isolate:       a.Isolate,
+		KillProcs:     len(a.KillProcs) > 0,
+		ProcNames:     a.KillProcs,
+		Lock:          a.Lock,
+		Shutdown:      a.Shutdown,
+		ShutdownDelay: a.ShutdownDelay.Std(),
+	}
+}
+
+// toolIndex adapts the served inventory to guardrails.ToolIndex, so policy rules
+// can match on the toolset and annotations a tool actually carries.
+//
+// It is a snapshot taken once the manifest is assembled, not a live view: the
+// manifest cannot change while the process runs — the rug-pull detector trips the
+// kill switch if it does — so a snapshot is accurate, and it keeps the lookup a
+// map read on the request path rather than a filter pass over every tool.
+type toolIndex map[string]guardrails.ToolFacts
+
+func (i toolIndex) Lookup(tool string) (guardrails.ToolFacts, bool) {
+	facts, ok := i[tool]
+	return facts, ok
+}
+
+// newToolIndex builds the index from the assembled inventory.
+func newToolIndex(ctx context.Context, inv *inventory.Inventory) toolIndex {
+	tools := inv.AvailableTools(ctx)
+	index := make(toolIndex, len(tools))
+	for i := range tools {
+		st := &tools[i]
+		facts := guardrails.ToolFacts{
+			Name:    st.Tool.Name,
+			Toolset: string(st.Toolset.ID),
+		}
+		// A tool with no annotations is treated as neither read-only nor
+		// destructive: it then matches only the broad rules, which is the safe
+		// reading of "the manifest does not say".
+		if a := st.Tool.Annotations; a != nil {
+			facts.ReadOnly = a.ReadOnlyHint
+			facts.OpenWorld = a.OpenWorldHint != nil && *a.OpenWorldHint
+			facts.Destructive = a.DestructiveHint != nil && *a.DestructiveHint
+		}
+		index[st.Tool.Name] = facts
+	}
+	return index
 }
 
 // guardrailEnv builds a fresh evaluation environment. The same systemProbe backs
