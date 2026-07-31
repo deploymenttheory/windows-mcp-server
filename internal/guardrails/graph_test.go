@@ -130,19 +130,18 @@ func TestGraphAttestation(t *testing.T) {
 	}
 }
 
-func TestGraphAddsEnterprisePresetChecks(t *testing.T) {
+// TestGraphRegistersItsSignals checks the Graph signals become available for a
+// policy to declare. Registering only makes a signal available; whether it is
+// evaluated is the policy's decision, so there is nothing else to assert here.
+func TestGraphRegistersItsSignals(t *testing.T) {
 	reg := NewRegistry()
 	RegisterBuiltins(reg)
 	RegisterGraph(reg, NewGraphClient(GraphConfig{TenantID: "t", ClientID: "c", ClientSecret: "s"}))
-	sel, _ := reg.Select(Config{Enterprise: true})
-	var ids []string
-	for _, s := range sel {
-		ids = append(ids, s.g.ID)
-	}
-	joined := strings.Join(ids, ",")
+
+	joined := strings.Join(reg.IDs(), ",")
 	for _, want := range []string{"graph-entra-compliant", "graph-intune-compliant", "graph-intune-enrolled"} {
 		if !strings.Contains(joined, want) {
-			t.Errorf("enterprise preset missing %s (have %s)", want, joined)
+			t.Errorf("registry is missing %s (have %s)", want, joined)
 		}
 	}
 }

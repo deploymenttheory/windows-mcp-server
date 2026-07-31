@@ -24,13 +24,11 @@ func RegisterBuiltins(reg *Registry) {
 	reg.Register(Guardrail{
 		ID:          "mdm-enrolled",
 		Description: "Device is MDM-enrolled",
-		Enterprise:  true,
 		Check:       checkMDMEnrolled,
 	})
 	reg.Register(Guardrail{
 		ID:          "entra-joined",
 		Description: "Device is Entra/Azure-AD joined",
-		Enterprise:  true,
 		Check:       checkEntraJoined,
 	})
 	reg.Register(Guardrail{
