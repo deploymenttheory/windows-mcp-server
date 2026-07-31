@@ -106,7 +106,19 @@ the point of audit mode, and why it does not simply skip evaluation.
     "control_dir": ""
   },
 
-  "enforce_https": true            // refuse plaintext http:// targets
+  "enforce_https": true,           // refuse plaintext http:// targets
+
+  "egress": {                      // device egress proxy; omit or disable to leave networking untouched
+    "enabled": true,
+    "allow": ["*.contoso.com", "login.microsoftonline.com"],
+    "listen": "127.0.0.1:8181",    // loopback only
+    "allow_ports": [443, 80],
+    "applications": [],            // full .exe paths blocked from bypassing the proxy (needs elevation)
+    "block_all_outbound": false,   // machine-wide default-deny (needs elevation)
+    "set_system_proxy": false,     // point this user's WinINET settings at the proxy
+    "allow_private_networks": false,
+    "auth_token_env": ""           // env var NAME holding a Proxy-Authorization secret
+  }
 }
 ```
 
@@ -230,9 +242,76 @@ error: policy policy.json: invalid policy:
 device is not admitted — so CI and health probes can gate on posture. It is
 deliberately slow; that is what a diagnostic is for.
 
+## Egress: the domains the device may reach
+
+`egress` declares the destinations this device is allowed to connect to. When it
+is enabled the server runs a loopback forward proxy that admits only those
+destinations and refuses everything else.
+
+A pattern is an exact hostname, an IP literal, or a wildcard:
+
+| Pattern | Matches | Does not match |
+|---|---|---|
+| `contoso.com` | that host exactly | `www.contoso.com` |
+| `*.contoso.com` | `contoso.com`, `www.contoso.com`, `a.b.contoso.com` | `fakecontoso.com` |
+| `203.0.113.7` | that address, written any equivalent way | any other address |
+
+`*` on its own is refused: an allowlist that admits everything is a
+misconfiguration, not a policy. So is a pattern carrying a scheme, port or path,
+because the extra part would silently not mean what it says.
+
+### Three tiers, and the difference matters
+
+| `enforcement` | What it means |
+|---|---|
+| `proxy-only` | The allowlist binds whatever is configured to use the proxy. Nothing stops an application ignoring it. No elevation needed. |
+| `scoped` | The applications named in `applications` are given outbound-block firewall rules, so they cannot reach anything except the proxy. Needs elevation. |
+| `global` | The machine's default outbound action becomes block, with an exception set for DNS, DHCP, NCSI, update and Defender. Needs elevation. |
+
+The tier in force is reported by `GuardrailStatus` and the status endpoint under
+`egress.enforcement`, and the server logs a warning at startup when it is
+`proxy-only` — so a proxy nothing is forced through is never mistaken for
+enforcement.
+
+*`scoped` and `global` land in a later phase; today an `applications` or
+`block_all_outbound` entry is accepted by validation and not yet actuated.*
+
+### What the proxy does per request
+
+The order is deliberate. The allowlist is checked **before the name is
+resolved**, so a refused host produces no DNS query — otherwise the refusal
+itself becomes an outbound signal. Only then is the name resolved, and every
+answer is checked against loopback, RFC1918, link-local (which covers the
+`169.254.169.254` metadata address), CGNAT and multicast before one is dialled.
+The connection goes to that vetted address, never to the name, so an allowed
+name whose answer changes between the check and the dial cannot redirect it.
+
+Set `allow_private_networks` if the allowlist deliberately names intranet hosts.
+Loopback, link-local and multicast stay refused regardless.
+
+TLS is never intercepted. A `CONNECT` request carries its target in cleartext,
+which is all the allowlist needs — there is no certificate authority and nothing
+is decrypted. The corollary is that an allowed domain is an opaque bidirectional
+channel: this is a policy control, not a data-exfiltration control.
+
+### Limits worth knowing
+
+- The proxy binds loopback only, for the same reason the transport is stdio-only.
+  Any local process can use it unless you set `auth_token_env`.
+- `set_system_proxy` writes this user's WinINET settings. Applications are free
+  to ignore them; that is why the firewall tiers exist.
+- Blocked applications can still resolve names — they just cannot connect. DNS
+  remains an unmonitored channel.
+- Windows Firewall rules do not cover WSL2 or Hyper-V guest traffic, and
+  UWP/AppContainer applications cannot reach a loopback proxy without a
+  `CheckNetIsolation LoopbackExempt` grant.
+- Rules name image paths, so a copy-renamed binary escapes `scoped`. `global` is
+  the strong posture.
+- A local administrator can undo any of it. This is a guardrail, not a boundary.
+
 ## Examples
 
-`policy/examples/` holds four starting points, each validated by the test suite:
+`policy/examples/` holds five starting points, each validated by the test suite:
 
 | File | For |
 |---|---|
@@ -240,6 +319,7 @@ deliberately slow; that is what a diagnostic is for.
 | `secure.json` | A managed device: MDM plus hardware posture for destructive tools. |
 | `enterprise.json` | Entra-joined Enterprise fleet with VBS/HVCI and Credential Guard. |
 | `locked-down.json` | Allowlisted, attested devices; drifting out of bounds kills the session. |
+| `egress.json` | A domain allowlist: the device may reach only the named destinations. |
 
 ## Migrating from the flags
 

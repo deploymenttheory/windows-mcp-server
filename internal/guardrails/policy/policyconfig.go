@@ -15,10 +15,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/hostmatch"
 )
 
 // SchemaVersion is the only schema version this build understands.
@@ -128,6 +132,7 @@ var (
 	ErrUndeclaredSignal = errors.New("rule requires a signal that is not declared")
 	ErrEmptyMatch       = errors.New("rule matches nothing")
 	ErrInvalidRateLimit = errors.New("invalid rate limit")
+	ErrInvalidEgress    = errors.New("invalid egress policy")
 	// ErrInvalidPolicy wraps the collected validation problems, so a caller can
 	// test for "the policy is bad" without matching on the rendered list.
 	ErrInvalidPolicy = errors.New("invalid policy")
@@ -220,6 +225,9 @@ type Policy struct {
 	InFlight     InFlightPolicy     `json:"inflight"`
 	// EnforceHTTPS refuses plaintext http:// targets at the tool layer.
 	EnforceHTTPS bool `json:"enforce_https"`
+	// Egress declares the domains the device may reach, served by a loopback
+	// proxy. Absent or disabled, the device's networking is untouched.
+	Egress EgressPolicy `json:"egress,omitempty"`
 }
 
 // SignalConfig is how one device signal is read.
@@ -358,6 +366,73 @@ type TransparencyPolicy struct {
 	StatusToken string `json:"status_token,omitempty"`
 }
 
+// EgressPolicy configures the device egress proxy: a loopback CONNECT/HTTP
+// proxy that admits only the declared domains.
+//
+// The proxy alone is cooperative — it constrains whatever is configured to use
+// it. Naming applications (or opting into a machine-wide outbound block) is what
+// makes it enforcement, and both of those need elevation. Which tier is in force
+// is reported in the status snapshot so an operator cannot mistake one for the
+// other.
+type EgressPolicy struct {
+	Enabled bool `json:"enabled"`
+	// Allow lists the destinations the device may reach: exact hostnames, IP
+	// literals, or "*.example.com", which covers the apex and every depth below
+	// it. An enabled policy with an empty list is refused rather than treated as
+	// "allow nothing" — it is far more likely to be an unfinished document.
+	Allow StringSet `json:"allow,omitempty"`
+	// Listen is the proxy's loopback address; empty means DefaultEgressListen.
+	// Non-loopback is refused at load, for the same reason the transport is
+	// stdio-only: this server does not stand up listeners the network can reach.
+	Listen string `json:"listen,omitempty"`
+	// AllowPorts bounds the ports a CONNECT may target; empty means 443 and 80.
+	// Without it a tunnel to an allowed host is a generic TCP relay to any port
+	// on it.
+	AllowPorts []int `json:"allow_ports,omitempty"`
+	// Applications are full paths of executables given outbound-block firewall
+	// rules, so they cannot go around the proxy. Requires elevation.
+	Applications StringSet `json:"applications,omitempty"`
+	// BlockAllOutbound flips the machine's default outbound action to block.
+	// This is the strong posture and the disruptive one; it is opt-in, needs
+	// elevation, and carries its own exception set.
+	BlockAllOutbound bool `json:"block_all_outbound"`
+	// SetSystemProxy points this user's WinINET settings at the proxy. A
+	// convenience, not enforcement: an application is free to ignore it.
+	SetSystemProxy bool `json:"set_system_proxy"`
+	// AllowPrivateNetworks permits targets that resolve into RFC1918 space, for
+	// an allowlist that names intranet hosts. Loopback, link-local and multicast
+	// stay refused regardless.
+	AllowPrivateNetworks bool `json:"allow_private_networks"`
+	// AuthTokenEnv names an environment variable holding a shared secret every
+	// client must present as Proxy-Authorization. It names the variable, never
+	// the value: the policy document is meant to be reviewable and checked in.
+	AuthTokenEnv string `json:"auth_token_env,omitempty"`
+}
+
+// Defaults for an enabled egress policy.
+const (
+	DefaultEgressListen = "127.0.0.1:8181"
+)
+
+// DefaultEgressPorts is the port allowlist applied when none is written.
+func DefaultEgressPorts() []int { return []int{443, 80} }
+
+// Enforcement names the tier in force, for the status snapshot and the audit
+// record. The distinction matters: "proxy-only" constrains whatever opts in,
+// where the other two constrain the workload whether it wants to be or not.
+func (e EgressPolicy) Enforcement() string {
+	switch {
+	case !e.Enabled:
+		return "off"
+	case e.BlockAllOutbound:
+		return "global"
+	case len(e.Applications) > 0:
+		return "scoped"
+	default:
+		return "proxy-only"
+	}
+}
+
 // InFlightPolicy configures continuous verification.
 type InFlightPolicy struct {
 	// Interval is how often expired signals are refreshed in the background. It
@@ -414,6 +489,17 @@ func Parse(raw []byte) (*Policy, error) {
 	}
 	if p.Mode == "" {
 		p.Mode = ModeAuditOnly
+	}
+	// Defaults are applied only to an enabled egress block, so a disabled one
+	// stays the zero value and Validate can tell "written but not in force" from
+	// "not written at all".
+	if p.Egress.Enabled {
+		if p.Egress.Listen == "" {
+			p.Egress.Listen = DefaultEgressListen
+		}
+		if len(p.Egress.AllowPorts) == 0 {
+			p.Egress.AllowPorts = DefaultEgressPorts()
+		}
 	}
 	return &p, nil
 }
@@ -472,12 +558,92 @@ func (p *Policy) Validate(known []string) error {
 		}
 	}
 
+	p.validateEgress(add)
+
 	if len(problems) > 0 {
 		// Every problem is reported at once: an operator fixing a policy one error
 		// per run will give up before the policy is right.
 		return fmt.Errorf("%w:\n  - %s", ErrInvalidPolicy, strings.Join(problems, "\n  - "))
 	}
 	return nil
+}
+
+// validateEgress checks the egress block, appending to the collected problems
+// rather than returning, so one run reports everything wrong with the document.
+func (p *Policy) validateEgress(add func(string, ...any)) {
+	e := p.Egress
+	if !e.Enabled {
+		// A control written but not switched on is the failure this whole package
+		// exists to prevent: the author believes the device is constrained and it
+		// is not. Refusing is louder than a log line nobody reads.
+		if len(e.Allow) > 0 || len(e.Applications) > 0 || e.BlockAllOutbound ||
+			e.SetSystemProxy || e.Listen != "" || len(e.AllowPorts) > 0 || e.AuthTokenEnv != "" {
+			add("%v: egress is configured but egress.enabled is false, so none of it is in force",
+				ErrInvalidEgress)
+		}
+		return
+	}
+
+	if len(e.Allow) == 0 {
+		add("%v: egress.enabled is true with an empty egress.allow; list the domains the device may reach",
+			ErrInvalidEgress)
+	}
+	if _, err := hostmatch.Compile(e.Allow); err != nil {
+		add("%v: %v", ErrInvalidEgress, err)
+	}
+	if err := validateLoopbackAddr(e.Listen); err != nil {
+		add("%v: egress.listen %v", ErrInvalidEgress, err)
+	}
+	for _, port := range e.AllowPorts {
+		if port < 1 || port > 65535 {
+			add("%v: egress.allow_ports has %d, which is not a port", ErrInvalidEgress, port)
+		}
+	}
+	for _, app := range e.Applications {
+		if strings.TrimSpace(app) == "" {
+			add("%v: egress.applications has an empty entry", ErrInvalidEgress)
+			continue
+		}
+		if !looksAbsoluteWindowsPath(app) {
+			add("%v: egress.applications %q must be a full path, since a firewall rule names an image",
+				ErrInvalidEgress, app)
+		}
+	}
+}
+
+// validateLoopbackAddr refuses anything the network could reach. The egress
+// proxy is unauthenticated by default, and this server's whole posture is that
+// it does not expose listeners off the machine.
+func validateLoopbackAddr(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("%w: %q is not host:port", ErrInvalidEgress, addr)
+	}
+	if port == "" {
+		return fmt.Errorf("%w: %q names no port", ErrInvalidEgress, addr)
+	}
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	if err != nil {
+		return fmt.Errorf("%w: %q is not an IP address or localhost", ErrInvalidEgress, host)
+	}
+	if !ip.IsLoopback() {
+		return fmt.Errorf("%w: %q is not a loopback address; the egress proxy binds loopback only",
+			ErrInvalidEgress, host)
+	}
+	return nil
+}
+
+// looksAbsoluteWindowsPath is a deliberately lenient check. This package is
+// platform-agnostic and its tests run anywhere, so it cannot use the host's path
+// semantics to judge a path that will be used on Windows.
+func looksAbsoluteWindowsPath(p string) bool {
+	if strings.HasPrefix(p, `\\`) { // UNC
+		return true
+	}
+	return len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/')
 }
 
 // SignalIDs returns the declared signal ids, sorted.

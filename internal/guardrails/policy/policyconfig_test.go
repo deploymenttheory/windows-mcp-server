@@ -48,6 +48,15 @@ func TestDefaultPolicyIsAuditOnly(t *testing.T) {
 	if p.Transparency.Heartbeat <= 0 {
 		t.Error("default policy disables the heartbeat; the default should observe, not go quiet")
 	}
+	// The default must not stand up a listener or touch the device's networking.
+	// A server that started proxying traffic on upgrade, with no operator action,
+	// is the same class of regression as one that started refusing tool calls.
+	if p.Egress.Enabled {
+		t.Error("default policy enables the egress proxy; the default must not alter the device's networking")
+	}
+	if p.Egress.Enforcement() != "off" {
+		t.Errorf("default egress enforcement = %q, want off", p.Egress.Enforcement())
+	}
 }
 
 func TestParsePolicyRejectsUnknownVersion(t *testing.T) {

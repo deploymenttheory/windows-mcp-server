@@ -73,4 +73,9 @@ func TestAuditExampleRefusesNothing(t *testing.T) {
 	if a := policy.Kill.Actions; a.Isolate || a.Lock || a.Shutdown || len(a.KillProcs) > 0 {
 		t.Errorf("audit.json configures containment: %+v", a)
 	}
+	// Nor may it alter the device's networking: an operator adopting audit.json
+	// is asking to watch, not to have traffic start being dropped.
+	if policy.Egress.Enabled {
+		t.Error("audit.json enables the egress proxy; the observe-only example must not constrain traffic")
+	}
 }
