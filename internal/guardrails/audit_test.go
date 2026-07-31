@@ -157,6 +157,76 @@ func TestAuditCoversResourceAndPromptReads(t *testing.T) {
 	}
 }
 
+// TestAuditCoversTheStatelessConnection covers the two methods protocol
+// 2026-07-28 introduced in place of the handshake and the GET stream (SEP-2575).
+// Without them the chain would hold no record that a client ever connected, and
+// none that a long-lived egress stream was opened.
+func TestAuditCoversTheStatelessConnection(t *testing.T) {
+	sink := &memSink{}
+	mw := NewAuditLog(sink).Middleware()
+	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		return &mcp.CallToolResult{}, nil
+	}
+
+	discover := &mcp.ServerRequest[mcp.Params]{Params: &mcp.DiscoverParams{
+		Meta: mcp.Meta{
+			mcp.MetaKeyProtocolVersion: "2026-07-28",
+			mcp.MetaKeyClientInfo:      map[string]any{"name": "conformance", "version": "0.2.0"},
+		},
+	}}
+	if _, err := mw(next)(context.Background(), "server/discover", discover); err != nil {
+		t.Fatal(err)
+	}
+	listen := &mcp.ServerRequest[mcp.Params]{Params: &mcp.SubscriptionsListenParams{
+		Notifications: &mcp.NotificationSubscriptions{
+			ToolsListChanged:      true,
+			ResourceSubscriptions: []string{"windows://desktop/snapshot"},
+		},
+	}}
+	if _, err := mw(next)(context.Background(), "subscriptions/listen", listen); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sink.entries) != 2 {
+		t.Fatalf("want 2 audit entries, got %d", len(sink.entries))
+	}
+	if sink.entries[0].Event != "server.discover" {
+		t.Errorf("entry 0 event = %q, want server.discover", sink.entries[0].Event)
+	}
+	discovered := string(sink.entries[0].Payload)
+	if !containsSubstr(discovered, "2026-07-28") || !containsSubstr(discovered, "conformance") {
+		t.Errorf("discover audit should record who connected and under which revision: %s", discovered)
+	}
+	if sink.entries[1].Event != "subscriptions.listen" {
+		t.Errorf("entry 1 event = %q, want subscriptions.listen", sink.entries[1].Event)
+	}
+	if !containsSubstr(string(sink.entries[1].Payload), "windows://desktop/snapshot") {
+		t.Errorf("listen audit should record the subscribed URIs: %s", sink.entries[1].Payload)
+	}
+	if err := VerifyChain(sink.entries); err != nil {
+		t.Errorf("chain must remain verifiable: %v", err)
+	}
+}
+
+// TestDiscoverAuditToleratesAMissingMetaTriple guards the backward-compatibility
+// probe: a pre-2026-07-28 client calling server/discover over stdio carries none
+// of the _meta fields, and that must still produce an audit entry rather than a
+// panic or a dropped record.
+func TestDiscoverAuditToleratesAMissingMetaTriple(t *testing.T) {
+	sink := &memSink{}
+	mw := NewAuditLog(sink).Middleware()
+	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		return &mcp.CallToolResult{}, nil
+	}
+	req := &mcp.ServerRequest[mcp.Params]{Params: &mcp.DiscoverParams{}}
+	if _, err := mw(next)(context.Background(), "server/discover", req); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.entries) != 1 || sink.entries[0].Event != "server.discover" {
+		t.Fatalf("a bare discover must still be audited, got %+v", sink.entries)
+	}
+}
+
 // TestPromptArgsDigestIsDeterministic ensures map iteration order cannot change
 // the digest, which would make the audit trail non-reproducible.
 func TestPromptArgsDigestIsDeterministic(t *testing.T) {

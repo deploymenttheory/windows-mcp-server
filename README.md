@@ -1,5 +1,8 @@
 # windows-mcp-server
 
+[![MCP conformance](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdeploymenttheory%2Fwindows-mcp-server%2Fmain%2Fconformance%2Fbadge.json)](docs/mcp-compliance.md)
+[![Spec compliance](https://github.com/deploymenttheory/windows-mcp-server/actions/workflows/mcp-spec-compliance.yml/badge.svg)](https://github.com/deploymenttheory/windows-mcp-server/actions/workflows/mcp-spec-compliance.yml)
+
 A [Model Context Protocol](https://modelcontextprotocol.io) server that bridges
 AI agents to the **Windows desktop** — UI Automation, synthetic mouse/keyboard
 input, screenshots, window and application control, PowerShell, the registry,
@@ -41,8 +44,8 @@ with the `stdio` subcommand. Build it once and point your client at the full
 path to `windows-mcp-server.exe`.
 
 Subcommands: `stdio` (run the server), `check` (evaluate device guardrails once
-and print the decision), `personas` (list the presets), and `spec-check` (score
-the served MCP surface against the published protocol schemas).
+and print the decision), `personas` (list the presets), and `conformance-report`
+(render results from the official MCP conformance suite).
 
 Configuration flags (persona, toolsets, read-only, overlay) are passed either as
 extra `args` after `stdio`, or as `WINDOWS_MCP_*` environment variables — see
@@ -412,44 +415,89 @@ reports them as `injectable: false` rather than failing opaquely.
 > unwipeable Go string for unescaped values — but Go offers no guarantee that a
 > copy was never made. Treat the host as trusted.
 
-## MCP spec compliance
+## MCP conformance
 
-The project tracks its conformance to the Model Context Protocol as the spec
-evolves. `spec-check` runs a real in-process MCP session against the server's own
-tool manifest and validates the resulting **wire objects** — handshake result,
-capabilities, `tools/list` — against the official JSON Schemas vendored under
-`schema/`:
+The server targets protocol revision **`2026-07-28`**. Conformance is measured by the
+official suite,
+[modelcontextprotocol/conformance](https://github.com/modelcontextprotocol/conformance),
+which `.github/workflows/mcp-spec-compliance.yml` runs against the server and commits
+the results of.
 
-```sh
-./windows-mcp-server.exe spec-check                       # newest revision, markdown
-./windows-mcp-server.exe spec-check --spec-version all --format json
-./windows-mcp-server.exe spec-check --fail-under 80       # exit 2 below threshold
+`2026-07-28` is a stateless protocol: there are no protocol sessions and no
+`initialize` handshake. Each request carries its protocol version and client
+capabilities in `_meta`, `server/discover` advertises identity and capabilities,
+`subscriptions/listen` carries server-to-client notifications, every result carries
+`resultType`, every list and read result carries `ttlMs` and `cacheScope`, POSTs carry
+`Mcp-Method` / `Mcp-Name` headers, and MCP error codes sit in the `-32020..-32099`
+range the spec reserves.
+
+### Running the suite
+
+The suite's `server` mode reaches a server over HTTP: `--url` is required and there is
+no stdio path. The conformance host provides one, behind the `conformance` build tag:
+
+```powershell
+go build -tags conformance -o conformance-host.exe ./cmd/windows-mcp-server
+./conformance-host.exe conformance-serve --addr 127.0.0.1:3001            # product pass
+./conformance-host.exe conformance-serve --addr 127.0.0.1:3002 --fixtures # fixtures pass
+
+npx -y @modelcontextprotocol/conformance@0.2.0-alpha.10 server `
+  --url http://127.0.0.1:3001/mcp --suite all --spec-version 2026-07-28 `
+  --expected-failures conformance/baseline-product.yml
 ```
 
-The report separates two things that are easy to conflate:
+`--suite all` is required: the suite classifies `2026-07-28` as its draft revision, so
+`--suite active` excludes the scenarios that revision introduced.
 
-- **Conformance** — does everything the server serves validate against the spec?
-  Weighted across tool definitions (45), `tools/list` (20), the handshake (15),
-  capabilities (10) and revision currency (10). This is the gateable number:
-  `--fail-under 100`.
-- **Coverage** — how much of the optional feature surface exists at all. Purely
-  informational, because MCP does not require a server to implement prompts,
-  resources or completions; a tools-only server is fully conformant. Gate it
-  separately with `--fail-coverage-under` if you want to.
+`go build ./...` does not compile the host, so **the released binary has no HTTP
+listener** and is stdio-only. The host binds loopback addresses only, and refuses
+anything else. Both it and `stdio` build their MCP surface through one function
+(`newMCPSurface`) and the same middleware chain, so what the suite measures is what the
+shipped binary serves; `TestConformanceHostServesTheShippedSurface` fails if their
+manifests or capabilities diverge.
 
-A dimension the revision does not define is *skipped* and drops out of the
-denominator rather than scoring zero — revisions restructure, and `2026-07-28`
-removes `initialize` entirely in favour of `server/discover`. The handshake is
-also skipped when scoring a revision other than the one the session negotiated,
-since its shape is decided by that negotiation.
+### The two passes
 
-Current state: **conformance 100/100 against every vendored revision, zero
-findings**, and 100% method coverage on `2026-07-28`.
+- **product** — the manifest the server ships. The suite's `tools/call`,
+  `resources/read` and `prompts/get` scenarios invoke fixed fixture names
+  (`test_simple_text`, `test://static-text`, …) that this server does not expose, so
+  they sit in `conformance/baseline-product.yml` with a reason each. This pass covers
+  the transport and wire conformance above, plus the suite's schema validation of every
+  message the server sends.
+- **fixtures** — the same server with `--fixtures`, which registers those names so the
+  handler paths behind them are exercised. The fixtures exist only under the
+  `conformance` build tag.
 
-`.github/workflows/mcp-spec-compliance.yml` runs weekly: it syncs new revisions
-from upstream, rescores, raises a PR for the vendored schema, and opens a tracking
-issue on a new revision or a score regression. The current report is committed at
-[docs/mcp-compliance.md](docs/mcp-compliance.md).
+A third run at `2025-11-25` records backward compatibility.
+
+CI gates on the suite's own exit code: a failure absent from the baseline fails the
+build, and so does a baseline entry that has started passing.
+
+### The badge
+
+The conformance badge is written by the workflow run that produces the results and
+committed to `conformance/badge.json`; shields.io renders that file, so the figure
+moves only when a run reaches `main`.
+
+It reports the **product** pass — the share of checks that ran and passed. Skipped
+checks are excluded from both sides, since a scenario the revision does not apply to
+counts neither for nor against the server. Checks that are expected to fail are
+included, so scenarios listed in `conformance/baseline-product.yml` hold the figure
+below 100%. The second badge is the workflow's status: green means every pass matched
+its baseline.
+
+The badge is a summary; [the report](docs/mcp-compliance.md) is the verdict, with raw
+`checks.json` under `conformance/results/`. `conformance-report` renders them:
+
+```sh
+./windows-mcp-server.exe conformance-report \
+  --pass product=conformance/results/product-checks.json \
+  --pass fixtures=conformance/results/fixtures-checks.json
+```
+
+Without Node installed, `go test ./internal/winmcp/` still validates every served tool,
+the `tools/list` result, the capabilities and the handshake against the schemas
+vendored under `schema/`, offline and pass/fail.
 
 ## Visual feedback overlays
 
@@ -603,12 +651,15 @@ internal/winmcp          server bootstrap: inventory + MCP server + deps middlew
 internal/desktop         the Windows engine — a dedicated COM STA thread serving
                          UIA traversal, SendInput, GDI screenshots, overlays,
                          PowerShell, and a WMI worker thread
-internal/mcpspec          MCP schema conformance scorer (platform-agnostic)
+internal/mcpspec         vendored-schema loader + offline wire validation
+internal/mcpconf         official conformance-suite results: ingest + reporting
 pkg/windows              the MCP tool definitions + dependency-injection glue
 pkg/inventory            domain-agnostic toolset engine (grouping, filtering,
                          personas, read-only, feature flags)
 schema/                  vendored MCP protocol schemas, one dir per revision,
-                         plus versions.json and the committed compliance.json
+                         plus versions.json
+conformance/             expected-failure baselines and the committed results
+                         of the official conformance suite
 ```
 
 All Win32/COM work is serialized onto one STA thread; WMI runs on its own

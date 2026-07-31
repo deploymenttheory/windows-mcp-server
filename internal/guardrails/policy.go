@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -69,12 +70,28 @@ func ToolPolicyMiddleware(cfg CircuitConfig) mcp.Middleware {
 			// information the Snapshot and SystemInfo tools are throttled for.
 			if method == "resources/read" {
 				if p, ok := req.GetParams().(*mcp.ReadResourceParams); ok {
-					if blocked := countSensitive(&mu, &hits, cfg, "resource:"+p.URI); blocked != nil {
-						return blocked, nil
+					if msg, blocked := countSensitive(&mu, &hits, cfg, "resource:"+p.URI); blocked {
+						return nil, blockedError(msg)
 					}
 				}
 				return next(ctx, method, req)
 			}
+			// subscriptions/listen (2026-07-28, SEP-2575) opens a long-lived
+			// server-to-client stream in place of the HTTP GET stream and
+			// resources/subscribe. It is counted once, at open: the stream is a
+			// standing egress channel, and opening many of them is exactly the
+			// pattern the window exists to notice.
+			if method == "subscriptions/listen" {
+				if msg, blocked := countSensitive(&mu, &hits, cfg, "subscriptions/listen"); blocked {
+					return nil, blockedError(msg)
+				}
+				return next(ctx, method, req)
+			}
+			// server/discover is deliberately NOT counted. It replaced the initialize
+			// handshake, carries no server state, and a client may legitimately probe
+			// it before every request under the stateless protocol — rate-limiting it
+			// would break conformant clients rather than contain a hostile one. It is
+			// audited instead.
 			if method != "tools/call" {
 				return next(ctx, method, req)
 			}
@@ -93,8 +110,8 @@ func ToolPolicyMiddleware(cfg CircuitConfig) mcp.Middleware {
 
 			// Rate-based circuit breaker over sensitive tools.
 			if sensitiveTools[name] {
-				if blocked := countSensitive(&mu, &hits, cfg, name); blocked != nil {
-					return blocked, nil
+				if msg, blocked := countSensitive(&mu, &hits, cfg, name); blocked {
+					return blockedResult(msg), nil
 				}
 			}
 
@@ -104,12 +121,16 @@ func ToolPolicyMiddleware(cfg CircuitConfig) mcp.Middleware {
 }
 
 // countSensitive records one sensitive invocation in the sliding window and
-// returns a blocked result when the threshold is reached, or nil to proceed.
+// reports whether the threshold is reached, with the message to refuse with.
 //
-// Shared by the tools/call and resources/read paths so both are counted against
-// the *same* window: an agent must not be able to stay under the limit by
-// alternating between a tool and a resource that expose the same data.
-func countSensitive(mu *sync.Mutex, hits *[]time.Time, cfg CircuitConfig, subject string) mcp.Result {
+// Shared by the tools/call, resources/read and subscriptions/listen paths so all
+// are counted against the *same* window: an agent must not be able to stay under
+// the limit by alternating between a tool and a resource that expose the same
+// data, or by moving to a subscription stream.
+//
+// It returns the message rather than a built result because how a block is
+// expressed depends on the method — see blockedResult and blockedError.
+func countSensitive(mu *sync.Mutex, hits *[]time.Time, cfg CircuitConfig, subject string) (string, bool) {
 	mu.Lock()
 	now := time.Now()
 	cutoff := now.Add(-cfg.Window)
@@ -131,9 +152,9 @@ func countSensitive(mu *sync.Mutex, hits *[]time.Time, cfg CircuitConfig, subjec
 		if cfg.OnTrip != nil {
 			cfg.OnTrip(fmt.Sprintf("circuit breaker: %d sensitive calls within %s", count, cfg.Window))
 		}
-		return blockedResult(fmt.Sprintf("too many sensitive actions (%d within %s)", count, cfg.Window))
+		return fmt.Sprintf("too many sensitive actions (%d within %s)", count, cfg.Window), true
 	}
-	return nil
+	return "", false
 }
 
 func toolNameArgs(req mcp.Request) (name, args string) {
@@ -152,9 +173,30 @@ func matchTripwire(args string) string {
 	return ""
 }
 
+// blockedResult refuses a tools/call. An IsError result with a nil Go error is
+// the tools convention: the model reads the message and self-corrects.
 func blockedResult(msg string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		IsError: true,
 		Content: []mcp.Content{&mcp.TextContent{Text: "Blocked by guardrail policy: " + msg}},
+	}
+}
+
+// blockedError refuses a method that has no IsError result envelope.
+//
+// The IsError convention belongs to tools/call alone. resources/read must return
+// a ReadResourceResult and subscriptions/listen a SubscriptionsListenResult, so
+// answering either with a CallToolResult puts a tool-result envelope on the wire
+// where the schema requires something else — a conformance failure, and one a
+// client would have no way to interpret. A JSON-RPC error is the protocol's own
+// way to refuse.
+//
+// The code is InvalidRequest rather than an MCP-specific one: 2026-07-28 reserves
+// -32020..-32099 for the specification itself, so a server-policy refusal has no
+// business minting a code in that range.
+func blockedError(msg string) error {
+	return &jsonrpc.Error{
+		Code:    jsonrpc.CodeInvalidRequest,
+		Message: "Blocked by guardrail policy: " + msg,
 	}
 }

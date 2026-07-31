@@ -1,12 +1,28 @@
 name: mcp | Spec Compliance
 
-# Tracks this project's conformance to the Model Context Protocol as the spec
-# evolves. Weekly it syncs the vendored schema revisions from upstream, rescores
-# the served MCP surface against every revision, and raises a PR (new schema) or a
-# tracking issue (new revision / score regression).
+# Proves this server conforms to the Model Context Protocol, and keeps that proof
+# current as the spec evolves.
 #
-# Only the GitHub CLI and first-party actions are used, so every dependency is
-# either SHA-pinned or the pre-installed `gh`.
+# The verdict comes from the official suite, github.com/modelcontextprotocol/conformance,
+# run against the server itself. It is not self-assessed: this repository previously
+# scored its own wire objects against vendored schemas and published the resulting
+# 100/100, a number marked by the project it graded.
+#
+# The suite can only reach a server over HTTP — `--url` is a required option of its
+# `server` command and there is no stdio path — so the job builds the server with
+# `-tags conformance`, which adds a loopback Streamable HTTP host and nothing else.
+# TestConformanceHostServesTheShippedSurface asserts that host serves a manifest and
+# capabilities identical to the stdio binary, which is what lets the evidence transfer.
+#
+# The suite runs twice, and the two results are recorded separately:
+#
+#   product  — the manifest this server actually ships. Proves the transport and wire
+#              conformance the 2026-07-28 revision is about.
+#   fixtures — with the suite's named fixture tools registered, so tools/call,
+#              resources/read and prompts/get are exercised at all. The fixtures never
+#              exist in a released binary.
+#
+# A third run at 2025-11-25 records backward compatibility.
 
 on:
   workflow_dispatch:
@@ -17,26 +33,40 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - '.github/workflows/mcp-spec-compliance.yml'
+      - 'conformance/**'
       - 'schema/**'
+      - 'internal/mcpconf/**'
       - 'internal/mcpspec/**'
-      - 'internal/winmcp/speccheck.go'
+      - 'internal/winmcp/**'
+      - 'internal/guardrails/**'
       - 'pkg/windows/**'
       - 'go.mod'
 
 permissions:
   contents: read
 
+env:
+  # Pinned exactly. 2026-07-28 support landed on the 0.2.0 alpha line; the stable
+  # 0.1.x predates the revision entirely. A pre-release must not float — the verdict
+  # is only reproducible against a known harness. The "newer harness" step below
+  # reports when a later version exists rather than silently adopting it.
+  HARNESS_VERSION: '0.2.0-alpha.10'
+  SPEC_VERSION: '2026-07-28'
+  BACKCOMPAT_SPEC_VERSION: '2025-11-25'
+  PRODUCT_PORT: '3001'
+  FIXTURES_PORT: '3002'
+
 jobs:
-  compliance:
-    name: '📐 Score against MCP schemas'
-    # Windows-only: the spec-check subcommand lives behind the project's
-    # `//go:build windows` tags, and scoring runs a real in-process MCP session.
+  conformance:
+    name: '📐 Official MCP conformance suite'
+    # Windows-only: nearly every file is //go:build windows, and the server under
+    # test is a Windows desktop automation server.
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
-      contents: write        # push the vendored-schema branch
-      pull-requests: write   # open the schema-update PR
-      issues: write          # open/update the tracking issue
+      contents: write        # push the evidence branch
+      pull-requests: write   # open the evidence PR
+      issues: write          # open the tracking issue
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # PR runs report only; they must not push branches or file issues.
@@ -53,7 +83,154 @@ jobs:
           cache-dependency-path: 'go.sum'
           cache: true
 
-      - name: Sync upstream schema revisions
+      - name: Set up Node
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: '22'
+
+      - name: Build the conformance host
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The `conformance` tag adds the loopback HTTP host. A plain build must NOT
+          # contain it: that is the guarantee that the released binary is stdio-only.
+          go build -tags conformance -o "$env:RUNNER_TEMP/conformance-host.exe" ./cmd/windows-mcp-server
+          go build -o "$env:RUNNER_TEMP/released.exe" ./cmd/windows-mcp-server
+          $help = & "$env:RUNNER_TEMP/released.exe" --help 2>&1 | Out-String
+          if ($help -match 'conformance-serve') {
+            throw 'conformance-serve is present in an untagged build; the release binary must have no HTTP listener'
+          }
+          'release binary has no conformance-serve subcommand'
+
+      - name: Assert the host serves the shipped surface
+        # If this fails, nothing below is evidence about the shipped server.
+        run: go test -tags conformance ./internal/winmcp/ -run 'ConformanceHost|ConformanceFixtures' -count=1 -v
+
+      - name: Start both hosts
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Start-Host($port, $extra, $log) {
+            $args = @('conformance-serve', '--addr', "127.0.0.1:$port")
+            if ($extra) { $args += $extra }
+            Start-Process -FilePath "$env:RUNNER_TEMP/conformance-host.exe" -ArgumentList $args `
+              -RedirectStandardOutput "$env:RUNNER_TEMP/$log.out" -RedirectStandardError "$env:RUNNER_TEMP/$log.err" `
+              -PassThru | Out-Null
+          }
+          Start-Host $env:PRODUCT_PORT  $null         'product'
+          Start-Host $env:FIXTURES_PORT '--fixtures'  'fixtures'
+
+          # Health-check with a real server/discover POST. A GET returns 405 under the
+          # stateless transport, so curling the URL proves nothing.
+          $body = '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{' +
+                  '"io.modelcontextprotocol/protocolVersion":"' + $env:SPEC_VERSION + '",' +
+                  '"io.modelcontextprotocol/clientCapabilities":{}}}}'
+          $headers = @{
+            'Mcp-Method' = 'server/discover'
+            'Mcp-Protocol-Version' = $env:SPEC_VERSION
+            'Accept' = 'application/json, text/event-stream'
+          }
+          foreach ($port in @($env:PRODUCT_PORT, $env:FIXTURES_PORT)) {
+            $ready = $false
+            foreach ($attempt in 1..40) {
+              try {
+                $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port/mcp" -Method Post -Headers $headers `
+                  -ContentType 'application/json' -Body $body -UseBasicParsing -TimeoutSec 5
+                if ($r.StatusCode -eq 200) { $ready = $true; break }
+              } catch { Start-Sleep -Milliseconds 500 }
+            }
+            if (-not $ready) {
+              Get-Content "$env:RUNNER_TEMP/product.err","$env:RUNNER_TEMP/fixtures.err" -ErrorAction SilentlyContinue
+              throw "conformance host on port $port never became ready"
+            }
+            "host on $port ready"
+          }
+
+      - name: Run the suite — product pass
+        id: product
+        continue-on-error: true
+        run: |
+          npx -y "@modelcontextprotocol/conformance@$env:HARNESS_VERSION" server `
+            --url "http://127.0.0.1:$env:PRODUCT_PORT/mcp" `
+            --suite all --spec-version $env:SPEC_VERSION `
+            --expected-failures conformance/baseline-product.yml `
+            --output-dir "$env:RUNNER_TEMP/results/product"
+
+      - name: Run the suite — fixtures pass
+        id: fixtures
+        continue-on-error: true
+        run: |
+          npx -y "@modelcontextprotocol/conformance@$env:HARNESS_VERSION" server `
+            --url "http://127.0.0.1:$env:FIXTURES_PORT/mcp" `
+            --suite all --spec-version $env:SPEC_VERSION `
+            --expected-failures conformance/baseline-fixtures.yml `
+            --output-dir "$env:RUNNER_TEMP/results/fixtures"
+
+      - name: Run the suite — 2025-11-25 backward compatibility
+        id: backcompat
+        continue-on-error: true
+        run: |
+          npx -y "@modelcontextprotocol/conformance@$env:HARNESS_VERSION" server `
+            --url "http://127.0.0.1:$env:FIXTURES_PORT/mcp" `
+            --suite all --spec-version $env:BACKCOMPAT_SPEC_VERSION `
+            --expected-failures conformance/baseline-fixtures.yml `
+            --output-dir "$env:RUNNER_TEMP/results/backcompat"
+
+      - name: Collect the evidence
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force conformance/results | Out-Null
+
+          # The suite writes each run to results/server-<scenario>-<timestamp>/checks.json.
+          # Merge a pass's runs into one checks.json so the committed evidence is one
+          # file per pass rather than a directory tree keyed by wall-clock time.
+          function Merge-Checks($from, $to) {
+            $all = @()
+            Get-ChildItem -Path $from -Filter checks.json -Recurse -ErrorAction SilentlyContinue |
+              ForEach-Object { $all += (Get-Content $_.FullName -Raw | ConvertFrom-Json) }
+            if (-not $all) { throw "no checks.json produced under $from" }
+            $all | ConvertTo-Json -Depth 20 | Set-Content $to -Encoding utf8
+            "$to <- $($all.Count) checks"
+          }
+          Merge-Checks "$env:RUNNER_TEMP/results/product"   'conformance/results/product-checks.json'
+          Merge-Checks "$env:RUNNER_TEMP/results/fixtures"  'conformance/results/fixtures-checks.json'
+          Merge-Checks "$env:RUNNER_TEMP/results/backcompat" 'conformance/results/backcompat-checks.json'
+
+      - name: Render the compliance report
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+          $runUrl = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          go run ./cmd/windows-mcp-server conformance-report `
+            --pass "product=conformance/results/product-checks.json" `
+            --pass "fixtures=conformance/results/fixtures-checks.json" `
+            --spec-version $env:SPEC_VERSION --harness-version $env:HARNESS_VERSION `
+            --baseline-product conformance/baseline-product.yml `
+            --baseline-fixtures conformance/baseline-fixtures.yml `
+            --commit '${{ github.sha }}' --generated-at $stamp --run-url $runUrl `
+            --format markdown --out docs/mcp-compliance.md `
+            --badge-out conformance/badge.json --badge-pass product
+          go run ./cmd/windows-mcp-server conformance-report `
+            --pass "product=conformance/results/product-checks.json" `
+            --pass "fixtures=conformance/results/fixtures-checks.json" `
+            --spec-version $env:SPEC_VERSION --harness-version $env:HARNESS_VERSION `
+            --baseline-product conformance/baseline-product.yml `
+            --baseline-fixtures conformance/baseline-fixtures.yml `
+            --commit '${{ github.sha }}' --generated-at $stamp --run-url $runUrl `
+            --format json --out conformance/results/report.json
+
+      - name: Job summary
+        run: Get-Content docs/mcp-compliance.md | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Upload results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: conformance-results
+          path: |
+            conformance/results/
+            ${{ runner.temp }}/product.err
+            ${{ runner.temp }}/fixtures.err
+
+      - name: Check for a newer spec revision
         id: sync
         run: |
           $ErrorActionPreference = 'Stop'
@@ -61,93 +238,69 @@ jobs:
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
           $known = @($manifest.versions)
 
-          # Upstream directory listing. Revision dirs are ISO dates; 'draft' churns
-          # continuously and is deliberately not vendored.
+          # 'draft' churns continuously and is deliberately not vendored.
           $listing = gh api repos/modelcontextprotocol/modelcontextprotocol/contents/schema | ConvertFrom-Json
           $upstream = @($listing |
             Where-Object { $_.type -eq 'dir' -and $_.name -match '^\d{4}-\d{2}-\d{2}$' } |
             ForEach-Object { $_.name } | Sort-Object)
-
           if (-not $upstream) { throw 'Upstream returned no revision directories' }
 
           $new = @($upstream | Where-Object { $known -notcontains $_ })
-          "upstream: $($upstream -join ', ')"
-          "known   : $($known -join ', ')"
-          "new     : $(if ($new) { $new -join ', ' } else { '(none)' })"
-
           foreach ($v in $new) {
             New-Item -ItemType Directory -Force "schema/$v" | Out-Null
             $url = "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/$v/schema.json"
             Invoke-WebRequest -Uri $url -OutFile "schema/$v/schema.json"
-            "downloaded schema/$v/schema.json"
           }
-
           if ($new) {
             $manifest.versions = @($upstream)
             $manifest | ConvertTo-Json -Depth 5 | Set-Content $manifestPath -Encoding utf8
           }
-
           "new_versions=$($new -join ',')" | Out-File $env:GITHUB_OUTPUT -Append
           "newest=$($upstream[-1])"        | Out-File $env:GITHUB_OUTPUT -Append
 
-      - name: Read previous scores
-        id: before
+      - name: Check for a newer conformance harness
+        id: harness
         run: |
           $ErrorActionPreference = 'Stop'
-          if (Test-Path 'schema/compliance.json') {
-            Copy-Item 'schema/compliance.json' "$env:RUNNER_TEMP/compliance-before.json"
-            "had_baseline=true" | Out-File $env:GITHUB_OUTPUT -Append
-          } else {
-            "had_baseline=false" | Out-File $env:GITHUB_OUTPUT -Append
+          # Reported, never adopted automatically: a moving harness would make the
+          # verdict irreproducible.
+          $latest = (npm view '@modelcontextprotocol/conformance' dist-tags --json | ConvertFrom-Json)
+          $stable = $latest.latest
+          $alpha  = $latest.alpha
+          "current: $env:HARNESS_VERSION / latest: $stable / alpha: $alpha"
+          $newer = ''
+          if ($alpha -and $alpha -ne $env:HARNESS_VERSION) { $newer = $alpha }
+          "newer=$newer" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Gate on the suite's verdict
+        # Last, so the evidence is always collected, rendered and uploaded even when
+        # the verdict is bad. The suite's own exit code is the gate: a failure not in
+        # the baseline fails here, and so does a baseline entry that has started
+        # passing. Nothing re-derives that judgement.
+        run: |
+          $failed = @()
+          if ('${{ steps.product.outcome }}'   -ne 'success') { $failed += 'product' }
+          if ('${{ steps.fixtures.outcome }}'  -ne 'success') { $failed += 'fixtures' }
+          if ('${{ steps.backcompat.outcome }}' -ne 'success') { $failed += 'backcompat (2025-11-25)' }
+          if ($failed) {
+            throw "conformance suite reported unexpected results for: $($failed -join ', '). See docs/mcp-compliance.md and the uploaded artifact."
           }
+          'all passes matched their baselines'
 
-      - name: Score against every vendored revision
-        id: score
+      - name: Commit the evidence
+        if: env.MUTATE == 'true' && always()
         run: |
           $ErrorActionPreference = 'Stop'
-          go run ./cmd/windows-mcp-server spec-check --spec-version all --format json --out schema/compliance.json
-          go run ./cmd/windows-mcp-server spec-check --spec-version all --format markdown --out docs/mcp-compliance.md
-
-          $reports = Get-Content 'schema/compliance.json' -Raw | ConvertFrom-Json
-          $newest  = $reports | Select-Object -Last 1
-          "newest_version=$($newest.schema_version)" | Out-File $env:GITHUB_OUTPUT -Append
-          "newest_score=$($newest.conformance_score)" | Out-File $env:GITHUB_OUTPUT -Append
-          "newest_coverage=$($newest.coverage.methods_pct)" | Out-File $env:GITHUB_OUTPUT -Append
-          "negotiated=$($newest.negotiated_version)" | Out-File $env:GITHUB_OUTPUT -Append
-
-      - name: Job summary
-        run: Get-Content docs/mcp-compliance.md | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-      - name: Detect score regression
-        id: regress
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $regressed = @()
-          $beforePath = "$env:RUNNER_TEMP/compliance-before.json"
-          if (Test-Path $beforePath) {
-            $before = @(Get-Content $beforePath -Raw | ConvertFrom-Json)
-            $after  = @(Get-Content 'schema/compliance.json' -Raw | ConvertFrom-Json)
-            foreach ($a in $after) {
-              $b = $before | Where-Object { $_.schema_version -eq $a.schema_version } | Select-Object -First 1
-              if ($b -and $a.conformance_score -lt $b.conformance_score) {
-                $regressed += "$($a.schema_version) conformance: $($b.conformance_score) -> $($a.conformance_score)"
-              }
-            }
-          }
-          if ($regressed) { "  regressions: $($regressed -join '; ')" } else { "  no regressions" }
-          "regressed=$($regressed -join '; ')" | Out-File $env:GITHUB_OUTPUT -Append
-
-      - name: Open PR for vendored schema and report changes
-        if: env.MUTATE == 'true'
-        run: |
-          $ErrorActionPreference = 'Stop'
-          git add schema docs/mcp-compliance.md
-          if (-not (git diff --cached --name-only)) { "nothing changed"; exit 0 }
+          # `conformance` covers results/ and badge.json — the README badge reads the
+          # committed badge.json from the default branch, so it only moves when a run
+          # is actually merged.
+          git add conformance docs/mcp-compliance.md schema
+          if (-not (git diff --cached --name-only)) { 'nothing changed'; exit 0 }
 
           $newVersions = '${{ steps.sync.outputs.new_versions }}'
-          $branch = "chore/mcp-schema-sync-${{ github.run_id }}"
+          $branch = "chore/mcp-conformance-${{ github.run_id }}"
           $title  = if ($newVersions) { "chore: vendor MCP schema revision(s) $newVersions" }
-                    else { 'chore: refresh MCP spec compliance report' }
+                    else { 'chore: refresh MCP conformance evidence' }
 
           git config user.name  'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
@@ -155,36 +308,32 @@ jobs:
           git commit -m $title -m 'Automated by .github/workflows/mcp-spec-compliance.yml.'
           git push --set-upstream origin $branch
 
-          # Body is assembled as an array and passed via --body-file: PowerShell
-          # here-strings need their terminator at column 0, which a YAML block
-          # scalar cannot provide.
           $vendored = if ($newVersions) { '`' + $newVersions + '`' } else { '_none_' }
           $body = @(
-            'Automated MCP spec sync.'
+            'Automated MCP conformance run.'
             ''
+            "- Suite: ``@modelcontextprotocol/conformance@$env:HARNESS_VERSION``"
+            "- Spec revision: ``$env:SPEC_VERSION`` (plus ``$env:BACKCOMPAT_SPEC_VERSION`` for backward compatibility)"
             "- New revision(s) vendored: $vendored"
-            '- Newest published: `${{ steps.score.outputs.newest_version }}`'
-            '- Server negotiates: `${{ steps.score.outputs.negotiated }}`'
-            '- Conformance against newest: **${{ steps.score.outputs.newest_score }}/100**'
-            '- Method coverage: ${{ steps.score.outputs.newest_coverage }}%'
+            '- Newest published upstream: `${{ steps.sync.outputs.newest }}`'
             ''
-            'See `docs/mcp-compliance.md` in this PR for the full scored report.'
+            'Per-scenario results are in `docs/mcp-compliance.md`; raw `checks.json` output is under `conformance/results/`.'
           )
           $bodyFile = Join-Path $env:RUNNER_TEMP 'pr-body.md'
           $body | Set-Content $bodyFile -Encoding utf8
           gh pr create --title $title --body-file $bodyFile --base '${{ github.ref_name }}' --head $branch
 
-      - name: Open or update tracking issue
-        if: env.MUTATE == 'true' && (steps.sync.outputs.new_versions != '' || steps.regress.outputs.regressed != '')
+      - name: Open or update the tracking issue
+        if: env.MUTATE == 'true' && always() && (steps.sync.outputs.new_versions != '' || steps.harness.outputs.newer != '' || failure())
         run: |
           $ErrorActionPreference = 'Stop'
           $marker = 'mcp-spec-compliance'
-          $title  = 'MCP spec compliance: action needed'
+          $title  = 'MCP conformance: action needed'
 
           $newVersions = '${{ steps.sync.outputs.new_versions }}'
-          $regressed   = '${{ steps.regress.outputs.regressed }}'
-          $newCell  = if ($newVersions) { '`' + $newVersions + '`' } else { '_none_' }
-          $regCell  = if ($regressed)   { '`' + $regressed   + '`' } else { '_none_' }
+          $newHarness  = '${{ steps.harness.outputs.newer }}'
+          $newCell = if ($newVersions) { '`' + $newVersions + '`' } else { '_none_' }
+          $harnessCell = if ($newHarness) { '`' + $newHarness + '`' } else { '_none_' }
 
           $body = @(
             "<!-- $marker -->"
@@ -192,12 +341,18 @@ jobs:
             ''
             '| | |'
             '|---|---|'
-            '| Newest published revision | `${{ steps.score.outputs.newest_version }}` |'
-            '| Server negotiates | `${{ steps.score.outputs.negotiated }}` |'
-            '| Conformance against newest | **${{ steps.score.outputs.newest_score }}/100** |'
-            '| Method coverage | ${{ steps.score.outputs.newest_coverage }}% |'
+            "| Spec revision run against | ``$env:SPEC_VERSION`` |"
+            '| Newest published upstream | `${{ steps.sync.outputs.newest }}` |'
             "| New revision(s) this run | $newCell |"
-            "| Score regressions | $regCell |"
+            "| Harness in use | ``$env:HARNESS_VERSION`` |"
+            "| Newer harness available | $harnessCell |"
+            '| product pass | `${{ steps.product.outcome }}` |'
+            '| fixtures pass | `${{ steps.fixtures.outcome }}` |'
+            '| backcompat pass | `${{ steps.backcompat.outcome }}` |'
+            ''
+            'A failed pass means the suite reported a failure that is not in the matching'
+            'baseline, or a baseline entry that has started passing. Both need a human:'
+            'the first is a regression, the second a stale excuse to delete.'
             ''
             'Full report: `docs/mcp-compliance.md`. Workflow run:'
             '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
@@ -208,7 +363,6 @@ jobs:
           $existing = gh issue list --state open --search "$marker in:body" --json number --jq '.[0].number'
           if ($existing) {
             gh issue comment $existing --body-file $bodyFile
-            "updated issue #$existing"
           } else {
             gh issue create --title $title --body-file $bodyFile
           }

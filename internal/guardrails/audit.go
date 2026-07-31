@@ -196,12 +196,20 @@ func VerifyChain(entries []AuditEntry) error {
 }
 
 // Middleware records every invocation that can move data in the audit chain:
-// tools/call, resources/read and prompts/get.
+// tools/call, resources/read, prompts/get, subscriptions/listen and
+// server/discover.
 //
 // Resources and prompts are audited for the same reason tools are — a resource
 // read returns desktop or system state to the caller, so it is a data-egress path
 // and an unaudited one would be a hole in the chain. Arguments are recorded as a
 // SHA-256 digest, never raw, since they may carry secrets.
+//
+// The last two exist because protocol 2026-07-28 restructured the connection
+// (SEP-2575). server/discover replaced the initialize handshake, so without it the
+// chain would carry no record that a client ever connected or under which
+// revision; subscriptions/listen replaced the HTTP GET stream and
+// resources/subscribe with a long-lived server-to-client stream, which is a
+// standing data-egress path and the longest-lived one the server has.
 //
 // It always calls next: audit never blocks, blocking is the circuit breaker's job.
 func (a *AuditLog) Middleware() mcp.Middleware {
@@ -227,9 +235,57 @@ func (a *AuditLog) Middleware() mcp.Middleware {
 						"args_sha256": digestBytes(promptArgsBytes(p.Arguments)),
 					})
 				}
+			case "server/discover":
+				if p, ok := req.GetParams().(*mcp.DiscoverParams); ok {
+					_, _ = a.Append("server.discover", clientIdentity(p.Meta))
+				}
+			case "subscriptions/listen":
+				if p, ok := req.GetParams().(*mcp.SubscriptionsListenParams); ok {
+					_, _ = a.Append("subscriptions.listen", subscriptionFields(p.Notifications))
+				}
 			}
 			return next(ctx, method, req)
 		}
+	}
+}
+
+// clientIdentity extracts who is connecting and under which protocol revision
+// from the per-request _meta triple that 2026-07-28 uses in place of the
+// initialize handshake. Fields absent from _meta are simply omitted: a
+// pre-2026-07-28 client reaching server/discover as a compatibility probe carries
+// none of them, and that is not an error.
+func clientIdentity(meta mcp.Meta) map[string]any {
+	fields := map[string]any{}
+	if v, ok := meta[mcp.MetaKeyProtocolVersion].(string); ok {
+		fields["protocol_version"] = v
+	}
+	// clientInfo arrives as decoded JSON, so it is a map rather than an
+	// mcp.Implementation. Only name and version are recorded — the audit chain
+	// wants an identifier, not an arbitrary client-supplied blob.
+	if info, ok := meta[mcp.MetaKeyClientInfo].(map[string]any); ok {
+		if name, ok := info["name"].(string); ok {
+			fields["client_name"] = name
+		}
+		if version, ok := info["version"].(string); ok {
+			fields["client_version"] = version
+		}
+	}
+	return fields
+}
+
+// subscriptionFields records what a client asked the server to stream to it.
+// The opted-in notification types and the subscribed resource URIs are
+// identifiers, recorded in full for the same reason resource.read records its
+// URI; nothing here carries a payload.
+func subscriptionFields(n *mcp.NotificationSubscriptions) map[string]any {
+	if n == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"tools_list_changed":     n.ToolsListChanged,
+		"prompts_list_changed":   n.PromptsListChanged,
+		"resources_list_changed": n.ResourcesListChanged,
+		"resource_subscriptions": n.ResourceSubscriptions,
 	}
 }
 

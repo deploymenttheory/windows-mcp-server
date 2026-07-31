@@ -8,34 +8,50 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"sort"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails"
-	"github.com/deploymenttheory/windows-mcp-server/internal/mcpspec"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )
 
-// captureTimeout bounds the in-process session so `spec-check` can never hang CI.
+// captureTimeout bounds the in-process session so a capture can never hang CI.
 const captureTimeout = 30 * time.Second
+
+// Surface is what a client actually receives from this server, as raw wire JSON.
+//
+// Everything here is bytes off a real session rather than a re-marshalling of our
+// Go types, because the divergence worth catching lives exactly there: between
+// this project's hand-written tool schemas, the SDK's serialization, and the
+// published spec.
+//
+// The authority on conformance is the official suite, run against the loopback
+// HTTP host. This capture serves two narrower purposes: a fast offline pass/fail
+// check against the vendored schemas, so `go test` means something on a machine
+// without Node; and the reference side of the equivalence test that lets evidence
+// gathered over HTTP transfer to the shipped stdio binary.
+type Surface struct {
+	// ToolsListResult is the tools/list result as served.
+	ToolsListResult json.RawMessage
+	// HandshakeResult is the server/discover result (or, before 2026-07-28, the
+	// initialize result) as served.
+	HandshakeResult json.RawMessage
+	// Capabilities is the serverCapabilities object as served.
+	Capabilities json.RawMessage
+	// NegotiatedVersion is the protocol revision the session settled on.
+	NegotiatedVersion string
+}
 
 // CaptureSurface assembles the tool manifest this configuration would serve, runs
 // a real in-process MCP session against it over an in-memory transport, and
-// returns the wire objects a client actually receives — the negotiated protocol
-// version, the handshake result, the declared capabilities, and the tools/list
-// result.
-//
-// Scoring the real wire bytes rather than a re-marshalling of our Go types is the
-// point: it catches divergence between this project's hand-written tool schemas,
-// the SDK's serialization, and the published spec.
+// returns the wire objects a client actually receives.
 //
 // No desktop engine is created. tools/list never invokes a tool handler, so the
 // dependency-injection middleware is wired with a nil engine; a handler call here
 // would be a bug, not a supported path.
-func CaptureSurface(ctx context.Context, cfg Config) (mcpspec.Input, error) {
-	var in mcpspec.Input
+func CaptureSurface(ctx context.Context, cfg Config) (Surface, error) {
+	var in Surface
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -44,20 +60,10 @@ func CaptureSurface(ctx context.Context, cfg Config) (mcpspec.Input, error) {
 		return in, fmt.Errorf("build inventory: %w", err)
 	}
 
-	// Mirror RunStdio's server construction exactly, so the captured manifest and
+	// Built by the same function RunStdio uses, so the captured manifest and
 	// capabilities are the ones a real client would receive.
-	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "windows-mcp-server",
-		Title:   "Windows MCP Server",
-		Version: cfg.Version,
-	}, &mcp.ServerOptions{
-		Instructions:      combineInstructions(personaInstructions, inv.Instructions()),
-		Capabilities:      pinnedCapabilities(),
-		CompletionHandler: completionHandler(inv),
-	})
-
 	deps := windows.NewBaseDeps(nil, logger, nil)
-	server.AddReceivingMiddleware(windows.InjectDepsMiddleware(deps))
+	server := newMCPSurface(cfg, inv, personaInstructions, deps).Server
 	inv.RegisterAll(ctx, server, deps)
 
 	// The two guardrail tools are registered unconditionally by RunStdio, so they
@@ -126,71 +132,15 @@ func CaptureSurface(ctx context.Context, cfg Config) (mcpspec.Input, error) {
 	}
 
 	in.NegotiatedVersion = initResult.ProtocolVersion
-	in.DeclaredCapabilities = declaredCapabilities(in.Capabilities)
-	in.ImplementedMethods = implementedMethods(in.DeclaredCapabilities)
 	return in, nil
 }
 
-// declaredCapabilities lists the non-empty capability keys the server advertises,
-// read back off the wire so it cannot drift from what clients see.
-func declaredCapabilities(raw json.RawMessage) []string {
-	if len(raw) == 0 {
-		return nil
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil
-	}
-	out := make([]string, 0, len(obj))
-	for k, v := range obj {
-		if len(v) == 0 || string(v) == "null" {
-			continue
-		}
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// Protocol method names used for wire-frame lookup and unconditional coverage.
+// Protocol method names used for wire-frame lookup.
+//
+// The 2026-07-28 handshake is server/discover; initialize is retained because a
+// pre-2026-07-28 client still negotiates with it, and the capture has to find
+// whichever one the session actually used.
 const (
-	methodDiscover            = "server/discover"
-	methodInitialize          = "initialize"
-	methodSubscriptionsListen = "subscriptions/listen"
+	methodDiscover   = "server/discover"
+	methodInitialize = "initialize"
 )
-
-// alwaysServedMethods are registered in the SDK's server dispatch table
-// unconditionally, with no capability gate — so they are implemented regardless of
-// what the server advertises. Deriving the method surface purely from declared
-// capabilities under-reports them.
-var alwaysServedMethods = []string{methodDiscover, methodSubscriptionsListen}
-
-// capabilityMethods maps a declared server capability to the JSON-RPC methods it
-// obliges the server to serve. Used to derive the implemented method surface from
-// the advertised capabilities, so adding a capability updates the score without a
-// separate hand-maintained list.
-var capabilityMethods = map[string][]string{
-	"tools":       {"tools/list", "tools/call"},
-	"resources":   {"resources/list", "resources/read", "resources/templates/list"},
-	"prompts":     {"prompts/list", "prompts/get"},
-	"completions": {"completion/complete"},
-}
-
-func implementedMethods(capabilities []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, m := range alwaysServedMethods {
-		seen[m] = true
-		out = append(out, m)
-	}
-	for _, c := range capabilities {
-		for _, m := range capabilityMethods[c] {
-			if !seen[m] {
-				seen[m] = true
-				out = append(out, m)
-			}
-		}
-	}
-	sort.Strings(out)
-	return out
-}

@@ -84,15 +84,37 @@ func HashResources(resources []*mcp.Resource) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// HashDiscover fingerprints the server's *advertisement*: the capabilities it
+// declares and the instructions it hands the model. Both reach the client through
+// server/discover (protocol 2026-07-28, SEP-2575) and, for older clients, through
+// initialize.
+//
+// SupportedVersions is deliberately excluded. It is derived by the SDK from the
+// transport rather than declared by us, so it legitimately differs between the
+// stdio server and an HTTP one — fingerprinting it would report a transport
+// difference as an attack.
+func HashDiscover(caps *mcp.ServerCapabilities, instructions string) string {
+	h := sha256.New()
+	// Capabilities carry Go maps (Experimental, Extensions); encoding/json sorts
+	// map keys, so the encoding is canonical without sorting them here.
+	_ = json.NewEncoder(h).Encode(struct {
+		Capabilities *mcp.ServerCapabilities `json:"capabilities"`
+		Instructions string                  `json:"instructions"`
+	}{caps, instructions})
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // RugPull detects "rug pulls": a server mutating its advertised tool set after
 // deployment (added/removed/renamed tools, or silently changed descriptions or
 // schemas) to smuggle unauthorized behavior past the initial approval. It pins
 // a baseline fingerprint at startup and trips the kill switch on any drift,
 // detected both inline (the tools/list response the client actually receives)
 // and out-of-band (the periodic monitor recheck).
-// Detection now spans three surfaces, because prompts and resources steer the
-// model just as tools do: a mutated prompt changes the instructions the model
-// follows, and a mutated resource URI changes what it reads.
+// Detection now spans four surfaces, because prompts and resources steer the
+// model just as tools do — a mutated prompt changes the instructions the model
+// follows, and a mutated resource URI changes what it reads — and because
+// 2026-07-28 makes server/discover the canonical advertisement of capabilities
+// and instructions, a channel that would otherwise drift unwatched.
 type RugPull struct {
 	onTrip func(reason string)
 	audit  *AuditLog
@@ -110,6 +132,7 @@ const (
 	surfaceTools     = "tools"
 	surfacePrompts   = "prompts"
 	surfaceResources = "resources"
+	surfaceDiscover  = "discover"
 )
 
 // NewRugPull builds a detector; onTrip fires the kill switch, audit records the
@@ -132,6 +155,14 @@ func (r *RugPull) SetPromptBaseline(prompts []*mcp.Prompt) string {
 // SetResourceBaseline pins the fingerprint of the fixed-URI resource manifest.
 func (r *RugPull) SetResourceBaseline(resources []*mcp.Resource) string {
 	return r.setBaseline(surfaceResources, HashResources(resources))
+}
+
+// SetDiscoverBaseline pins the fingerprint of the capabilities and instructions
+// handed to the server at construction — the values server/discover and
+// initialize advertise. Pinning from what we pass in, rather than from the first
+// response observed, means drift is caught on the very first client call.
+func (r *RugPull) SetDiscoverBaseline(caps *mcp.ServerCapabilities, instructions string) string {
+	return r.setBaseline(surfaceDiscover, HashDiscover(caps, instructions))
 }
 
 func (r *RugPull) setBaseline(surface, hash string) string {
@@ -163,6 +194,10 @@ func (r *RugPull) comparePrompts(hash, source string) error {
 
 func (r *RugPull) compareResources(hash, source string) error {
 	return r.compareSurface(surfaceResources, hash, source)
+}
+
+func (r *RugPull) compareDiscover(hash, source string) error {
+	return r.compareSurface(surfaceDiscover, hash, source)
 }
 
 // compareSurface trips once if hash diverges from that surface's baseline. A
@@ -261,6 +296,36 @@ func (r *RugPull) ResourceMiddleware() mcp.Middleware {
 				return res, err
 			}
 			_ = r.compareResources(HashResources(lr.Resources), "resources/list")
+			return res, err
+		}
+	}
+}
+
+// DiscoverMiddleware detects drift in what the server advertises about itself.
+//
+// Protocol 2026-07-28 removed the initialize handshake and made server/discover
+// the mandatory, canonical statement of a server's capabilities and instructions
+// (SEP-2575). That makes it a rug-pull vector in its own right: a server can
+// widen its declared capabilities, or rewrite the instructions steering the
+// model, without touching tools/list at all. Both methods are covered, because
+// the same advertisement reaches pre-2026-07-28 clients through initialize.
+func (r *RugPull) DiscoverMiddleware() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			res, err := next(ctx, method, req)
+			if err != nil {
+				return res, err
+			}
+			switch method {
+			case "server/discover":
+				if d, ok := res.(*mcp.DiscoverResult); ok {
+					_ = r.compareDiscover(HashDiscover(d.Capabilities, d.Instructions), method)
+				}
+			case "initialize":
+				if i, ok := res.(*mcp.InitializeResult); ok {
+					_ = r.compareDiscover(HashDiscover(i.Capabilities, i.Instructions), method)
+				}
+			}
 			return res, err
 		}
 	}

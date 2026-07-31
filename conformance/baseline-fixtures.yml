@@ -1,0 +1,66 @@
+# Expected failures for the FIXTURES pass of the official MCP conformance suite.
+#
+#   npx @modelcontextprotocol/conformance server \
+#     --url http://127.0.0.1:3002/mcp --suite all --spec-version 2026-07-28 \
+#     --expected-failures conformance/baseline-fixtures.yml
+#
+# The fixtures pass runs `conformance-serve --fixtures`, which registers the tools,
+# resources, templates and prompts the suite names. That lets tools/call,
+# resources/read, resources/templates/list and prompts/get actually execute, through
+# this server's real middleware chain, result constructors and error paths.
+#
+# The fixtures exist only under the `conformance` build tag and are never present in
+# a released binary, so this pass measures how our handler-to-wire path behaves — not
+# what the product ships. That is why the two passes are recorded separately.
+#
+# What remains here is what fixtures cannot fix: behaviour this server deliberately
+# does not have. Adding a fixture for any of it would mean advertising a feature the
+# server does not implement.
+
+server:
+  # SEP-2322 Multi Round-Trip Requests. This server never returns an
+  # InputRequiredResult — no elicitation, sampling or roots flow exists to suspend a
+  # request for — so a fixture would have to fake a protocol behaviour rather than
+  # exercise one.
+  - input-required-result-basic-elicitation
+  - input-required-result-basic-sampling
+  - input-required-result-basic-list-roots
+  - input-required-result-request-state
+  - input-required-result-multiple-input-requests
+  - input-required-result-multi-round
+  - input-required-result-missing-input-response
+  - input-required-result-non-tool-request
+  - input-required-result-result-type
+  - input-required-result-unsupported-methods
+  - input-required-result-tampered-state
+  - input-required-result-capability-check
+  - input-required-result-ignore-extra-params
+  - input-required-result-validate-input
+
+  # SEP-2243 custom headers via x-mcp-header. Needs a tool declaring a parameter
+  # sourced from a custom header; no tool here does, and inventing one would put a
+  # header-driven parameter into the manifest purely to pass a test.
+  - http-custom-header-server-validation
+
+# NOTE ON server-stateless
+#
+# server-stateless is deliberately NOT baselined, even though some of its checks are
+# expected to fail. It is one scenario carrying several groups of checks, and most of
+# them — the per-request _meta validation, server/discover, version negotiation,
+# header handling, and the 404 plus -32601 for the removed initialize/ping/
+# logging-setLevel methods — are exactly what this change is about proving.
+#
+# Two of its groups cannot pass here:
+#
+#   - the list-mutation checks, which need test_trigger_tool_change /
+#     test_trigger_prompt_change and a server that advertises listChanged.
+#     pinnedCapabilities() pins listChanged false on purpose, so implementing them
+#     would contradict a declared capability.
+#   - the client-capability checks, which need a tool that requires a capability in
+#     _meta (test_missing_capability). This server requires none.
+#
+# Those must be excused per check, as `server-stateless:<check-id>`, not by
+# baselining the whole scenario — which would throw away the verdict on everything
+# else it covers. The check ids come from the first run's checks.json; until they are
+# filled in here the run reports them as unexpected failures, which is the correct
+# and visible state to be in rather than a blanket excuse.

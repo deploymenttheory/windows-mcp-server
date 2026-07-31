@@ -3,10 +3,12 @@ package guardrails
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -78,6 +80,99 @@ func TestCircuitBreakerTripwire(t *testing.T) {
 	}
 	if atomic.LoadInt32(&tripped) == 0 {
 		t.Error("tripwire should fire the kill switch")
+	}
+}
+
+// TestBlockedNonToolMethodsUseJSONRPCErrors pins the wire shape of a refusal on
+// the methods that have no IsError envelope.
+//
+// The IsError-result convention belongs to tools/call. resources/read must return
+// a ReadResourceResult and subscriptions/listen a SubscriptionsListenResult, so
+// answering either with a CallToolResult puts a tool-result envelope on the wire
+// where the schema requires something else. That is a conformance failure the
+// 2026-07-28 wire-schema validation catches, and a client could not interpret it.
+func TestBlockedNonToolMethodsUseJSONRPCErrors(t *testing.T) {
+	cases := []struct {
+		method  string
+		params  mcp.Params
+		subject string
+	}{
+		{"resources/read", &mcp.ReadResourceParams{URI: "windows://desktop/snapshot"}, "resource read"},
+		{
+			"subscriptions/listen",
+			&mcp.SubscriptionsListenParams{Notifications: &mcp.NotificationSubscriptions{ToolsListChanged: true}},
+			"subscription stream",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method, func(t *testing.T) {
+			mw := ToolPolicyMiddleware(CircuitConfig{Enabled: true, Threshold: 2, Window: 10 * time.Second})
+			next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
+				return &mcp.CallToolResult{}, nil
+			}
+			handler := mw(next)
+			req := &mcp.ServerRequest[mcp.Params]{Params: tc.params}
+
+			// First call is under the threshold and proceeds.
+			if _, err := handler(context.Background(), tc.method, req); err != nil {
+				t.Fatalf("first %s must pass: %v", tc.subject, err)
+			}
+			res, err := handler(context.Background(), tc.method, req)
+			if err == nil {
+				t.Fatalf("a blocked %s must fail the request, not return a result (%T)", tc.subject, res)
+			}
+			if res != nil {
+				t.Errorf("a blocked %s must return a nil result, got %T", tc.subject, res)
+			}
+			var wire *jsonrpc.Error
+			if !errors.As(err, &wire) {
+				t.Fatalf("want a JSON-RPC wire error, got %T: %v", err, err)
+			}
+			if wire.Code != jsonrpc.CodeInvalidRequest {
+				t.Errorf("code = %d, want %d (InvalidRequest); -32020..-32099 is reserved for the spec",
+					wire.Code, jsonrpc.CodeInvalidRequest)
+			}
+		})
+	}
+}
+
+// TestSubscriptionsListenSharesTheBreakerWindow guards the same evasion the
+// resources/read arm closes: an agent must not be able to stay under the limit by
+// moving from tool calls to subscription streams.
+func TestSubscriptionsListenSharesTheBreakerWindow(t *testing.T) {
+	mw := ToolPolicyMiddleware(CircuitConfig{Enabled: true, Threshold: 2, Window: 10 * time.Second})
+	next := func(context.Context, string, mcp.Request) (mcp.Result, error) { return &mcp.CallToolResult{}, nil }
+
+	// One sensitive tool call, then a listen: the listen is the second hit in the
+	// shared window and must be refused.
+	if _, reached := runMiddleware(mw, callReq("PowerShell", `{"command":"x"}`)); !reached {
+		t.Fatal("first sensitive call should pass")
+	}
+	listen := &mcp.ServerRequest[mcp.Params]{Params: &mcp.SubscriptionsListenParams{}}
+	if _, err := mw(next)(context.Background(), "subscriptions/listen", listen); err == nil {
+		t.Error("subscriptions/listen must count against the same window as tools/call")
+	}
+}
+
+// TestDiscoverIsNotRateLimited pins the deliberate exception. server/discover
+// replaced the initialize handshake and a client may probe it before every
+// request under the stateless protocol, so rate-limiting it would break
+// conformant clients rather than contain a hostile one.
+func TestDiscoverIsNotRateLimited(t *testing.T) {
+	mw := ToolPolicyMiddleware(CircuitConfig{Enabled: true, Threshold: 2, Window: 10 * time.Second})
+	var reached int
+	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		reached++
+		return &mcp.DiscoverResult{}, nil
+	}
+	req := &mcp.ServerRequest[mcp.Params]{Params: &mcp.DiscoverParams{}}
+	for i := 0; i < 5; i++ {
+		if _, err := mw(next)(context.Background(), "server/discover", req); err != nil {
+			t.Fatalf("discover %d must not be blocked: %v", i, err)
+		}
+	}
+	if reached != 5 {
+		t.Errorf("every discover must reach the handler, got %d of 5", reached)
 	}
 }
 
