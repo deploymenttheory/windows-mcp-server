@@ -37,6 +37,19 @@ func provisionEgress(
 ) (*egress.Service, func(), error) {
 	noop := func() {}
 	cfg := devicePolicy.Egress
+	enforcer := egress.WindowsEnforcer{Logger: logger}
+
+	// Recovery runs even when egress is disabled now. Firewall rules outlive the
+	// process that made them, so a session killed mid-run leaves an application
+	// blocked with nothing left to proxy it — and a policy that has since turned
+	// egress off would otherwise never clean that up.
+	switch recovered, err := enforcer.Recover(); {
+	case err != nil:
+		logger.Warn("could not clean up egress rules from a previous session", "error", err)
+	case recovered > 0:
+		_, _ = auditLog.Append("egress.recovered", map[string]any{"rules": recovered})
+	}
+
 	if !cfg.Enabled {
 		return nil, noop, nil
 	}
@@ -58,6 +71,22 @@ func provisionEgress(
 		}
 	}
 
+	// Enforcement is refused rather than degraded when it cannot be performed.
+	// The kill ladder degrades because refusing to contain mid-incident is
+	// worse than containing partially; here the opposite holds — an operator
+	// whose document says these applications cannot bypass the proxy must never
+	// get a server where they silently can.
+	wantsEnforcement := len(cfg.Applications) > 0 || cfg.BlockAllOutbound
+	if wantsEnforcement && !enforcer.Elevated() {
+		_, _ = auditLog.Append("egress.enforce.error", map[string]any{
+			"reason":      "not elevated",
+			"enforcement": cfg.Enforcement(),
+		})
+		return nil, noop, fmt.Errorf("%w: egress.applications and egress.block_all_outbound "+
+			"install firewall rules, so the server must run elevated; "+
+			"remove them to run the proxy in advisory mode", egress.ErrNotElevated)
+	}
+
 	svc, err := egress.Start(ctx, egress.Config{
 		Listen:       cfg.Listen,
 		Allow:        allow,
@@ -69,6 +98,27 @@ func provisionEgress(
 	})
 	if err != nil {
 		return nil, noop, fmt.Errorf("start egress proxy: %w", err)
+	}
+
+	// Rules go in only once the proxy is actually listening: blocking an
+	// application before there is anywhere for it to go would cut it off with
+	// no route, which is the failure mode an operator would notice as "the
+	// browser broke" rather than "policy applied".
+	restoreRules, err := enforcer.Apply(egress.EnforceSpec{
+		ProxyAddr:    svc.Addr(),
+		Applications: cfg.Applications,
+		GlobalBlock:  cfg.BlockAllOutbound,
+	})
+	if err != nil {
+		svc.Stop()
+		_, _ = auditLog.Append("egress.enforce.error", map[string]any{"error": err.Error()})
+		return nil, noop, fmt.Errorf("apply egress enforcement: %w", err)
+	}
+	if wantsEnforcement {
+		_, _ = auditLog.Append("egress.enforce.applied", map[string]any{
+			"enforcement":  cfg.Enforcement(),
+			"applications": len(cfg.Applications),
+		})
 	}
 
 	_, _ = auditLog.Append("egress.start", map[string]any{
@@ -96,9 +146,19 @@ func provisionEgress(
 		once.Do(func() {
 			stopSummary()
 			svc.Stop()
-			counters := svc.Counters()
+			// Rules come out after the listener closes, in the reverse of the
+			// order they went in. An application unblocked while the proxy is
+			// still up would have a moment of unfiltered egress.
+			if err := restoreRules(); err != nil {
+				// Worth shouting about: rules left installed outlive this
+				// process, and the next start's Recover is what will clear them.
+				logger.Error("could not remove egress firewall rules; they will be cleaned up on the next start",
+					"error", err)
+				_, _ = auditLog.Append("egress.enforce.error",
+					map[string]any{"phase": "restore", "error": err.Error()})
+			}
 			_, _ = auditLog.Append("egress.stop", map[string]any{
-				"counters":     counters,
+				"counters":     svc.Counters(),
 				"denied_hosts": svc.DeniedHosts(),
 			})
 		})

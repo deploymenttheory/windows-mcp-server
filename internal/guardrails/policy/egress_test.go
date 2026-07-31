@@ -103,6 +103,13 @@ func TestEgressValidationRejectsMisconfiguration(t *testing.T) {
 			egress: `{"enabled":false,"block_all_outbound":true}`,
 			want:   "egress.enabled is false",
 		},
+		{
+			// Accepting a setting this build cannot honour would leave the
+			// operator believing the machine is default-deny.
+			name:   "global block is not implemented yet",
+			egress: `{"enabled":true,"allow":["example.com"],"block_all_outbound":true}`,
+			want:   "not implemented in this build",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := egressDoc(t, tc.egress)
@@ -149,6 +156,8 @@ func TestEgressEnforcementNamesTheTier(t *testing.T) {
 		{EgressPolicy{}, "off"},
 		{EgressPolicy{Enabled: true, Allow: StringSet{"example.com"}}, "proxy-only"},
 		{EgressPolicy{Enabled: true, Applications: StringSet{`C:\a.exe`}}, "scoped"},
+		// Global is still the name for the tier even though Validate refuses it
+		// in this build: Enforcement() reports what the document asks for.
 		{EgressPolicy{Enabled: true, BlockAllOutbound: true}, "global"},
 		// Global outranks scoped: it is the broader statement.
 		{EgressPolicy{Enabled: true, Applications: StringSet{`C:\a.exe`}, BlockAllOutbound: true}, "global"},

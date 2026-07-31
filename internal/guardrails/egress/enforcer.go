@@ -17,10 +17,11 @@ type Enforcer interface {
 	// persist its recovery state before making any change, so a crash mid-way
 	// is recoverable by the next start.
 	Apply(spec EnforceSpec) (restore func() error, err error)
-	// Recover undoes whatever a previously crashed run left behind. It runs on
-	// every startup, including when the current policy disables egress: state
-	// left by an earlier session is exactly what nothing else would clean up.
-	Recover() error
+	// Recover undoes whatever a previously crashed run left behind and reports
+	// how many rules it removed. It runs on every startup, including when the
+	// current policy disables egress: state left by an earlier session is
+	// exactly what nothing else would clean up.
+	Recover() (removed int, err error)
 }
 
 // EnforceSpec is what the OS layer is asked to arrange.
@@ -47,4 +48,4 @@ func (NoEnforcer) Apply(EnforceSpec) (func() error, error) {
 	return func() error { return nil }, nil
 }
 
-func (NoEnforcer) Recover() error { return nil }
+func (NoEnforcer) Recover() (int, error) { return 0, nil }
