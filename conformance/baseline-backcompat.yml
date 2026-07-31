@@ -39,5 +39,5 @@ server:
   # sourced from a custom header, and no tool here does.
   - http-custom-header-server-validation
 
-  # SEP-1613 keyword preservation needs a json_schema_2020_12_tool fixture.
-  - json-schema-2020-12
+  # SEP-1613 keyword preservation is NOT listed: this pass runs with --fixtures,
+  # so json_schema_2020_12_tool is present and the scenario genuinely passes.

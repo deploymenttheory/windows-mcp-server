@@ -5,9 +5,11 @@ package winmcp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -34,8 +36,10 @@ import (
 //     list-changed-capable server notifies listen streams. pinnedCapabilities
 //     pins ListChanged false on purpose, so implementing them would contradict
 //     the capability we declare.
-//   - test_missing_capability — for servers that require a client capability in
-//     _meta. This server requires none.
+//   - test_streaming_elicitation — needs the elicitation capability and a
+//     server-initiated interaction on the response stream. This server has no
+//     elicitation flow, so the fixture would have to fake the protocol behaviour
+//     rather than exercise it.
 //   - test_input_required_result_* (SEP-2322 MRTR) — this server never returns an
 //     InputRequiredResult.
 //
@@ -105,6 +109,29 @@ func registerConformanceFixtures(server *mcp.Server, enabled bool) conformanceFi
 	addTool("test_error_handling", "Always fails, to exercise isError reporting.", errorFixture)
 	addTool("test_tool_with_progress", "Emits progress notifications when given a token.", progressFixture)
 
+	// SEP-2575 diagnostics. These are structural probes the suite calls to observe
+	// how the server behaves, not features it expects the server to have.
+	addTool("test_missing_capability",
+		"Requires the client to declare the sampling capability; rejects the call when it is absent.",
+		missingCapabilityFixture)
+	addTool("test_logging_tool",
+		"Would log during execution. Used to observe that no notifications/message is emitted "+
+			"when the request omits io.modelcontextprotocol/logLevel.",
+		loggingFixture)
+
+	// SEP-1613 / SEP-2106 keyword preservation. The schema below is the one the
+	// scenario names, verbatim: it checks that $schema, $defs, additionalProperties,
+	// allOf/anyOf, if/then/else and $anchor all survive the round trip to
+	// tools/list. This is the one fixture whose *schema* is the fixture.
+	jsonSchemaTool := &mcp.Tool{
+		Name:        "json_schema_2020_12_tool",
+		Description: "Tool with JSON Schema 2020-12 features",
+		InputSchema: jsonSchema2020_12Schema(),
+		Annotations: &mcp.ToolAnnotations{Title: "json_schema_2020_12_tool", ReadOnlyHint: true},
+	}
+	server.AddTool(jsonSchemaTool, textFixture)
+	reg.Tools = append(reg.Tools, jsonSchemaTool)
+
 	staticText := &mcp.Resource{
 		URI: uriStaticText, Name: "static-text",
 		Description: "Fixed text resource for conformance testing.", MIMEType: "text/plain",
@@ -171,6 +198,85 @@ func registerConformanceFixtures(server *mcp.Server, enabled bool) conformanceFi
 // product tools do.
 func emptyObjectSchema() any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
+}
+
+// jsonSchema2020_12Schema is the schema the SEP-1613 / SEP-2106 scenario names.
+//
+// It is reproduced exactly as the scenario specifies, because the schema *is*
+// the fixture: the checks read it back off tools/list and assert that $schema,
+// $defs, additionalProperties, the composition keywords, the conditional
+// keywords and $anchor all survived. Any simplification here would test a
+// simpler question than the one being asked.
+func jsonSchema2020_12Schema() any {
+	return map[string]any{
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+		"$defs": map[string]any{
+			"address": map[string]any{
+				"$anchor": "addressDef",
+				"type":    "object",
+				"properties": map[string]any{
+					"street": map[string]any{"type": "string"},
+					"city":   map[string]any{"type": "string"},
+				},
+			},
+		},
+		"properties": map[string]any{
+			"name":          map[string]any{"type": "string"},
+			"address":       map[string]any{"$ref": "#/$defs/address"},
+			"contactMethod": map[string]any{"type": "string", "enum": []any{"phone", "email"}},
+			"phone":         map[string]any{"type": "string"},
+			"email":         map[string]any{"type": "string"},
+		},
+		"allOf": []any{
+			map[string]any{"anyOf": []any{
+				map[string]any{"required": []any{"phone"}},
+				map[string]any{"required": []any{"email"}},
+			}},
+		},
+		"if": map[string]any{
+			"properties": map[string]any{"contactMethod": map[string]any{"const": "phone"}},
+			"required":   []any{"contactMethod"},
+		},
+		"then":                 map[string]any{"required": []any{"phone"}},
+		"else":                 map[string]any{"required": []any{"email"}},
+		"additionalProperties": false,
+	}
+}
+
+// missingCapabilityFixture refuses unless the client declared the sampling
+// capability in the per-request _meta.
+//
+// SEP-2575 gives servers a way to say "this needs something you did not offer",
+// and the suite needs a tool that exercises it. The product manifest requires no
+// client capability at all — genuinely, not as an omission — so this behaviour
+// only exists as a diagnostic, which is exactly what a fixture is for.
+func missingCapabilityFixture(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if caps, ok := req.Params.Meta[mcp.MetaKeyClientCapabilities].(map[string]any); ok {
+		if _, declared := caps["sampling"]; declared {
+			return &mcp.CallToolResult{Content: []mcp.Content{
+				&mcp.TextContent{Text: "sampling capability was declared"},
+			}}, nil
+		}
+	}
+	return nil, &jsonrpc.Error{
+		Code:    mcp.CodeMissingRequiredClientCapabilities,
+		Message: "this tool requires the sampling capability",
+		Data:    json.RawMessage(`{"requiredCapabilities":{"sampling":{}}}`),
+	}
+}
+
+// loggingFixture is a tool that would log during execution.
+//
+// It emits nothing, which is the point: the check watches the response stream
+// and fails if a notifications/message appears for a request that did not set
+// io.modelcontextprotocol/logLevel. This server never emits one — logging is
+// deprecated by SEP-2577 and it logs to stderr or a file instead — so the tool
+// only has to exist for the requirement to be observable.
+func loggingFixture(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return &mcp.CallToolResult{Content: []mcp.Content{
+		&mcp.TextContent{Text: "executed without emitting a log notification"},
+	}}, nil
 }
 
 func textFixture(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {

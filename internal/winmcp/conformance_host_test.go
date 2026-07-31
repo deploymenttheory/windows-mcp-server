@@ -87,9 +87,27 @@ func TestConformanceFixturesAreAdditive(t *testing.T) {
 	if len(got) == 0 {
 		t.Error("--fixtures registered nothing; the depth pass would measure the product manifest")
 	}
+	// Every added tool must be one the suite actually names. An allowlist rather
+	// than a `test_` prefix check: the suite dictates these names and not all of
+	// them follow that convention (json_schema_2020_12_tool does not), so a prefix
+	// heuristic would either reject a required fixture or, loosened, stop catching
+	// a product tool slipping in under the tag.
+	suiteFixtures := map[string]bool{
+		"test_simple_text":            true,
+		"test_image_content":          true,
+		"test_audio_content":          true,
+		"test_multiple_content_types": true,
+		"test_embedded_resource":      true,
+		"test_error_handling":         true,
+		"test_tool_with_progress":     true,
+		"test_missing_capability":     true,
+		"test_logging_tool":           true,
+		"json_schema_2020_12_tool":    true,
+	}
 	for name := range got {
-		if len(name) < 5 || name[:5] != "test_" {
-			t.Errorf("fixture %q does not use the suite's test_ prefix", name)
+		if !suiteFixtures[name] {
+			t.Errorf("fixture %q is not a name the conformance suite asks for; "+
+				"fixtures exist to satisfy the suite, not to extend the manifest", name)
 		}
 	}
 }

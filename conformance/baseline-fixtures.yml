@@ -48,17 +48,10 @@ server:
   # initialize/ping/logging-setLevel methods. Baselining the scenario would throw
   # all of that away to excuse four checks.
   #
-  # Each of these needs a diagnostic fixture the suite expects an everything-server
-  # to expose. Two of them cannot be honestly implemented here at all: this server
-  # requires no client capability, and it pins listChanged false, so a tool that
-  # triggered a list-changed notification would contradict a declared capability.
-  - server-stateless:sep-2575-server-rejects-undeclared-capability
-  - server-stateless:sep-2575-missing-capability-http-400
+  # The remaining one needs test_streaming_elicitation: a fixture that performs a
+  # server-initiated interaction on the response stream. This server has no
+  # elicitation flow, so the fixture would fake the protocol behaviour rather than
+  # exercise it, which is worse than leaving the check unproven.
   - server-stateless:sep-2575-http-server-no-independent-requests-on-stream
-  - server-stateless:sep-2575-server-no-log-without-loglevel
 
-  # SEP-1613 keyword preservation needs a tool named json_schema_2020_12_tool
-  # carrying the keywords under test. Adding one to the product manifest would put
-  # a test fixture in front of agents, so it stays a fixtures-pass concern; it is
-  # listed here because that fixture is not implemented yet either.
-  - json-schema-2020-12
+
