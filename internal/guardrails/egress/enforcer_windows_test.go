@@ -211,15 +211,64 @@ func TestFirewallRulesCollectionIsReachable(t *testing.T) {
 	}
 }
 
-// TestGlobalBlockIsRefusedUntilImplemented: accepting the flag and doing
-// nothing would leave an operator believing the machine is default-deny.
-func TestGlobalBlockIsRefusedUntilImplemented(t *testing.T) {
+// TestGlobalBlockRefusesWithoutElevation: flipping the machine's default
+// outbound action is the most disruptive thing this package does, so an
+// unprivileged process must be turned away before it touches anything.
+func TestGlobalBlockRefusesWithoutElevation(t *testing.T) {
 	var e WindowsEnforcer
-	_, err := e.Apply(EnforceSpec{GlobalBlock: true, ProxyAddr: "127.0.0.1:8181"})
-	if err == nil {
-		t.Fatal("block_all_outbound must be refused while it is unimplemented")
+	if e.Elevated() {
+		t.Skip("test host is elevated; the refusal path cannot be exercised here")
 	}
-	if !strings.Contains(err.Error(), "block_all_outbound") {
-		t.Errorf("the refusal should name the setting: %v", err)
+	_, err := e.Apply(EnforceSpec{GlobalBlock: true, ProxyAddr: "127.0.0.1:8181", AllowPorts: []int{443}})
+	if !errors.Is(err, ErrNotElevated) {
+		t.Errorf("global block without elevation = %v, want ErrNotElevated", err)
+	}
+}
+
+// TestGlobalAllowRulesCoverTheMachineEssentials pins the exception set. Each of
+// these is a Windows component whose loss makes a default-deny machine look
+// broken rather than governed, so a future edit that drops one should have to
+// say so here.
+func TestGlobalAllowRulesCoverTheMachineEssentials(t *testing.T) {
+	names := plannedAllowNames(EnforceSpec{GlobalBlock: true})
+	joined := strings.Join(names, " ")
+	for _, essential := range []string{
+		"Allow-Proxy",   // this server's own route out
+		"Allow-DNS-UDP", // without it nothing resolves
+		"Allow-DNS-TCP",
+		"Allow-DHCP", // without it the machine loses its lease entirely
+		"Allow-NTP",
+		"Allow-NCSI", // without it Windows reports no internet and apps stop trying
+		"Allow-WindowsUpdate",
+		"Allow-CryptSvc", // without it signature checks hang rather than fail
+	} {
+		if !strings.Contains(joined, essential) {
+			t.Errorf("the global exception set is missing %s: %v", essential, names)
+		}
+	}
+	// Every name must be recognisable as an allow rule, because Suspend picks
+	// them out by prefix to disable during containment.
+	for _, name := range names {
+		if !isAllowRuleName(name) {
+			t.Errorf("%q is not recognised as an allow rule, so containment would not disable it", name)
+		}
+	}
+	// Scoped mode creates none of them.
+	if got := plannedAllowNames(EnforceSpec{Applications: []string{`C:\a.exe`}}); len(got) != 0 {
+		t.Errorf("scoped mode should plan no allow rules, got %v", got)
+	}
+}
+
+// TestProxyAllowPortsMirrorsThePolicy keeps the firewall grant no broader than
+// the allowlist the proxy itself enforces.
+func TestProxyAllowPortsMirrorsThePolicy(t *testing.T) {
+	if got := proxyAllowPorts(EnforceSpec{AllowPorts: []int{443}}); got != "443" {
+		t.Errorf("ports = %q, want 443", got)
+	}
+	if got := proxyAllowPorts(EnforceSpec{AllowPorts: []int{443, 80}}); got != "443,80" {
+		t.Errorf("ports = %q, want 443,80", got)
+	}
+	if got := proxyAllowPorts(EnforceSpec{}); got != "80,443" {
+		t.Errorf("default ports = %q, want 80,443", got)
 	}
 }

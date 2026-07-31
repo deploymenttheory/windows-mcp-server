@@ -239,7 +239,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// Registered before the executor's Restore defer so the deferred stack
 	// unwinds in the right order: containment is undone first, then the egress
 	// state it was layered over.
-	egressSvc, cleanupEgress, err := provisionEgress(runCtx, devicePolicy, audit, logger)
+	egressSvc, cleanupEgress, suspendEgress, err := provisionEgress(runCtx, devicePolicy, audit, logger)
 	if err != nil {
 		return err
 	}
@@ -257,9 +257,12 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			// Revoke credentials before tearing the engine down: containment must not
 			// leave session credentials installed on the machine.
 			cleanupCreds()
-			// Stop admitting egress too. Containment that left an allowlisted
-			// path open would be containment in name only.
-			cleanupEgress()
+			// Suspend rather than clean up: this stops admitting traffic and
+			// disables the allow rules that would otherwise outlive isolation,
+			// without restoring the machine's default actions — restoring them
+			// here would countermand the containment just applied. Teardown
+			// belongs to the exit defer.
+			suspendEgress()
 			_ = dsk.Close() // finalize recording synchronously (idempotent)
 		},
 		Abort: func(cause error) {
