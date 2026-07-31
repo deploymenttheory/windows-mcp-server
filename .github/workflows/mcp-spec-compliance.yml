@@ -212,6 +212,11 @@ jobs:
 
       - name: Check for a newer spec revision
         id: sync
+        # Informational: it vendors any newly published schema and reports it. A
+        # transient GitHub API failure here must not strand the gate below —
+        # without this, a TLS timeout in a housekeeping step skips the step that
+        # decides whether the server actually conforms.
+        continue-on-error: true
         run: |
           $ErrorActionPreference = 'Stop'
           $manifestPath = 'schema/versions.json'
@@ -240,6 +245,9 @@ jobs:
 
       - name: Check for a newer conformance harness
         id: harness
+        # Same reasoning as the revision check: this only reports, and an npm
+        # registry blip must not decide whether the verdict gets evaluated.
+        continue-on-error: true
         run: |
           $ErrorActionPreference = 'Stop'
           # Reported, never adopted automatically: a moving harness would make the
@@ -288,14 +296,18 @@ jobs:
           git commit -m $title -m 'Automated by .github/workflows/mcp-spec-compliance.yml.'
           git push --set-upstream origin $branch
 
-          $vendored = if ($newVersions) { '`' + $newVersions + '`' } else { '_none_' }
+          $vendored = if ($newVersions) { '`' + $newVersions + '`' }
+                      elseif ('${{ steps.sync.outcome }}' -ne 'success') { '_could not check_' }
+                      else { '_none_' }
+          $newest = '${{ steps.sync.outputs.newest }}'
+          $newestLine = if ($newest) { '`' + $newest + '`' } else { '_could not check_' }
           $body = @(
             'Automated MCP conformance run.'
             ''
             "- Suite: ``@modelcontextprotocol/conformance@$env:HARNESS_VERSION``"
             "- Spec revision: ``$env:SPEC_VERSION`` (plus ``$env:BACKCOMPAT_SPEC_VERSION`` for backward compatibility)"
             "- New revision(s) vendored: $vendored"
-            '- Newest published upstream: `${{ steps.sync.outputs.newest }}`'
+            "- Newest published upstream: $newestLine"
             ''
             'Per-scenario results are in `docs/mcp-compliance.md`; raw `checks.json` output is under `conformance/results/`.'
           )
@@ -314,6 +326,13 @@ jobs:
           $newHarness  = '${{ steps.harness.outputs.newer }}'
           $newCell = if ($newVersions) { '`' + $newVersions + '`' } else { '_none_' }
           $harnessCell = if ($newHarness) { '`' + $newHarness + '`' } else { '_none_' }
+          # Those checks are allowed to fail without stranding the gate, so their
+          # outputs can be absent. Say "could not check" rather than rendering an
+          # empty value, which would read as "there is no newer revision".
+          $newest = '${{ steps.sync.outputs.newest }}'
+          $newestCell = if ($newest) { '`' + $newest + '`' } else { '_could not check_' }
+          if ('${{ steps.sync.outcome }}' -ne 'success') { $newCell = '_could not check_' }
+          if ('${{ steps.harness.outcome }}' -ne 'success') { $harnessCell = '_could not check_' }
 
           $body = @(
             "<!-- $marker -->"
@@ -322,7 +341,7 @@ jobs:
             '| | |'
             '|---|---|'
             "| Spec revision run against | ``$env:SPEC_VERSION`` |"
-            '| Newest published upstream | `${{ steps.sync.outputs.newest }}` |'
+            "| Newest published upstream | $newestCell |"
             "| New revision(s) this run | $newCell |"
             "| Harness in use | ``$env:HARNESS_VERSION`` |"
             "| Newer harness available | $harnessCell |"

@@ -255,6 +255,29 @@ path warns when it is `proxy-only`. Keep that distinction visible: a proxy nothi
 is forced through is not enforcement, and an operator must never read one as the
 other.
 
+Scoped enforcement installs one outbound-block `INetFwRule` per named
+application, through `contain.NewFwPolicy`/`WithCOMThread` so there is one COM
+path to the firewall. Three rules about it:
+
+- **Protocol is ANY, never TCP.** QUIC is UDP; a TCP-only rule leaves HTTP/3 as
+  an open path past the proxy. Windows rejects a port on an ANY rule, which is
+  why none is set.
+- **Missing elevation is fatal, not degraded.** Unlike the kill ladder, which
+  skips-and-audits because half a containment beats none mid-incident, a policy
+  naming `applications` without elevation refuses to start. Serving a weaker
+  posture than the document describes is the failure mode being prevented.
+- **Rule names are written down before any rule exists**
+  (`%ProgramData%\WindowsMCP\egress-rules.json`). They cannot be re-derived —
+  they come from an application list a later run may not have — and every start
+  runs `Recover()` even when egress is now off, because rules outlive the
+  process that made them.
+
+`TestFirewallRuleObjectAcceptsEveryProperty` exercises the hand-declared
+`HNetCfg.FWRule` CLSID and every `Put_*` against the real firewall, stopping
+short of `Rules.Add` (the only step needing elevation) so it runs unprivileged
+in CI. If you change a property, that test is what catches a wrong argument type
+before an elevated machine does.
+
 ### Cost and correctness
 
 Signals are cached with a per-signal TTL because `dsregcmd`, WMI and `tpmtool`

@@ -41,8 +41,8 @@ type savedProfile struct {
 // reinstates the saved actions. Requires elevation.
 func firewallIsolate() (func() error, error) {
 	var saved []savedProfile
-	err := withCOMThread(func() error {
-		policy, release, e := newFwPolicy()
+	err := WithCOMThread(func() error {
+		policy, release, e := NewFwPolicy()
 		if e != nil {
 			return e
 		}
@@ -67,8 +67,8 @@ func firewallIsolate() (func() error, error) {
 		return nil, err
 	}
 	restore := func() error {
-		return withCOMThread(func() error {
-			policy, release, e := newFwPolicy()
+		return WithCOMThread(func() error {
+			policy, release, e := NewFwPolicy()
 			if e != nil {
 				return e
 			}
@@ -88,9 +88,13 @@ func firewallIsolate() (func() error, error) {
 	return restore, nil
 }
 
-// newFwPolicy instantiates INetFwPolicy2. The caller must run on a COM-
-// initialized thread (use withCOMThread) and call release when done.
-func newFwPolicy() (*windowsfirewall.INetFwPolicy2, func(), error) {
+// NewFwPolicy instantiates INetFwPolicy2. The caller must run on a COM-
+// initialized thread (use WithCOMThread) and call release when done.
+//
+// Exported because the egress enforcer creates firewall rules through the same
+// object. Sharing this rather than standing up a second COM path keeps one
+// answer to how this process talks to the firewall.
+func NewFwPolicy() (*windowsfirewall.INetFwPolicy2, func(), error) {
 	var unk *win32.IUnknown
 	if err := com.CoCreateInstance(
 		&clsidNetFwPolicy2,
@@ -109,10 +113,13 @@ func newFwPolicy() (*windowsfirewall.INetFwPolicy2, func(), error) {
 	return policy, release, nil
 }
 
-// withCOMThread runs fn on a dedicated OS thread with COM initialized (MTA), so
+// WithCOMThread runs fn on a dedicated OS thread with COM initialized (MTA), so
 // the firewall calls are safe even while the engine's own STA thread is tearing
 // down during a kill.
-func withCOMThread(fn func() error) error {
+//
+// Exported for the egress enforcer, which needs the same guarantee: its rule
+// work must not depend on the desktop engine's thread being alive.
+func WithCOMThread(fn func() error) error {
 	done := make(chan error, 1)
 	go func() {
 		runtime.LockOSThread()

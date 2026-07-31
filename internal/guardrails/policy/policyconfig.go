@@ -588,6 +588,14 @@ func (p *Policy) validateEgress(add func(string, ...any)) {
 		add("%v: egress.enabled is true with an empty egress.allow; list the domains the device may reach",
 			ErrInvalidEgress)
 	}
+	if e.BlockAllOutbound {
+		// Refused at load rather than accepted and ignored. A document saying
+		// the machine is default-deny, served by a build that cannot do it, is
+		// exactly the "believes a control is in force when it is not" failure
+		// this validation exists to prevent.
+		add("%v: egress.block_all_outbound is not implemented in this build; "+
+			"use egress.applications to stop named programs bypassing the proxy", ErrInvalidEgress)
+	}
 	if _, err := hostmatch.Compile(e.Allow); err != nil {
 		add("%v: %v", ErrInvalidEgress, err)
 	}

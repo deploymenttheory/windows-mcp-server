@@ -273,8 +273,48 @@ The tier in force is reported by `GuardrailStatus` and the status endpoint under
 `proxy-only` — so a proxy nothing is forced through is never mistaken for
 enforcement.
 
-*`scoped` and `global` land in a later phase; today an `applications` or
-`block_all_outbound` entry is accepted by validation and not yet actuated.*
+`scoped` is implemented. `global` is not yet, and a document setting
+`block_all_outbound` is **refused at load** rather than accepted and ignored —
+a policy claiming the machine is default-deny, served by a build that cannot do
+it, is the failure this validation exists to prevent.
+
+### Scoped enforcement
+
+Each entry in `applications` gets one outbound firewall rule:
+
+- **Direction** out, **action** block, **protocol any** — any rather than TCP on
+  purpose, because QUIC is UDP and a TCP-only rule would leave HTTP/3 as an open
+  path straight past the proxy.
+- **Grouping** `WindowsMCP-Egress` and a deterministic name
+  (`WindowsMCP-Egress-Block-<image>-<n>`), so cleanup never depends on guessing.
+- Applied to all profiles, and only after the proxy is listening — blocking a
+  program before it has anywhere to go would read as a broken network.
+
+The blocked program can still reach `127.0.0.1`, because Windows Firewall does
+not filter loopback. That is the entire mechanism: everything else is dropped,
+and the proxy is the one route out.
+
+**Elevation is required, and its absence is fatal.** A policy naming
+`applications` in a process that cannot install rules refuses to start, after
+auditing `egress.enforce.error`. This is deliberately stricter than the kill
+ladder, which degrades and continues: containment that cannot act mid-incident
+is still better than nothing, whereas an operator whose document says these
+programs cannot bypass the proxy must never get a server where they silently
+can.
+
+### If the server dies without cleaning up
+
+Rules outlive the process. Before creating any, the server records their names
+in `%ProgramData%\WindowsMCP\egress-rules.json`, and every subsequent start —
+including one where egress is now disabled — removes whatever that file names
+and audits `egress.recovered`. An unelevated start that finds rules it cannot
+remove says so loudly on every start rather than leaving you guessing.
+
+To clean up by hand:
+
+```powershell
+netsh advfirewall firewall delete rule group="WindowsMCP-Egress"
+```
 
 ### What the proxy does per request
 
