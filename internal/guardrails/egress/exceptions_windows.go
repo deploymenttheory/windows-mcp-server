@@ -20,7 +20,7 @@ const svchost = `%SystemRoot%\System32\svchost.exe`
 // than an operator intends. Without DNS the machine resolves nothing; without
 // DHCP it loses its lease and has no network at all; without NCSI the tray
 // reports "no internet" and applications short-circuit off that state rather
-// than trying; without update, time and Defender the machine quietly rots.
+// than trying; without update, time and revocation the machine quietly rots.
 //
 // Explicit Allow beats the block *default*, which is also why global mode
 // cannot be built from a catch-all Block rule — that would beat these.

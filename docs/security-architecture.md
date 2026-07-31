@@ -20,7 +20,7 @@ declared signal is evaluated and every verdict recorded, and nothing is refused.
 > **Scope.** This document describes the design. For the document schema, the
 > signal catalogue and the flag migration table, see
 > [docs/policy-config.md](policy-config.md); for a quick start, the
-> [Security section of the README](../README.md#security--the-policy-engine).
+> [Security section of the README](../README.md#security).
 > The local signals are **auditable defense-in-depth, not a hard boundary** — see
 > [Trust model](#trust-model).
 
@@ -210,12 +210,15 @@ A "rug pull" is an approved server mutating its advertised tools after deploymen
 — adding/removing/renaming tools, or silently changing descriptions or schemas —
 to smuggle unauthorized behavior past the initial approval.
 
-Three surfaces are fingerprinted, not one: **tools**, **prompts** and
-**resources**. A mutated prompt changes the instructions the model follows, and a
-mutated resource URI changes what it reads, so both are rug-pull vectors as much
-as a mutated tool. Each surface is pinned separately (`HashTools`, `HashPrompts`,
-`HashResources`) and a surface with no baseline is skipped rather than treated as
-drift, so a server that serves no prompts cannot trip on them.
+Four surfaces are fingerprinted, not one: **tools**, **prompts**, **resources**
+and the **`server/discover` advertisement**. A mutated prompt changes the
+instructions the model follows, and a mutated resource URI changes what it reads,
+so both are rug-pull vectors as much as a mutated tool; `server/discover` is the
+canonical statement of capabilities and instructions under 2026-07-28, so a
+change there is a change to what the server claims to be. Each is pinned
+separately (`HashTools`, `HashPrompts`, `HashResources`, `HashDiscover`) and a
+surface with no baseline is skipped rather than treated as drift, so a server
+that serves no prompts cannot trip on them.
 
 Capabilities are pinned explicitly by `pinnedCapabilities` with `listChanged`
 false. This matters: the SDK *infers* prompt and resource capabilities with
@@ -247,7 +250,7 @@ The server also sets `Capabilities.Tools = {}` so a silent
 
 ### On-screen security banner
 
-Any security event raises a persistent, full-width red banner drawn on-screen
+A kill-switch trip raises a persistent, full-width red banner drawn on-screen
 (GDI text on a layered window) — visible to a human and **captured by the
 session recording**, so the event is on the video timeline.
 
@@ -298,7 +301,7 @@ flowchart TB
     subgraph TRIG["Armed triggers (any one fires OnTrip once)"]
         direction LR
         t1["posture drift"]
-        t2["circuit breaker"]
+        t2["rate limit on_exceed: kill"]
         t3["rug pull"]
         t4["heartbeat gap"]
         t5["sentinel file"]
@@ -334,8 +337,11 @@ flowchart TB
     class OT kill;
 ```
 
-**Default once armed = isolate + abort, no shutdown.** On exit, network isolation
-is undone (the executor keeps a `restore` handle).
+**Nothing is armed by default.** The shipped default policy sets every
+`kill.actions` field to false, so a trip raises the banner, seals the audit log,
+finalizes the recording and aborts the session — and contains nothing. Each
+action is opt-in per document. When `isolate` is armed, network isolation is
+undone on exit (the executor keeps a `restore` handle).
 
 ### The agent-facing `Kill` tool is not an authoritative trigger
 
@@ -423,7 +429,7 @@ defence against a compromised host.
 | Threat | Mechanism |
 |---|---|
 | **Dynamic rug pull** — approved server mutates its tool set post-deploy | Manifest fingerprint pinned at startup + `tools/list` interception + monitor recheck; silent `list_changed` suppressed → audited always, and banner + isolate + abort when armed |
-| **Indirect prompt injection / data-exfil loops** | Circuit breaker rate/tripwire blocks the call → escalates to **network isolation** (cuts the exfil channel) → abort, when armed; audit records the call sequence with arg digests either way |
+| **Indirect prompt injection / data-exfil loops** | A `rate_limits` entry refuses the call once the window is exceeded and, at `on_exceed: "kill"`, escalates to **network isolation** (cuts the exfil channel) → abort, when armed; audit records the call sequence with arg digests either way. Where the exfil target is a domain, the egress allowlist refuses it outright |
 | **Out-of-band control / agent tampering** | Status, audit, heartbeat, monitor, and kill switch are constructed in the server, not exposed as tools; middleware runs on the receiving path — unbypassable. The only agent-facing tools are read-only `GuardrailStatus` and `Kill`, which stops the session but cannot actuate containment unarmed |
 | **Silent posture drift** (Secure Boot off, BitLocker suspended, MDM removed mid-session) | In-flight monitor re-evaluates live posture every interval → audited always, kill on drift when armed |
 | **Log tampering / gaps** | Hash-chained append-only audit + heartbeat; `VerifyChain` detects any break |
@@ -437,10 +443,11 @@ defence against a compromised host.
 
 The local pre-flight and posture checks (`dsregcmd`, registry, WMI,
 `IsUserAnAdmin`) are **auditable defense-in-depth, not a hard boundary** — a
-local administrator can spoof those signals. The containment layers (circuit
-breaker, kill switch, isolation) raise the cost of, and record, in-session
-compromise, but they do **not** replace the OS controls you already own. Pair
-this with **WDAC / AppLocker**, Conditional Access, and **code signing**.
+local administrator can spoof those signals. The containment layers (rate limits,
+kill switch, isolation, egress enforcement) raise the cost of, and record,
+in-session compromise, but they do **not** replace the OS controls you already
+own. Pair this with **WDAC / AppLocker**, Conditional Access, and **code
+signing**.
 
 The authoritative remote signals — Microsoft Graph device compliance (Entra +
 Intune) and an external may-run PDP — register only when their credentials are
@@ -483,10 +490,13 @@ evaluated unless a policy asks for it.
 | Firewall isolator (`INetFwPolicy2`) | `internal/guardrails/contain/firewall_windows.go` |
 | Run-context detection | `internal/guardrails/signals/runcontext_windows.go` |
 | Status surface (tool + HTTP snapshot) | `internal/guardrails/status/status.go` |
+| Egress allowlist matcher (wildcards, forbidden ranges) | `internal/guardrails/hostmatch/` |
+| Egress proxy (CONNECT + absolute-form, counters) | `internal/guardrails/egress/{egress,proxy,counters}.go` |
+| Egress OS enforcement (firewall rules, default-deny, WinINET) | `internal/guardrails/egress/{enforcer,exceptions,defaults,sysproxy,state}_windows.go` |
 | On-screen security banner | `internal/desktop/overlay.go`, `com.go` |
-| Wiring (RunStdio, config groups) | `internal/winmcp/{server,guardrails}.go` |
-| CLI flag groups | `cmd/windows-mcp-server/main.go` |
-| Tier-2 (parked) | `internal/guardrails/signals/{graph,remote}.go` |
+| Wiring (RunStdio, config groups) | `internal/winmcp/{server,guardrails,egress}.go` |
+| CLI flags | `cmd/windows-mcp-server/main.go` |
+| Tier-2 remote signals (env-gated credentials) | `internal/guardrails/signals/{graph,remote}.go` |
 
 The platform-agnostic core (audit, heartbeat, rug-pull, kill-action logic,
 providers) builds and unit-tests on Linux via the `!windows` actuator stub; only

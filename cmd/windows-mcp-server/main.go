@@ -271,10 +271,14 @@ func stdioCmd() *cobra.Command {
 			cfg.RecordFPS = v.GetInt("record-fps")
 			cfg.RecordCodec = v.GetString("record-codec")
 			cfg.CredentialsFile = v.GetString("credentials-file")
-			// Only treat --read-only as set when the flag was explicitly changed,
-			// so a persona's default read-only stance is not overridden by the
-			// flag's zero value.
-			if cmd.Flags().Changed("read-only") {
+			// Read-only is only applied when the operator actually asked for it,
+			// so the flag's zero value cannot override a persona's own read-only
+			// stance. "Asked for it" has to include the environment as well as
+			// the command line: WINDOWS_MCP_READ_ONLY is the documented
+			// equivalent of the flag, and gating on Changed() alone silently
+			// ignored it — the operator would believe the server was read-only
+			// when it was not.
+			if cmd.Flags().Changed("read-only") || os.Getenv("WINDOWS_MCP_READ_ONLY") != "" {
 				cfg.SetReadOnly(v.GetBool("read-only"))
 			}
 

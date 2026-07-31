@@ -133,6 +133,9 @@ var (
 	ErrEmptyMatch       = errors.New("rule matches nothing")
 	ErrInvalidRateLimit = errors.New("invalid rate limit")
 	ErrInvalidEgress    = errors.New("invalid egress policy")
+	// ErrNotLoopback covers every address this server is willing to bind. Both
+	// listeners it can stand up are loopback-only by design.
+	ErrNotLoopback = errors.New("address is not loopback")
 	// ErrInvalidPolicy wraps the collected validation problems, so a caller can
 	// test for "the policy is bad" without matching on the rendered list.
 	ErrInvalidPolicy = errors.New("invalid policy")
@@ -558,6 +561,19 @@ func (p *Policy) Validate(known []string) error {
 		}
 	}
 
+	// The status endpoint is an unauthenticated listener unless a token is set,
+	// and it reports device posture. It has always been described as
+	// loopback-bound; nothing enforced it, so a document could quietly expose it
+	// to the network. Validated here for the same reason egress.listen is.
+	if p.Transparency.StatusAddr != "" {
+		if err := validateLoopbackAddr(p.Transparency.StatusAddr); err != nil {
+			add("transparency.status_addr %v", err)
+		} else if p.Transparency.StatusToken == "" {
+			add("transparency.status_addr is set without a status_token: any local " +
+				"process could read the device posture and trip the kill switch")
+		}
+	}
+
 	p.validateEgress(add)
 
 	if len(problems) > 0 {
@@ -624,21 +640,21 @@ func (p *Policy) validateEgress(add func(string, ...any)) {
 func validateLoopbackAddr(addr string) error {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return fmt.Errorf("%w: %q is not host:port", ErrInvalidEgress, addr)
+		return fmt.Errorf("%w: %q is not host:port", ErrNotLoopback, addr)
 	}
 	if port == "" {
-		return fmt.Errorf("%w: %q names no port", ErrInvalidEgress, addr)
+		return fmt.Errorf("%w: %q names no port", ErrNotLoopback, addr)
 	}
 	if strings.EqualFold(host, "localhost") {
 		return nil
 	}
 	ip, err := netip.ParseAddr(strings.Trim(host, "[]"))
 	if err != nil {
-		return fmt.Errorf("%w: %q is not an IP address or localhost", ErrInvalidEgress, host)
+		return fmt.Errorf("%w: %q is not an IP address or localhost", ErrNotLoopback, host)
 	}
 	if !ip.IsLoopback() {
-		return fmt.Errorf("%w: %q is not a loopback address; the egress proxy binds loopback only",
-			ErrInvalidEgress, host)
+		return fmt.Errorf("%w: %q is not a loopback address; this server does not "+
+			"expose listeners the network can reach", ErrNotLoopback, host)
 	}
 	return nil
 }

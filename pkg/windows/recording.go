@@ -20,7 +20,7 @@ func Recording() inventory.ServerTool {
 		ToolsetScreen,
 		mcp.Tool{
 			Name:        "Recording",
-			Description: "Query or annotate the session video recording. mode=status reports whether the session is being recorded, the output file, frame count, and duration. mode=mark adds a labeled marker to the recording timeline so journey steps align with the video (written to a sidecar .jsonl log). Recording is enabled with the server's --record-dir flag.",
+			Description: "Query or annotate the session video recording. mode=status reports whether the session is being recorded, the output file, frame count, and duration. mode=mark adds a labeled marker to the recording timeline so journey steps align with the video (written to a sidecar .jsonl log). Recording is enabled by the operator via transparency.recording_dir in the policy document.",
 			Annotations: &mcp.ToolAnnotations{Title: "Session recording", ReadOnlyHint: true},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -54,7 +54,8 @@ func Recording() inventory.ServerTool {
 			default:
 				status, active := dsk.RecordingStatus()
 				if !active {
-					return NewToolResultText("Session recording: OFF (start the server with --record-dir to record)."), nil
+					return NewToolResultText("Session recording: OFF " +
+						"(the operator enables it with transparency.recording_dir in the policy document)."), nil
 				}
 				return NewToolResultText(fmt.Sprintf(
 					"Session recording: ON\nFile: %s\nMarkers: %s\nFrames: %d @ %d fps\nDuration: %.1fs",

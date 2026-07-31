@@ -164,6 +164,52 @@ func TestEgressEnforcementNamesTheTier(t *testing.T) {
 	}
 }
 
+// TestStatusEndpointMustBeLoopbackAndAuthenticated pins the posture the status
+// endpoint has always been described as having. It reports device state and can
+// trip the kill switch, so a document must not be able to expose it to the
+// network, or stand it up with no token.
+func TestStatusEndpointMustBeLoopbackAndAuthenticated(t *testing.T) {
+	doc := func(transparency string) *Policy {
+		t.Helper()
+		raw := `{"version":1,"mode":"audit","signals":{"run-context":{"ttl":"0s"}},
+		  "rules":[{"name":"baseline","match":{"toolset":"*"},"require":["run-context"],"on_fail":"warn"}],
+		  "transparency":` + transparency + `}`
+		p, err := Parse([]byte(raw))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return p
+	}
+
+	for _, tc := range []struct{ name, transparency, want string }{
+		{"non-loopback", `{"status_addr":"0.0.0.0:8177","status_token":"t"}`, "not a loopback address"},
+		{"public address", `{"status_addr":"192.168.1.5:8177","status_token":"t"}`, "not a loopback address"},
+		{"no port", `{"status_addr":"127.0.0.1","status_token":"t"}`, "host:port"},
+		{"no token", `{"status_addr":"127.0.0.1:8177"}`, "without a status_token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := doc(tc.transparency).Validate(knownSignals)
+			if err == nil {
+				t.Fatalf("%s should be rejected", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error should explain %q, got: %v", tc.want, err)
+			}
+		})
+	}
+
+	// The workable forms must still validate.
+	for _, transparency := range []string{
+		`{}`,
+		`{"status_addr":"127.0.0.1:8177","status_token":"a-long-random-string"}`,
+		`{"status_addr":"localhost:8177","status_token":"a-long-random-string"}`,
+	} {
+		if err := doc(transparency).Validate(knownSignals); err != nil {
+			t.Errorf("%s should validate: %v", transparency, err)
+		}
+	}
+}
+
 // TestEgressValidationReportsEveryProblemAtOnce matches the rest of the package:
 // an operator fixing a document one error per run gives up before it is right.
 func TestEgressValidationReportsEveryProblemAtOnce(t *testing.T) {

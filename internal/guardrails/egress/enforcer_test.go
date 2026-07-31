@@ -93,3 +93,21 @@ func TestEnforcerWithNoApplicationsIsANoOp(t *testing.T) {
 		t.Errorf("restore of an empty spec: %v", err)
 	}
 }
+
+// TestSystemProxyIsNotGatedOnFirewallWork covers a real regression: the
+// firewall early-return used to swallow set_system_proxy, so a proxy-only
+// policy asking for it silently configured nothing. Pointing WinINET at the
+// listener needs no elevation and must work on its own.
+func TestSystemProxyIsNotGatedOnFirewallWork(t *testing.T) {
+	var e WindowsEnforcer
+	if e.Elevated() {
+		t.Skip("test host is elevated; this checks the unelevated path")
+	}
+	_, err := e.Apply(EnforceSpec{ProxyAddr: "127.0.0.1:8181", SetSystemProxy: true})
+	if errors.Is(err, ErrNotElevated) {
+		t.Error("set_system_proxy writes HKCU and must not require elevation")
+	}
+	// It either succeeded (and the caller owns the restore) or failed for a
+	// registry reason; what it must not do is refuse for want of privilege, nor
+	// silently do nothing.
+}
