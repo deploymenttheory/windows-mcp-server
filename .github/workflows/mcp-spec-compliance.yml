@@ -152,7 +152,7 @@ jobs:
           -Port $env:BACKCOMPAT_PORT
           -SpecVersion $env:BACKCOMPAT_SPEC_VERSION
           -HarnessVersion $env:HARNESS_VERSION
-          -Baseline conformance/baseline-fixtures.yml
+          -Baseline conformance/baseline-backcompat.yml
           -OutputDir "$env:RUNNER_TEMP/results/backcompat"
           -LogDir "$env:RUNNER_TEMP"
       - name: Collect the evidence
