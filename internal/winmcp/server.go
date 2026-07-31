@@ -58,6 +58,11 @@ type Config struct {
 	// recording so the security banner is shown and captured.
 	Security bool
 
+	// PolicyConfig is the path to the device-policy document. Empty uses the
+	// embedded default, which evaluates every declared signal, records every
+	// verdict, and refuses nothing.
+	PolicyConfig string
+
 	// --- Layer 1: pre-flight checks (evaluated once at startup) ---
 	WithMDM             bool   // device is MDM-enrolled (local dsregcmd MdmUrl)
 	WithLoggedOnAccount string // regex the interactive user must match
@@ -140,6 +145,10 @@ var ErrPersonaNeedsUser = errors.New(
 	"persona requires an interactive user context, but the process is running as SYSTEM",
 )
 
+// ErrStartupDenied reports a device that did not meet the startup-scoped rules
+// of the active policy.
+var ErrStartupDenied = errors.New("device policy denied startup")
+
 // RunStdio builds the server and serves the MCP protocol over stdio until the
 // context is cancelled or the client disconnects.
 func RunStdio(ctx context.Context, cfg Config) error {
@@ -180,39 +189,45 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	}
 	defer func() { _ = dsk.Close() }()
 
-	// --- Layer 1: pre-flight admission gate ---
+	// --- The policy engine: one decision point for startup and every request ---
 	reg := newGuardrailRegistry(cfg, logger)
-	gcfg := guardrailConfig(cfg)
-	runner := guardrails.NewRunner(reg, gcfg, logger)
-	for _, u := range runner.Unknown() {
-		logger.Warn("unknown guardrail requested", "guardrail", u)
+	policy, err := loadPolicy(cfg, reg, logger)
+	if err != nil {
+		return err
 	}
+	envFn := func() *guardrails.Env { return guardrailEnv(cfg, dsk, logger) }
+	// The index is supplied once the manifest exists; a startup decision has no
+	// tool to resolve.
+	engine := guardrails.NewEngine(policy, reg, nil, envFn)
 	holder := &decisionHolder{}
-	decision := runner.Evaluate(ctx, guardrailEnv(cfg, dsk, logger))
+
+	probe := envFn().Sys
+	runContext := probe.RunContext()
+
+	// Startup admission. Rules scoped "startup" are evaluated once, before any
+	// tool surface is assembled, so a refused device never gets as far as
+	// registering tools or provisioning credentials.
+	startup := engine.Evaluate(ctx, guardrails.StartupSubject())
+	decision := engine.DecisionFrom(startup, probe.DeviceIdentity(), runContext)
 	holder.set(decision)
-	_, _ = audit.Append("preflight.decision", decision)
+	_, _ = audit.Append("policy.startup", decision)
 
 	requestedSystem := strings.EqualFold(cfg.RunContext, "system")
-	autoLimit := requestedSystem || decision.RunContext.IsSystem
+	autoLimit := requestedSystem || runContext.IsSystem
 	if cfg.Persona != "" && autoLimit {
 		return fmt.Errorf("%w: %q", ErrPersonaNeedsUser, cfg.Persona)
 	}
 
-	if gcfg.Bypass {
-		logger.Warn("GUARDRAILS BYPASSED (break-glass) — device policy NOT enforced")
+	if !startup.Allowed() {
+		guardrails.LogDecision(logger, "deny", decision)
+		_, _ = audit.Append("policy.startup.deny", decision.Reasons)
+		_ = audit.Flush()
+		dsk.ShowSecurityBanner("STARTUP BLOCKED — device did not meet policy")
+		dsk.Notify(ctx, "Windows MCP: startup blocked",
+			"Device did not meet policy: "+startup.Reason())
+		return fmt.Errorf("%w: %s", ErrStartupDenied, startup.Reason())
 	}
-	if gcfg.Active() {
-		if runner.Blocks(decision) {
-			guardrails.LogDecision(logger, "deny", decision)
-			_, _ = audit.Append("preflight.deny", decision.Reasons)
-			_ = audit.Flush()
-			dsk.ShowSecurityBanner("STARTUP BLOCKED — device did not meet policy")
-			dsk.Notify(ctx, "Windows MCP: startup blocked",
-				"Device did not meet policy: "+strings.Join(decision.Reasons, "; "))
-			return fmt.Errorf("guardrails denied startup: %s", strings.Join(decision.Reasons, "; "))
-		}
-		guardrails.LogDecision(logger, "admit", decision)
-	}
+	guardrails.LogDecision(logger, "admit", decision)
 
 	// --- Init-time credentials ---
 	// Provisioned only after admission, so a denied startup never installs
@@ -251,7 +266,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	startedAt := time.Now()
 	actuator := guardrails.NewSystemActuator(logger)
 	executor := guardrails.NewKillExecutor(guardrails.KillExecutorDeps{
-		Config:   killActionConfig(cfg),
+		Config:   killPolicyConfig(policy),
 		Actuator: actuator,
 		Audit:    audit,
 		Logger:   logger,
@@ -271,15 +286,19 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	kill := guardrails.NewKillSwitch(executor.OnTrip)
 	defer func() { _ = executor.Restore() }() // undo firewall isolation on exit
 
-	// Kill triggers are gated by the master --with-kill-switch plus each trigger's
-	// own --kill-on-* flag. A disarmed trigger is report-only: still detected and
-	// audited, but it contains nothing and the server keeps serving.
-	armed := cfg.WithKillSwitch
-	tripSentinel := tripFunc("sentinel", armed, kill, audit, logger)
-	tripPostureDrift := tripFunc("posture-drift", armed && cfg.KillOnPostureDrift, kill, audit, logger)
-	tripCircuit := tripFunc("circuit-trip", armed && cfg.KillOnCircuitTrip, kill, audit, logger)
-	tripRugpull := tripFunc("rugpull", armed && cfg.KillOnRugpull, kill, audit, logger)
-	tripHeartbeat := tripFunc("heartbeat-gap", armed && cfg.KillOnHeartbeatGap, kill, audit, logger)
+	// Kill triggers come from the policy's kill.triggers block. A trigger left off
+	// is report-only: still detected and audited, but it contains nothing and the
+	// server keeps serving. Transparency is never conditional on containment.
+	triggers := policy.Kill.Triggers
+	tripSentinel := tripFunc("sentinel", triggers.Sentinel, kill, audit, logger)
+	tripPostureDrift := tripFunc("posture-drift", triggers.PostureDrift, kill, audit, logger)
+	tripRugpull := tripFunc("rugpull", triggers.RugPull, kill, audit, logger)
+	tripHeartbeat := tripFunc("heartbeat-gap", triggers.HeartbeatGap, kill, audit, logger)
+	// A kill verdict needs no trigger switch: the rule that produced it said
+	// `on_fail: kill` in this same policy, which is the operator arming it. Audit
+	// mode still caps it to a warning, so the engine never reaches here under the
+	// default.
+	tripPolicy := tripFunc("policy", true, kill, audit, logger)
 
 	// --- Layer 4d: rug-pull detector (baseline pinned after all AddTool) ---
 	heartbeat := guardrails.NewHeartbeat(audit)
@@ -293,14 +312,12 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	server.AddReceivingMiddleware(rugpull.ResourceMiddleware())
 	server.AddReceivingMiddleware(rugpull.DiscoverMiddleware())
 
-	// --- Layer 3: inline tool-call policy + circuit breaker ---
-	circuitEnabled := cfg.CircuitBreaker || runner.Mode() == guardrails.ModeEnforce
-	server.AddReceivingMiddleware(guardrails.ToolPolicyMiddleware(guardrails.CircuitConfig{
-		Enabled:   circuitEnabled,
-		Window:    cfg.CircuitWindow,
-		Threshold: cfg.CircuitThreshold,
-		Logger:    logger,
-		OnTrip:    tripCircuit,
+	// The policy engine, innermost so nothing can route around it and so the audit
+	// and rug-pull layers still observe the requests it refuses.
+	server.AddReceivingMiddleware(engine.Middleware(guardrails.EnforcerDeps{
+		Audit:  audit,
+		Kill:   tripPolicy,
+		Logger: logger,
 	}))
 
 	// RegisterAll rather than RegisterTools: resources and prompts are part of the
@@ -317,9 +334,11 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	)
 	server.AddTool(statusTool, statusHandler)
 	// The agent-facing Kill tool always stops the session, but only actuates the
-	// containment ladder when the operator armed the switch.
+	// containment ladder when the policy configures containment. It is not an
+	// authoritative trigger: a misbehaving model must not be able to isolate or
+	// shut down the device by asking.
 	stopSession := executor.StopGracefully
-	if armed {
+	if policy.Kill.Actions.Isolate || policy.Kill.Actions.Lock || policy.Kill.Actions.Shutdown {
 		stopSession = kill.Trip
 	}
 	killTool, killHandler := guardrails.KillTool(stopSession)
@@ -348,22 +367,39 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	discoverHash := rugpull.SetDiscoverBaseline(surface.Capabilities, surface.Instructions)
 	_, _ = audit.Append("discover.baseline", map[string]any{"hash": discoverHash})
 
-	// --- Layer 2: in-flight polling — posture drift, sentinel, always-on verifiers ---
+	// The engine can now resolve tools; from here every request is decided against
+	// the manifest that is actually served.
+	engine.SetIndex(newToolIndex(runCtx, inv))
+
+	// --- In-flight: signal refresh, posture drift, sentinel, always-on verifiers ---
+	verifiers := append(
+		// Refreshing the signal cache first means the posture re-evaluation below
+		// reads warm values rather than paying for the device probes itself.
+		[]guardrails.VerifyFunc{{
+			Name: "signal-refresh",
+			Run:  engine.Refresh,
+			Trip: tripPostureDrift,
+		}},
+		monitorVerifiers(heartbeat, rugpull, func() []*mcp.Tool { return baselineTools },
+			tripHeartbeat, tripRugpull)...,
+	)
 	guardrails.StartMonitor(runCtx, guardrails.MonitorConfig{
-		Interval:         cfg.GuardrailsInterval,
-		ControlDir:       cfg.GuardrailsControlDir,
+		Interval:         policy.InFlight.Interval.Std(),
+		ControlDir:       policy.InFlight.ControlDir,
 		TripSentinel:     tripSentinel,
 		TripPostureDrift: tripPostureDrift,
 		Stopped:          func() bool { tripped, _ := kill.Tripped(); return tripped },
 		Logger:           logger,
 		Evaluate: func(c context.Context) guardrails.Decision {
-			d := runner.Evaluate(c, guardrailEnv(cfg, dsk, logger))
+			// Re-runs the startup-scoped rules against freshly refreshed signals, so
+			// a device that drifts out of admission is noticed even if no tool is
+			// being called.
+			v := engine.Evaluate(c, guardrails.StartupSubject())
+			d := engine.DecisionFrom(v, probe.DeviceIdentity(), probe.RunContext())
 			holder.set(d)
 			return d
 		},
-		Verify: monitorVerifiers(heartbeat, rugpull, func() []*mcp.Tool {
-			return baselineTools
-		}, tripHeartbeat, tripRugpull),
+		Verify: verifiers,
 	})
 	if cfg.HeartbeatInterval > 0 {
 		// Started regardless of arming: a stalled heartbeat is reported even when
@@ -389,9 +425,9 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	logger.Info("starting windows-mcp-server over stdio",
 		"version", cfg.Version,
 		"enabled_toolsets", toolsetIDs(inv.EnabledToolsets()),
-		"security", cfg.Security,
-		"guardrails", string(runner.Mode()),
-		"circuit_breaker", circuitEnabled,
+		"policy_mode", string(policy.Mode),
+		"policy_signals", policy.SignalIDs(),
+		"policy_rules", len(policy.Rules),
 	)
 
 	err = server.Run(runCtx, &mcp.StdioTransport{})
