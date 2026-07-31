@@ -1,0 +1,71 @@
+# Expected failures for the PRODUCT pass of the official MCP conformance suite.
+#
+#   npx @modelcontextprotocol/conformance server \
+#     --url http://127.0.0.1:3001/mcp --suite all --spec-version 2026-07-28 \
+#     --expected-failures conformance/baseline-product.yml
+#
+# The product pass runs against the manifest windows-mcp-server actually ships:
+# `conformance-serve` without --fixtures. What it proves is transport and wire
+# conformance to 2026-07-28 — the stateless request model, server/discover,
+# caching hints, the standard MCP headers, and the per-message wire-schema
+# validation the suite applies to every scenario.
+#
+# Everything listed here is a scenario that CANNOT execute against a real product
+# server, because the suite's scenarios name specific fixture tools, resource URIs
+# and prompts (upstream's own reference implementation is an "everything-server").
+# They are exercised in the fixtures pass instead — see baseline-fixtures.yml.
+#
+# The suite's own exit-code rules police this file: a failure not listed here
+# fails the build, and an entry here that starts passing fails it too. So a stale
+# excuse cannot survive silently.
+
+server:
+  # --- Require named fixture tools -------------------------------------------
+  # Each of these calls a tool by a fixed name (test_simple_text, test_image_content,
+  # test_audio_content, test_multiple_content_types, test_embedded_resource,
+  # test_error_handling, test_tool_with_progress) that this server does not ship.
+  - tools-call-simple-text
+  - tools-call-image
+  - tools-call-audio
+  - tools-call-mixed-content
+  - tools-call-embedded-resource
+  - tools-call-error
+  - tools-call-with-progress
+
+  # --- Require named fixture resources ---------------------------------------
+  # test://static-text, test://static-binary and the test://template/{id}/data
+  # template. This server serves windows:// URIs describing desktop state.
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+
+  # --- Require named fixture prompts ------------------------------------------
+  # test_simple_prompt, test_prompt_with_arguments, test_prompt_with_embedded_resource,
+  # test_prompt_with_image. This server's prompts are persona workflow templates.
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
+
+  # --- Features this server does not implement --------------------------------
+  # SEP-2322 Multi Round-Trip Requests. This server never returns an
+  # InputRequiredResult: it has no elicitation, sampling or roots flow to suspend
+  # a request for. Fixtures would not help — the behaviour genuinely is absent.
+  - input-required-result-basic-elicitation
+  - input-required-result-basic-sampling
+  - input-required-result-basic-list-roots
+  - input-required-result-request-state
+  - input-required-result-multiple-input-requests
+  - input-required-result-multi-round
+  - input-required-result-missing-input-response
+  - input-required-result-non-tool-request
+  - input-required-result-result-type
+  - input-required-result-unsupported-methods
+  - input-required-result-tampered-state
+  - input-required-result-capability-check
+  - input-required-result-ignore-extra-params
+  - input-required-result-validate-input
+
+  # SEP-2243 custom headers via x-mcp-header. The scenario needs at least one tool
+  # that declares a parameter sourced from a custom header; no tool here does.
+  - http-custom-header-server-validation

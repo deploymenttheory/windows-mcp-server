@@ -236,15 +236,14 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			"Running as SYSTEM — desktop automation is disabled; diagnostics/system tools only.")
 	}
 
-	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "windows-mcp-server",
-		Title:   "Windows MCP Server",
-		Version: cfg.Version,
-	}, &mcp.ServerOptions{
-		Instructions:      combineInstructions(personaInstructions, inv.Instructions()),
-		Capabilities:      pinnedCapabilities(),
-		CompletionHandler: completionHandler(inv),
-	})
+	deps := windows.NewBaseDeps(dsk, logger, nil).
+		WithCredentials(credentialInfos(installedCreds)).
+		WithEnforceHTTPS(enforceHTTPS(cfg))
+
+	// Built by the same function the conformance host uses, so the surface the
+	// official suite is measured against is the surface this binary serves.
+	surface := newMCPSurface(cfg, inv, personaInstructions, deps)
+	server := surface.Server
 
 	// --- Out-of-band kill switch + tiered action executor ---
 	runCtx, cancel := context.WithCancelCause(ctx)
@@ -286,15 +285,13 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	heartbeat := guardrails.NewHeartbeat(audit)
 	rugpull := guardrails.NewRugPull(tripRugpull, audit)
 
-	deps := windows.NewBaseDeps(dsk, logger, nil).
-		WithCredentials(credentialInfos(installedCreds)).
-		WithEnforceHTTPS(enforceHTTPS(cfg))
-	// Receiving middleware (outermost first): inject deps, audit, rug-pull, policy.
-	server.AddReceivingMiddleware(windows.InjectDepsMiddleware(deps))
+	// Receiving middleware (outermost first). newMCPSurface already installed
+	// inject-deps and cache hints; these nest inside them.
 	server.AddReceivingMiddleware(audit.Middleware())
 	server.AddReceivingMiddleware(rugpull.Middleware())
 	server.AddReceivingMiddleware(rugpull.PromptMiddleware())
 	server.AddReceivingMiddleware(rugpull.ResourceMiddleware())
+	server.AddReceivingMiddleware(rugpull.DiscoverMiddleware())
 
 	// --- Layer 3: inline tool-call policy + circuit breaker ---
 	circuitEnabled := cfg.CircuitBreaker || runner.Mode() == guardrails.ModeEnforce
@@ -343,6 +340,13 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	baseResources := invMCPResources(runCtx, inv)
 	resourceHash := rugpull.SetResourceBaseline(baseResources)
 	_, _ = audit.Append("resources.baseline", map[string]any{"hash": resourceHash, "count": len(baseResources)})
+
+	// Protocol 2026-07-28 removed the initialize handshake and made server/discover
+	// the canonical advertisement of capabilities and instructions, so it is pinned
+	// too — otherwise a widened capability set or rewritten model instructions would
+	// drift entirely unwatched.
+	discoverHash := rugpull.SetDiscoverBaseline(surface.Capabilities, surface.Instructions)
+	_, _ = audit.Append("discover.baseline", map[string]any{"hash": discoverHash})
 
 	// --- Layer 2: in-flight polling — posture drift, sentinel, always-on verifiers ---
 	guardrails.StartMonitor(runCtx, guardrails.MonitorConfig{

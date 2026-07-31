@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -19,7 +20,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/mcpspec"
+	"github.com/deploymenttheory/windows-mcp-server/internal/mcpconf"
 	"github.com/deploymenttheory/windows-mcp-server/internal/winmcp"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )
@@ -48,7 +49,10 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(stdioCmd())
 	root.AddCommand(checkCmd())
 	root.AddCommand(personasCmd())
-	root.AddCommand(specCheckCmd())
+	root.AddCommand(conformanceReportCmd())
+	// Adds `conformance-serve` only under the `conformance` build tag. The
+	// released binary has no HTTP listener; see conformance_cmd.go.
+	addConformanceCommand(root)
 	return root
 }
 
@@ -265,70 +269,77 @@ func stdioCmd() *cobra.Command {
 	return cmd
 }
 
-// specCheckCmd scores the served MCP surface against the vendored protocol
-// schemas. It runs a real in-process MCP session, so what gets scored is the wire
-// output a client receives, not a re-marshalling of our Go types.
-func specCheckCmd() *cobra.Command {
+// conformanceReportCmd renders the results of the official MCP conformance suite
+// into the committed compliance report.
+//
+// It replaced `spec-check`, which scored this server's wire objects against
+// vendored schemas and reported a number out of 100. That number was marked by
+// the same project it graded. The suite at
+// github.com/modelcontextprotocol/conformance is now the authority: the
+// compliance workflow runs it against the loopback conformance host and this
+// command turns its checks.json output into something readable and committable.
+//
+// It does not gate. The suite already does, via --expected-failures and its own
+// exit code, and reimplementing that here would be a second opinion on a question
+// that has an authoritative answer.
+func conformanceReportCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "spec-check",
-		Short: "Score the served MCP surface against the published protocol schemas",
-		Long: "spec-check performs an in-process MCP session against this server's tool manifest " +
-			"and validates the resulting wire objects (handshake result, capabilities, tools/list) " +
-			"against the vendored Model Context Protocol JSON Schemas, emitting a weighted score.\n\n" +
-			"Exits 2 when the score is below --fail-under, so CI can gate on it.",
+		Use:   "conformance-report",
+		Short: "Render official MCP conformance suite results as the compliance report",
+		Long: "conformance-report reads one or more checks.json files produced by " +
+			"github.com/modelcontextprotocol/conformance and renders them as markdown or JSON.\n\n" +
+			"Each --pass is name=path/to/checks.json. Two passes are expected: `product`, run " +
+			"against the manifest this server ships, and `fixtures`, run with the suite's named " +
+			"fixture tools registered so tools/call, resources/read and prompts/get are exercised " +
+			"at all.\n\n" +
+			"No score is emitted: conformance is per-check pass or fail, gated by the suite.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v := viperFor(cmd)
 
-			cfg := winmcp.Config{Version: version}
-			cfg.Persona = v.GetString("persona")
-			// Score every tool by default, not just the default toolsets: a tool in a
-			// non-default toolset can be just as non-conformant.
-			cfg.Toolsets = splitCSV(v.GetString("toolsets"))
-			if len(cfg.Toolsets) == 0 && cfg.Persona == "" {
-				cfg.Toolsets = []string{"all"}
+			report := &mcpconf.Report{
+				ServerVersion: version,
+				Commit:        v.GetString("commit"),
+				GeneratedAt:   v.GetString("generated-at"),
+				RunURL:        v.GetString("run-url"),
 			}
-			if cmd.Flags().Changed("read-only") {
-				cfg.SetReadOnly(v.GetBool("read-only"))
-			}
+			specVersion := v.GetString("spec-version")
+			harness := v.GetString("harness-version")
 
-			schemaDir := v.GetString("schema-dir")
-			manifest, err := mcpspec.LoadManifest(schemaDir)
-			if err != nil {
-				return err
-			}
-
-			versions := []string{manifest.Newest()}
-			switch requested := v.GetString("spec-version"); requested {
-			case "", "newest":
-			case "all":
-				versions = manifest.Versions
-			default:
-				if manifest.Index(requested) < 0 {
-					return fmt.Errorf("unknown spec version %q (vendored: %s)",
-						requested, strings.Join(manifest.Versions, ", "))
+			for _, spec := range v.GetStringSlice("pass") {
+				name, path, ok := strings.Cut(spec, "=")
+				if !ok {
+					return fmt.Errorf("--pass %q must be name=path/to/checks.json", spec)
 				}
-				versions = []string{requested}
-			}
-
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-
-			surface, err := winmcp.CaptureSurface(ctx, cfg)
-			if err != nil {
-				return err
-			}
-			surface.Manifest = manifest
-
-			reports := make([]*mcpspec.Report, 0, len(versions))
-			for _, ver := range versions {
-				spec, err := mcpspec.Load(schemaDir, ver)
+				checks, err := mcpconf.LoadChecks(path)
 				if err != nil {
 					return err
 				}
-				reports = append(reports, mcpspec.Evaluate(spec, surface))
+				report.Passes = append(report.Passes, &mcpconf.Pass{
+					Name:           name,
+					Description:    passDescriptions[name],
+					SpecVersion:    specVersion,
+					HarnessVersion: harness,
+					Baseline:       v.GetString("baseline-" + name),
+					Checks:         checks,
+				})
+			}
+			if len(report.Passes) == 0 {
+				return errNoPasses
 			}
 
-			rendered, err := renderSpecReports(reports, v.GetString("format"))
+			// The badge is written before the report so a bad --format cannot leave
+			// the README pointing at a stale figure while the report is regenerated.
+			if badgeOut := v.GetString("badge-out"); badgeOut != "" {
+				badge, err := json.MarshalIndent(report.BadgeFor(v.GetString("badge-pass")), "", "  ")
+				if err != nil {
+					return fmt.Errorf("marshal badge: %w", err)
+				}
+				if err := os.WriteFile(badgeOut, append(badge, '\n'), 0o644); err != nil { //nolint:gosec // a badge is not a secret
+					return fmt.Errorf("write badge: %w", err)
+				}
+			}
+
+			rendered, err := renderConformanceReport(report, v.GetString("format"))
 			if err != nil {
 				return err
 			}
@@ -336,67 +347,55 @@ func specCheckCmd() *cobra.Command {
 				if err := os.WriteFile(out, []byte(rendered), 0o644); err != nil { //nolint:gosec // a report is not a secret
 					return fmt.Errorf("write report: %w", err)
 				}
-			} else {
-				fmt.Fprint(cmd.OutOrStdout(), rendered)
+				return nil
 			}
-
-			// Gate on the newest scored revision, which is the one operators care about.
-			newest := reports[len(reports)-1]
-			failed := false
-			if threshold := v.GetInt("fail-under"); threshold > 0 && newest.ConformanceScore < threshold {
-				fmt.Fprintf(os.Stderr, "spec-check: conformance %d for %s is below --fail-under=%d\n",
-					newest.ConformanceScore, newest.SchemaVersion, threshold)
-				failed = true
-			}
-			if threshold := v.GetInt("fail-coverage-under"); threshold > 0 && newest.Coverage.MethodsPct < threshold {
-				fmt.Fprintf(os.Stderr, "spec-check: method coverage %d%% for %s is below --fail-coverage-under=%d\n",
-					newest.Coverage.MethodsPct, newest.SchemaVersion, threshold)
-				failed = true
-			}
-			if failed {
-				os.Exit(2)
-			}
+			fmt.Fprint(cmd.OutOrStdout(), rendered)
 			return nil
 		},
 	}
 
 	f := cmd.Flags()
-	f.String("schema-dir", "schema", "Directory holding the vendored MCP schema revisions.")
-	f.String("spec-version", "newest", "Revision to score against: a version like 2026-07-28, 'newest', or 'all'.")
+	f.StringSlice("pass", nil, "A suite run to include, as name=path/to/checks.json. Repeatable.")
+	f.String("spec-version", "2026-07-28", "Protocol revision the suite was run at.")
+	f.String("harness-version", "", "Exact npm version of the conformance suite that produced the results.")
+	f.String("baseline-product", "", "Expected-failures file the product pass was gated against.")
+	f.String("baseline-fixtures", "", "Expected-failures file the fixtures pass was gated against.")
+	f.String("commit", "", "Commit the tested binary was built from.")
+	f.String("generated-at", "", "Timestamp for the report; supplied by the caller so the output is reproducible.")
+	f.String("run-url", "", "Link to the workflow run that produced the results.")
 	f.String("format", "markdown", "Output format: markdown or json.")
 	f.String("out", "", "Write the report to this file instead of stdout.")
-	f.Int("fail-under", 0, "Exit 2 if the newest scored revision's CONFORMANCE score is below this (0 disables). "+
-		"Conformance is the gateable number: 100 means everything the server serves validates against the spec.")
-	f.Int("fail-coverage-under", 0, "Exit 2 if the newest revision's server-method COVERAGE percentage is below "+
-		"this (0 disables). Coverage is optional-feature breadth, not a conformance requirement.")
-	f.String("toolsets", "", "Comma-separated toolsets to score (default: all toolsets).")
-	f.String("persona", "", "Score the manifest a persona would serve.")
-	f.Bool("read-only", false, "Score the read-only manifest.")
+	f.String("badge-out", "", "Also write a shields.io endpoint badge to this file.")
+	f.String("badge-pass", "product", "Which pass the badge summarises.")
 	return cmd
 }
 
-// renderSpecReports formats one or more scored reports.
-func renderSpecReports(reports []*mcpspec.Report, format string) (string, error) {
+// errNoPasses is returned when no results were supplied. Rendering an empty
+// report would read as a server with nothing wrong with it.
+var errNoPasses = errors.New("no --pass results supplied")
+
+// passDescriptions says what each pass proves, so the committed report explains
+// itself without reference to the workflow that produced it.
+var passDescriptions = map[string]string{
+	"product": "Run against the manifest this server actually ships. Scenarios needing the suite's " +
+		"named fixtures cannot execute here and are listed in the baseline; what this pass covers is " +
+		"the transport and wire conformance that the 2026-07-28 revision is about.",
+	"fixtures": "Run with the suite's fixture tools, resources and prompts registered, so tools/call, " +
+		"resources/read, resources/templates/list and prompts/get are exercised through the real " +
+		"middleware and result constructors. The fixtures exist only under the `conformance` build " +
+		"tag and are never present in a released binary.",
+}
+
+func renderConformanceReport(r *mcpconf.Report, format string) (string, error) {
 	switch format {
 	case "json":
-		payload := any(reports)
-		if len(reports) == 1 {
-			payload = reports[0]
-		}
-		b, err := json.MarshalIndent(payload, "", "  ")
+		b, err := json.MarshalIndent(r, "", "  ")
 		if err != nil {
 			return "", fmt.Errorf("marshal report: %w", err)
 		}
 		return string(b) + "\n", nil
 	case "", "markdown", "md":
-		var b strings.Builder
-		for i, r := range reports {
-			if i > 0 {
-				b.WriteString("\n---\n\n")
-			}
-			b.WriteString(r.Markdown())
-		}
-		return b.String(), nil
+		return r.Markdown(), nil
 	default:
 		return "", fmt.Errorf("unknown --format %q (want markdown or json)", format)
 	}

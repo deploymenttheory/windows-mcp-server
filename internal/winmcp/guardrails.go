@@ -203,6 +203,13 @@ func tripFunc(
 // what rug-pull detection exists to catch. Any non-nil field we set wins over
 // inference, so pinning each one with ListChanged false keeps the manifest static
 // and drift detectable.
+//
+// Two fields are deliberately left unset. Extensions (added in 2026-07-28) stays
+// absent because this server implements no protocol extension — declaring one it
+// does not honour would be a false advertisement, and the rug-pull discover
+// baseline trips if a future SDK starts populating it. Logging stays absent
+// because SEP-2577 deprecated the feature and this server logs to stderr or a
+// file, never as MCP notifications.
 func pinnedCapabilities() *mcp.ServerCapabilities {
 	return &mcp.ServerCapabilities{
 		Tools:       &mcp.ToolCapabilities{},

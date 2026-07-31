@@ -1,18 +1,25 @@
-// Package mcpspec scores this project's MCP surface against the official Model
-// Context Protocol JSON Schema for a given protocol revision.
+// Package mcpspec loads the vendored Model Context Protocol JSON Schemas and
+// validates wire JSON against them.
 //
-// The scorer is deliberately platform-agnostic and takes the surface to check as
-// raw wire JSON, so it can be unit-tested without a Windows host or a running
-// desktop engine. The Windows-side `spec-check` subcommand captures the real
-// tools/list and handshake results from an in-process MCP session and feeds the
-// bytes in here — validating what a client actually receives, not what our Go
-// types claim.
+// The authority on conformance is the official suite at
+// github.com/modelcontextprotocol/conformance, run against the server from the
+// compliance workflow; see internal/mcpconf for the reporting side.
 //
-// Checks are driven by what a revision's schema actually defines rather than by
+// Two jobs remain here:
+//
+//   - a fast, offline, pass/fail validation of the served surface against the
+//     newest vendored revision, so `go test` still catches a broken tool schema on
+//     a machine with no Node installed (see winmcp's capture test); and
+//   - the revision manifest, which the compliance workflow uses to notice that
+//     upstream has published a revision newer than the one we run against.
+//
+// Lookups are driven by what a revision's schema actually defines rather than by
 // hardcoded definition names, because the protocol restructures between
 // revisions: 2026-07-28, for example, removes InitializeRequest/InitializeResult
-// entirely in favour of server/discover. A check whose definition is absent is
-// reported as skipped, with the reason, and excluded from the score denominator.
+// entirely in favour of server/discover. FirstPresent exists for exactly that, so
+// a caller can name the equivalent definitions and let the revision decide.
+//
+// The package is platform-agnostic (no build tag), so it is testable in isolation.
 package mcpspec
 
 import (
