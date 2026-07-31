@@ -51,6 +51,22 @@ type EnforceSpec struct {
 	SetSystemProxy bool
 }
 
+// specNeedsAction reports whether a spec asks the OS layer to do anything at
+// all. Split out from Apply so the decision is testable without mutating the
+// machine the test runs on.
+func specNeedsAction(spec EnforceSpec) bool {
+	return specNeedsElevation(spec) || spec.SetSystemProxy
+}
+
+// specNeedsElevation reports whether a spec requires an elevated process.
+//
+// Only the firewall work does. Pointing this user's WinINET settings at the
+// proxy is an HKCU write, so gating it on elevation would refuse a policy that
+// is perfectly performable.
+func specNeedsElevation(spec EnforceSpec) bool {
+	return len(spec.Applications) > 0 || spec.GlobalBlock
+}
+
 // NoEnforcer performs no OS actuation. It is the honest implementation for the
 // proxy-only tier and for every non-Windows build: the proxy constrains what is
 // configured to use it, and nothing more.

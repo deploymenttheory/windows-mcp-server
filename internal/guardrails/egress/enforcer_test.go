@@ -96,18 +96,39 @@ func TestEnforcerWithNoApplicationsIsANoOp(t *testing.T) {
 
 // TestSystemProxyIsNotGatedOnFirewallWork covers a real regression: the
 // firewall early-return used to swallow set_system_proxy, so a proxy-only
-// policy asking for it silently configured nothing. Pointing WinINET at the
-// listener needs no elevation and must work on its own.
+// policy asking for it silently configured nothing.
+//
+// It asserts on the *decision*, never by calling Apply. An earlier version of
+// this test did call Apply and discarded the restore func, which rewrote the
+// developer's own WinINET settings to point at a proxy that was not running and
+// left them that way — it took a browser outage to notice. A test that mutates
+// the machine it runs on belongs behind the WINDOWS_MCP_SYSPROXY_TEST opt-in
+// with a registered restore, which is where the round-trip test lives.
 func TestSystemProxyIsNotGatedOnFirewallWork(t *testing.T) {
-	var e WindowsEnforcer
-	if e.Elevated() {
-		t.Skip("test host is elevated; this checks the unelevated path")
+	for _, tc := range []struct {
+		name       string
+		spec       EnforceSpec
+		wantAction bool
+	}{
+		{"nothing asked for", EnforceSpec{ProxyAddr: "127.0.0.1:8181"}, false},
+		{"system proxy alone", EnforceSpec{ProxyAddr: "127.0.0.1:8181", SetSystemProxy: true}, true},
+		{"applications", EnforceSpec{Applications: []string{`C:\a.exe`}}, true},
+		{"global block", EnforceSpec{GlobalBlock: true}, true},
+	} {
+		if got := specNeedsAction(tc.spec); got != tc.wantAction {
+			t.Errorf("%s: needs action = %v, want %v", tc.name, got, tc.wantAction)
+		}
 	}
-	_, err := e.Apply(EnforceSpec{ProxyAddr: "127.0.0.1:8181", SetSystemProxy: true})
-	if errors.Is(err, ErrNotElevated) {
+
+	// The elevation gate covers the firewall work only: writing this user's
+	// WinINET settings is an HKCU write and must not demand privilege.
+	if specNeedsElevation(EnforceSpec{ProxyAddr: "127.0.0.1:8181", SetSystemProxy: true}) {
 		t.Error("set_system_proxy writes HKCU and must not require elevation")
 	}
-	// It either succeeded (and the caller owns the restore) or failed for a
-	// registry reason; what it must not do is refuse for want of privilege, nor
-	// silently do nothing.
+	if !specNeedsElevation(EnforceSpec{Applications: []string{`C:\a.exe`}}) {
+		t.Error("installing firewall rules must require elevation")
+	}
+	if !specNeedsElevation(EnforceSpec{GlobalBlock: true}) {
+		t.Error("flipping the machine's default outbound action must require elevation")
+	}
 }
