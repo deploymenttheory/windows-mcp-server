@@ -13,45 +13,16 @@
 # a released binary, so this pass measures how our handler-to-wire path behaves — not
 # what the product ships. That is why the two passes are recorded separately.
 #
-# What remains here is what fixtures cannot fix: behaviour this server deliberately
-# does not have. Adding a fixture for any of it would mean advertising a feature the
-# server does not implement.
+# The list below is empty on purpose. The last excused groups — SEP-2322
+# multi-round-trip, SEP-2243 x-mcp-header validation and the SEP-2575 streaming
+# check — were retired when go-sdk v1.7.0 shipped those behaviours natively
+# (mcp/mrtr.go, mcp/streamable_headers.go): the diagnostic fixtures in
+# internal/winmcp/conformance_fixtures_mrtr.go exercise the SDK's real wire
+# machinery rather than faking a protocol behaviour, which was the original
+# reason to keep them out.
+#
+# Keep the flag and this file even while the list is empty: the suite's exit-code
+# rules are what police regressions (an unlisted failure fails the build), and a
+# future excuse belongs here with its reason, not in the workflow.
 
-server:
-  # SEP-2322 Multi Round-Trip Requests. This server never returns an
-  # InputRequiredResult — no elicitation, sampling or roots flow exists to suspend a
-  # request for — so a fixture would have to fake a protocol behaviour rather than
-  # exercise one.
-  - input-required-result-basic-elicitation
-  - input-required-result-basic-sampling
-  - input-required-result-basic-list-roots
-  - input-required-result-request-state
-  - input-required-result-multiple-input-requests
-  - input-required-result-multi-round
-  - input-required-result-missing-input-response
-  - input-required-result-non-tool-request
-  - input-required-result-result-type
-  - input-required-result-tampered-state
-  - input-required-result-capability-check
-  - input-required-result-ignore-extra-params
-
-  # SEP-2243 custom headers via x-mcp-header. Needs a tool declaring a parameter
-  # sourced from a custom header; no tool here does, and inventing one would put a
-  # header-driven parameter into the manifest purely to pass a test.
-  - http-custom-header-server-validation
-
-  # server-stateless: excused per check, never as a whole scenario.
-  #
-  # It carries 28 checks and 24 of them pass. Most are exactly what this server
-  # needs to prove — per-request _meta validation, server/discover, version
-  # negotiation, header handling, and the 404 plus -32601 for the removed
-  # initialize/ping/logging-setLevel methods. Baselining the scenario would throw
-  # all of that away to excuse four checks.
-  #
-  # The remaining one needs test_streaming_elicitation: a fixture that performs a
-  # server-initiated interaction on the response stream. This server has no
-  # elicitation flow, so the fixture would fake the protocol behaviour rather than
-  # exercise it, which is worse than leaving the check unproven.
-  - server-stateless:sep-2575-http-server-no-independent-requests-on-stream
-
-
+server: []

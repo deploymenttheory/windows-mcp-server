@@ -47,10 +47,11 @@ server:
   - prompts-get-embedded-resource
   - prompts-get-with-image
 
-  # --- Features this server does not implement --------------------------------
-  # SEP-2322 Multi Round-Trip Requests. This server never returns an
-  # InputRequiredResult: it has no elicitation, sampling or roots flow to suspend
-  # a request for. Fixtures would not help — the behaviour genuinely is absent.
+  # --- Features the product manifest does not carry ----------------------------
+  # SEP-2322 Multi Round-Trip Requests. No product tool returns an
+  # InputRequiredResult: there is no elicitation, sampling or roots flow to
+  # suspend a request for. The protocol behaviour itself is exercised in the
+  # fixtures pass, whose diagnostic tools drive the SDK's native MRTR machinery.
   - input-required-result-basic-elicitation
   - input-required-result-basic-sampling
   - input-required-result-basic-list-roots
