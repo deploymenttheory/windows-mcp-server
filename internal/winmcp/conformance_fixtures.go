@@ -26,8 +26,15 @@ import (
 // session. Payloads below are copied from the scenario descriptions verbatim; a
 // paraphrase fails the check.
 //
-// Deliberately NOT implemented, because each would mean advertising a feature
-// this server does not have:
+// The SEP-2322 (multi-round-trip), SEP-2243 (x-mcp-header) and remaining
+// SEP-2575 diagnostics live in conformance_fixtures_mrtr.go. They used to be
+// deliberately absent on the grounds that a fixture would fake a protocol
+// behaviour; go-sdk v1.7.0 implements all three natively (mcp/mrtr.go,
+// mcp/streamable_headers.go), so those fixtures now exercise the SDK's real
+// wire machinery through this server's real middleware chain.
+//
+// Still deliberately NOT implemented, because each would mean advertising a
+// feature this server does not have:
 //
 //   - test_tool_with_logging, test_sampling, test_elicitation and the SEP-1034 /
 //     SEP-1330 elicitation fixtures — removed at 2026-07-28 anyway, and roots,
@@ -36,12 +43,6 @@ import (
 //     list-changed-capable server notifies listen streams. pinnedCapabilities
 //     pins ListChanged false on purpose, so implementing them would contradict
 //     the capability we declare.
-//   - test_streaming_elicitation — needs the elicitation capability and a
-//     server-initiated interaction on the response stream. This server has no
-//     elicitation flow, so the fixture would have to fake the protocol behaviour
-//     rather than exercise it.
-//   - test_input_required_result_* (SEP-2322 MRTR) — this server never returns an
-//     InputRequiredResult.
 //
 // Each of those is recorded in the baseline with its reason.
 const (
@@ -91,14 +92,7 @@ func registerConformanceFixtures(server *mcp.Server, enabled bool) conformanceFi
 	var reg conformanceFixtures
 
 	addTool := func(name, description string, handler mcp.ToolHandler) {
-		tool := &mcp.Tool{
-			Name:        name,
-			Description: description,
-			InputSchema: emptyObjectSchema(),
-			Annotations: &mcp.ToolAnnotations{Title: name, ReadOnlyHint: true},
-		}
-		server.AddTool(tool, handler)
-		reg.Tools = append(reg.Tools, tool)
+		addFixtureTool(server, &reg, name, description, handler)
 	}
 
 	addTool("test_simple_text", "Returns a fixed text content block.", textFixture)
@@ -190,7 +184,22 @@ func registerConformanceFixtures(server *mcp.Server, enabled bool) conformanceFi
 	addPrompt(&mcp.Prompt{Name: "test_prompt_with_image", Description: "A prompt carrying an image."},
 		imagePromptFixture)
 
+	registerMRTRFixtures(server, &reg)
+
 	return reg
+}
+
+// addFixtureTool registers a no-argument fixture tool and records it for the
+// rug-pull baseline. Shared by this file and conformance_fixtures_mrtr.go.
+func addFixtureTool(server *mcp.Server, reg *conformanceFixtures, name, description string, handler mcp.ToolHandler) {
+	tool := &mcp.Tool{
+		Name:        name,
+		Description: description,
+		InputSchema: emptyObjectSchema(),
+		Annotations: &mcp.ToolAnnotations{Title: name, ReadOnlyHint: true},
+	}
+	server.AddTool(tool, handler)
+	reg.Tools = append(reg.Tools, tool)
 }
 
 // emptyObjectSchema is the no-argument input schema. It is written out rather

@@ -103,6 +103,17 @@ func TestConformanceFixturesAreAdditive(t *testing.T) {
 		"test_missing_capability":     true,
 		"test_logging_tool":           true,
 		"json_schema_2020_12_tool":    true,
+
+		"test_input_required_result_elicitation":    true,
+		"test_input_required_result_sampling":       true,
+		"test_input_required_result_list_roots":     true,
+		"test_input_required_result_request_state":  true,
+		"test_input_required_result_multiple_inputs": true,
+		"test_input_required_result_multi_round":    true,
+		"test_input_required_result_tampered_state": true,
+		"test_input_required_result_capabilities":   true,
+		"test_streaming_elicitation":                true,
+		"test_x_mcp_header":                         true,
 	}
 	for name := range got {
 		if !suiteFixtures[name] {

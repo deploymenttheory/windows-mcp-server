@@ -35,8 +35,11 @@ server:
   - resources-subscribe
   - resources-unsubscribe
 
-  # SEP-2243 custom headers via x-mcp-header: needs a tool declaring a parameter
-  # sourced from a custom header, and no tool here does.
+  # SEP-2243 custom headers via x-mcp-header. The fixture tool (test_x_mcp_header)
+  # is registered in this pass too, but the SDK gates all standard-header
+  # processing on Mcp-Protocol-Version >= 2026-07-28 (minVersionForStandardHeaders
+  # in mcp/streamable_headers.go), so a 2025-11-25 exchange has no param-header
+  # validation to conform to.
   - http-custom-header-server-validation
 
   # SEP-1613 keyword preservation is NOT listed: this pass runs with --fixtures,
