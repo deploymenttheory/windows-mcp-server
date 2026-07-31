@@ -73,10 +73,10 @@ func (e WindowsEnforcer) Apply(spec EnforceSpec) (func() error, error) {
 	// its own, so a proxy-only policy asking for it must not be silently dropped
 	// on the way past the firewall early-return — that would leave an operator
 	// believing traffic was being routed when nothing had been configured.
-	needsFirewall := len(spec.Applications) > 0 || spec.GlobalBlock
-	if !needsFirewall && !spec.SetSystemProxy {
+	if !specNeedsAction(spec) {
 		return func() error { return nil }, nil
 	}
+	needsFirewall := specNeedsElevation(spec)
 	if needsFirewall && !e.Elevated() {
 		return nil, ErrNotElevated
 	}
