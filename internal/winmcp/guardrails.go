@@ -76,16 +76,16 @@ func (p *systemProbe) DeviceIdentity() signals.DeviceIdentity {
 	}
 }
 
-// Load resolves the active device devicePolicy.
+// loadPolicy resolves the active device policy.
 //
-// With no --devicePolicy-config the embedded default applies: the engine is present,
+// With no --policy-config the embedded default applies: the engine is present,
 // every declared signal is evaluated and every verdict recorded, but nothing is
 // refused. That is deliberate — an engine that arrived enforcing would start
 // refusing tool calls on devices that worked the day before, with no operator
 // action and no document to point at.
 //
-// A named devicePolicy that fails to load is fatal. Falling back to the default would
-// silently run a device under weaker devicePolicy than its operator wrote, which is the
+// A named policy that fails to load is fatal. Falling back to the default would
+// silently run a device under weaker policy than its operator wrote, which is the
 // worst of the available outcomes.
 func loadPolicy(cfg Config, reg *signals.Registry, logger *slog.Logger) (*policy.Policy, error) {
 	if cfg.PolicyConfig == "" {
@@ -105,7 +105,7 @@ func loadPolicy(cfg Config, reg *signals.Registry, logger *slog.Logger) (*policy
 	return devicePolicy, nil
 }
 
-// killPolicyConfig maps the devicePolicy's containment actions to the executor's config.
+// killPolicyConfig maps the policy's containment actions to the executor's config.
 func killPolicyConfig(devicePolicy *policy.Policy) contain.KillActionConfig {
 	a := devicePolicy.Kill.Actions
 	return contain.KillActionConfig{
@@ -118,7 +118,7 @@ func killPolicyConfig(devicePolicy *policy.Policy) contain.KillActionConfig {
 	}
 }
 
-// toolIndex adapts the served inventory to policy.ToolIndex, so devicePolicy rules
+// toolIndex adapts the served inventory to policy.ToolIndex, so policy rules
 // can match on the toolset and annotations a tool actually carries.
 //
 // It is a snapshot taken once the manifest is assembled, not a live view: the
@@ -165,15 +165,15 @@ func guardrailEnv(cfg Config, dsk *desktop.Desktop, logger *slog.Logger) *signal
 
 // enforceHTTPS resolves the Enforce HTTPS setting.
 //
-// The value lives on Config rather than being read from the devicePolicy at each call
+// The value lives on Config rather than being read from the policy at each call
 // site because it has to reach the tool dependencies and the guardrail Env, and
-// neither carries a devicePolicy. RunStdio copies it across immediately after loading,
-// so the devicePolicy remains the only place an operator sets it.
+// neither carries a policy. RunStdio copies it across immediately after loading,
+// so the policy remains the only place an operator sets it.
 func enforceHTTPS(cfg Config) bool { return cfg.EnforceHTTPS }
 
 // Environment variables carrying the tier-2 credentials. They are read from the
-// environment rather than from flags or the devicePolicy document because they are
-// secrets: argv is world-readable, and a devicePolicy document is meant to be
+// environment rather than from flags or the policy document because they are
+// secrets: argv is world-readable, and a policy document is meant to be
 // reviewable and checked in. This mirrors the credentials invariant — a secret
 // may be used, but it is never written somewhere it can be read back.
 const (
@@ -187,11 +187,11 @@ const (
 
 // newGuardrailRegistry builds the signal registry: the tier-1 local checks, the
 // just-in-time at-source device-posture checks, and — when the credentials are
-// present in the environment — the authoritative tier-2 Graph and remote-devicePolicy
+// present in the environment — the authoritative tier-2 Graph and remote-policy
 // providers.
 //
-// Registering a signal only makes it available for a devicePolicy to declare. Nothing
-// here decides whether it is evaluated; that is the devicePolicy's job.
+// Registering a signal only makes it available for a policy to declare. Nothing
+// here decides whether it is evaluated; that is the policy's job.
 func newGuardrailRegistry(_ Config, logger *slog.Logger) *signals.Registry {
 	reg := signals.NewRegistry()
 	signals.RegisterBuiltins(reg)

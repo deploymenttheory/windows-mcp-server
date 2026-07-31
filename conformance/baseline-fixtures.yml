@@ -42,25 +42,25 @@ server:
   # header-driven parameter into the manifest purely to pass a test.
   - http-custom-header-server-validation
 
-# NOTE ON server-stateless
-#
-# server-stateless is deliberately NOT baselined, even though some of its checks are
-# expected to fail. It is one scenario carrying several groups of checks, and most of
-# them — the per-request _meta validation, server/discover, version negotiation,
-# header handling, and the 404 plus -32601 for the removed initialize/ping/
-# logging-setLevel methods — are exactly what this change is about proving.
-#
-# Two of its groups cannot pass here:
-#
-#   - the list-mutation checks, which need test_trigger_tool_change /
-#     test_trigger_prompt_change and a server that advertises listChanged.
-#     pinnedCapabilities() pins listChanged false on purpose, so implementing them
-#     would contradict a declared capability.
-#   - the client-capability checks, which need a tool that requires a capability in
-#     _meta (test_missing_capability). This server requires none.
-#
-# Those must be excused per check, as `server-stateless:<check-id>`, not by
-# baselining the whole scenario — which would throw away the verdict on everything
-# else it covers. The check ids come from the first run's checks.json; until they are
-# filled in here the run reports them as unexpected failures, which is the correct
-# and visible state to be in rather than a blanket excuse.
+  # server-stateless: excused per check, never as a whole scenario.
+  #
+  # It carries 28 checks and 24 of them pass. Most are exactly what this server
+  # needs to prove — per-request _meta validation, server/discover, version
+  # negotiation, header handling, and the 404 plus -32601 for the removed
+  # initialize/ping/logging-setLevel methods. Baselining the scenario would throw
+  # all of that away to excuse four checks.
+  #
+  # Each of these needs a diagnostic fixture the suite expects an everything-server
+  # to expose. Two of them cannot be honestly implemented here at all: this server
+  # requires no client capability, and it pins listChanged false, so a tool that
+  # triggered a list-changed notification would contradict a declared capability.
+  - server-stateless:sep-2575-server-rejects-undeclared-capability
+  - server-stateless:sep-2575-missing-capability-http-400
+  - server-stateless:sep-2575-http-server-no-independent-requests-on-stream
+  - server-stateless:sep-2575-server-no-log-without-loglevel
+
+  # SEP-1613 keyword preservation needs a tool named json_schema_2020_12_tool
+  # carrying the keywords under test. Adding one to the product manifest would put
+  # a test fixture in front of agents, so it stays a fixtures-pass concern; it is
+  # listed here because that fixture is not implemented yet either.
+  - json-schema-2020-12

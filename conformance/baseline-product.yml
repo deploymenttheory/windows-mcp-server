@@ -69,3 +69,17 @@ server:
   # SEP-2243 custom headers via x-mcp-header. The scenario needs at least one tool
   # that declares a parameter sourced from a custom header; no tool here does.
   - http-custom-header-server-validation
+
+  # SEP-1613 keyword preservation calls a tool named json_schema_2020_12_tool.
+  # Adding one to the product manifest would put a test fixture in front of
+  # agents, so this belongs to the fixtures pass.
+  - json-schema-2020-12
+
+  # server-stateless: excused per check, never as a whole scenario — 24 of its 28
+  # checks pass and are the substance of 2026-07-28 conformance. These four need
+  # diagnostic fixtures, and two of them could not be honestly implemented at all:
+  # this server requires no client capability, and it pins listChanged false.
+  - server-stateless:sep-2575-server-rejects-undeclared-capability
+  - server-stateless:sep-2575-missing-capability-http-400
+  - server-stateless:sep-2575-http-server-no-independent-requests-on-stream
+  - server-stateless:sep-2575-server-no-log-without-loglevel

@@ -14,12 +14,12 @@ import (
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
 )
 
-// The operator-facing operations behind the `devicePolicy` subcommands. They exist so
+// The operator-facing operations behind the `policy` subcommands. They exist so
 // the three questions an operator actually asks — is this document valid, what
 // does this device look like right now, and why was that call refused — can each
 // be answered without starting a server.
 
-// ValidatePolicy loads and validates a devicePolicy document.
+// ValidatePolicy loads and validates a policy document.
 //
 // It touches no device: validation is about the document and the set of signals
 // this build can evaluate, so it runs anywhere, including in CI on a machine
@@ -37,7 +37,7 @@ func ValidatePolicy(cfg Config) (*policy.Policy, error) {
 	return devicePolicy, nil
 }
 
-// EvaluatePolicy reads every signal the devicePolicy declares and returns the decision
+// EvaluatePolicy reads every signal the policy declares and returns the decision
 // for the startup scope.
 //
 // Every signal is read live, cache bypassed: an operator running this wants the
@@ -73,7 +73,7 @@ func EvaluatePolicy(ctx context.Context, cfg Config) (signals.Decision, error) {
 	return engine.DecisionFrom(verdict, probe.DeviceIdentity(), probe.RunContext()), nil
 }
 
-// PolicyCoverage is what covers one tool, for `devicePolicy explain`.
+// PolicyCoverage is what covers one tool, for `policy explain`.
 type PolicyCoverage struct {
 	Tool string `json:"tool"`
 	// Known reports whether the tool is in the served manifest. A rule can still
