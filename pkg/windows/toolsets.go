@@ -55,9 +55,10 @@ var (
 	}
 	// ToolsetDiagnostics: system diagnostics for support workflows (non-default).
 	ToolsetDiagnostics = inventory.ToolsetMetadata{
-		ID:          "diagnostics",
-		Description: "System diagnostics: OS/hardware inventory and Windows service control, for support and troubleshooting. Disabled by default.",
-		Icon:        "pulse",
+		ID: "diagnostics",
+		Description: "System diagnostics: OS/hardware inventory, Windows service control, event-log queries, and " +
+			"network inspection, for support and troubleshooting. Disabled by default.",
+		Icon: "pulse",
 	}
 	// ToolsetTesting: assertions and evidence capture for QA (non-default).
 	ToolsetTesting = inventory.ToolsetMetadata{
