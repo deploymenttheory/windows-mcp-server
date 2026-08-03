@@ -203,7 +203,7 @@ anchoring with a warning. Anchoring is **off by default**.
 | `plan.step`, `plan.applied` | Each step executed under a plan (id, index, tool, argument digest, verdict), then the apply summary |
 | `plan.stale` | An apply was refused because posture no longer admitted the plan |
 | `plan.required` | A direct call to a tool the policy gates behind a plan was refused (preventive mode) |
-| `approval.requested` | A call hit an `on_fail: approve` rule and was suspended on the webhook (request id, subject, rules, argument digest) |
+| `approval.requested` | A call hit an `on_fail: hold` rule and was suspended on the webhook (request id, subject, rules, argument digest) |
 | `approval.decision` | The authoriser resolved a suspended call (`outcome`: approve / deny / error; approver) |
 | `approval.timeout` | A suspended call reached its deadline undecided and was denied (fails closed) |
 | `credentials.installed`, `credentials.removed` | Identifiers only, never secrets |

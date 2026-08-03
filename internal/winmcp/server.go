@@ -385,7 +385,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	kill := contain.NewKillSwitch(executor.OnTrip)
 	defer func() { _ = executor.Restore() }() // undo firewall isolation on exit
 
-	// Out-of-band approvals for on_fail: approve rules. Off unless a webhook is
+	// Out-of-band approvals for on_fail: hold rules. Off unless a webhook is
 	// configured; a policy that uses approve without one is refused at load, so a nil
 	// approver here means no approve rule can fire. The signing key is an environment
 	// secret, never the policy document — argv and the policy are both reviewable.

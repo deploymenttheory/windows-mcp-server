@@ -37,12 +37,12 @@ type EnforcerDeps struct {
 	// effective severity and the mode — the telemetry hook. Optional: nil when no
 	// collector is configured.
 	RecordDecision func(subject, severity, mode string)
-	// Approver adjudicates approve verdicts out of band. Nil when no approvals
-	// webhook is configured; a policy that uses on_fail approve without one is
-	// refused at load, so a nil Approver here means no approve rule can fire. If one
+	// Approver adjudicates hold verdicts out of band. Nil when no approvals
+	// webhook is configured; a policy that uses on_fail hold without one is
+	// refused at load, so a nil Approver here means no hold rule can fire. If one
 	// somehow does with no approver, the call is refused — dual control fails closed.
 	Approver Approver
-	// SessionID labels approval requests so an approver can correlate them; the same
+	// SessionID labels approval requests so a approver can correlate them; the same
 	// per-session stamp the audit chain and evidence bundle use.
 	SessionID string
 	// ApprovalTimeout is how long a suspended call may wait. Zero lets the client
@@ -77,7 +77,7 @@ func Middleware(engine *policy.Engine, deps EnforcerDeps) mcp.Middleware {
 				return next(ctx, method, req)
 			}
 
-			// A tool gated by require_plan may only run inside an approved plan. Plan
+			// A tool gated by require_plan may only run inside a approved plan. Plan
 			// steps are executed by the planner and never reach this middleware, so a
 			// matching call here is by definition a direct call — refuse it before it
 			// runs, and record that the plan requirement fired.
@@ -101,7 +101,7 @@ func Middleware(engine *policy.Engine, deps EnforcerDeps) mcp.Middleware {
 				return refuse(method, v)
 			case v.Severity >= policy.SeverityDeny:
 				return refuse(method, v)
-			case v.Severity == policy.SeverityApprove:
+			case v.Severity == policy.SeverityHold:
 				d := awaitApproval(ctx, deps, logger, method, req, v)
 				if d.Outcome != OutcomeApprove {
 					return refuseApproval(method, v, d)
@@ -187,7 +187,7 @@ func refuse(method string, v policy.Verdict) (mcp.Result, error) {
 // refusal only — require_plan selects tools — so it always takes the IsError
 // shape, letting the model read the reason and re-submit the call through a plan.
 func refusePlanRequired(subj policy.Subject) (mcp.Result, error) {
-	msg := "policy requires this tool to run inside an approved plan (" + subj.String() +
+	msg := "policy requires this tool to run inside a approved plan (" + subj.String() +
 		"): submit it with Plan, then Apply the returned plan_id"
 	return &mcp.CallToolResult{
 		IsError: true,
@@ -197,7 +197,7 @@ func refusePlanRequired(subj policy.Subject) (mcp.Result, error) {
 
 // awaitApproval suspends a call on the out-of-band authoriser and reports the
 // decision. A missing approver fails closed: the switch already routed here on an
-// approve verdict, and a verdict nobody can adjudicate must not slip through as an
+// hold verdict, and a verdict nobody can adjudicate must not slip through as an
 // allow.
 func awaitApproval(
 	ctx context.Context,
@@ -208,7 +208,7 @@ func awaitApproval(
 	v policy.Verdict,
 ) Decision {
 	if deps.Approver == nil {
-		logger.Error("approve verdict with no approver configured; refusing", "subject", v.Subject)
+		logger.Error("hold verdict with no approver configured; refusing", "subject", v.Subject)
 		return Decision{Outcome: OutcomeError, Detail: "no approver configured"}
 	}
 	logger.Info("call suspended for approval", "subject", v.Subject, "reason", v.Reason())
@@ -305,7 +305,7 @@ func refuseApproval(method string, v policy.Verdict, d Decision) (mcp.Result, er
 	case OutcomeTimeout:
 		msg = "blocked: no approval within the time limit for " + v.Subject
 	case OutcomeDeny:
-		msg = "blocked: an approver refused " + v.Subject
+		msg = "blocked: a approver refused " + v.Subject
 		if d.Detail != "" {
 			msg += " (" + d.Detail + ")"
 		}

@@ -79,7 +79,7 @@ func TestParsePolicyRejectsUnknownFields(t *testing.T) {
 }
 
 func TestSeverityRoundTrips(t *testing.T) {
-	for _, sev := range []Severity{SeverityAllow, SeverityWarn, SeverityApprove, SeverityDeny, SeverityKill} {
+	for _, sev := range []Severity{SeverityAllow, SeverityWarn, SeverityHold, SeverityDeny, SeverityKill} {
 		raw, err := json.Marshal(sev)
 		if err != nil {
 			t.Fatal(err)
@@ -102,9 +102,9 @@ func TestSeverityRoundTrips(t *testing.T) {
 // depends on: a call's verdict is the maximum severity among its failures, so
 // reordering these constants would silently downgrade enforcement.
 func TestSeverityOrderingIsMeaningful(t *testing.T) {
-	if !(SeverityAllow < SeverityWarn && SeverityWarn < SeverityApprove &&
-		SeverityApprove < SeverityDeny && SeverityDeny < SeverityKill) {
-		t.Fatal("severities must be ordered allow < warn < approve < deny < kill")
+	if !(SeverityAllow < SeverityWarn && SeverityWarn < SeverityHold &&
+		SeverityHold < SeverityDeny && SeverityDeny < SeverityKill) {
+		t.Fatal("severities must be ordered allow < warn < hold < deny < kill")
 	}
 }
 

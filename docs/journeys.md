@@ -97,7 +97,7 @@ A journey **is** a pre-authored plan plus interleaved assertions and evidence. T
 means it inherits every property of plan-and-apply: whole-plan adjudication before
 anything runs, per-step live policy evaluation at execution, fail-stop atomicity,
 and abandonment on a kill-switch trip. A journey step that hits a policy `deny`
-(or an unapproved `approve`) refuses and stops the run, the same as any plan step.
+(or a `hold` that isn't approved) refuses and stops the run, the same as any plan step.
 
 ## Not yet covered
 

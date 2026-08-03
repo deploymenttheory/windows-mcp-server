@@ -97,9 +97,9 @@ type planner struct {
 	killed func() bool
 
 	// approver adjudicates approve-disposition steps at execution time; nil unless
-	// the policy configures an approvals webhook, in which case no approve rule can
+	// the policy configures an approvals webhook, in which case no hold rule can
 	// exist (the policy is refused at load), so a nil approver here is never reached
-	// by an approve step.
+	// by an hold step.
 	approver        enforce.Approver
 	sessionID       string
 	approvalTimeout time.Duration
@@ -120,7 +120,7 @@ func newPlanner(engine *policy.Engine, auditLog *audit.AuditLog, runner toolRunn
 
 // withApprovals wires the out-of-band authoriser used for approve-disposition
 // steps. Called only when the policy configures an approvals webhook; a plan step
-// that hits an approve rule then blocks on the same authoriser a direct call would,
+// that hits an hold rule then blocks on the same authoriser a direct call would,
 // so apply is never a way around dual control.
 func (p *planner) withApprovals(approver enforce.Approver, sessionID string, timeout time.Duration) *planner {
 	p.approver = approver
@@ -237,7 +237,7 @@ func (p *planner) Apply(ctx context.Context, planID string) (windows.PlanApplica
 		// An approve-disposition step suspends on the same authoriser a direct call
 		// would. A plan is pre-authored, so this is the moment a human sees the exact
 		// operation about to run; a denial or a timeout halts the plan, fail-closed.
-		if v.Severity == policy.SeverityApprove {
+		if v.Severity == policy.SeverityHold {
 			if d := p.adjudicateStep(ctx, s, v); d.Outcome != enforce.OutcomeApprove {
 				failed++
 				skipped = len(doc.Steps) - i - 1
@@ -306,9 +306,9 @@ func approvalDetail(d enforce.Decision) string {
 		return "no decision before the deadline"
 	case enforce.OutcomeDeny:
 		if d.Detail != "" {
-			return "refused by an approver: " + d.Detail
+			return "refused by a approver: " + d.Detail
 		}
-		return "refused by an approver"
+		return "refused by a approver"
 	default:
 		if d.Detail != "" {
 			return "approval unavailable: " + d.Detail

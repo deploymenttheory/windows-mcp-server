@@ -31,15 +31,15 @@ func (f *fakePlanApprover) Await(_ context.Context, _ enforce.ApprovalRequest) e
 	return enforce.Decision{Outcome: f.outcome}
 }
 
-// approveStepPolicy gates FileSystem behind an approve rule that fires when
+// holdStepPolicy gates FileSystem behind an hold rule that fires when
 // run-context fails.
-func approveStepPolicy() (*policy.Policy, map[string]signals.Status) {
+func holdStepPolicy() (*policy.Policy, map[string]signals.Status) {
 	return &policy.Policy{
 			Version: 1, Mode: policy.ModeEnforcing,
 			Signals: map[string]policy.SignalConfig{"run-context": {}},
 			Rules: []policy.Rule{{
 				Name: "gate", Match: policy.Match{Tool: policy.StringSet{"FileSystem"}},
-				Require: []string{"run-context"}, OnFail: policy.SeverityApprove,
+				Require: []string{"run-context"}, OnFail: policy.SeverityHold,
 			}},
 		},
 		map[string]signals.Status{"run-context": signals.Fail}
@@ -241,11 +241,11 @@ func TestApplyAbandonsOnKill(t *testing.T) {
 	}
 }
 
-// TestApplyAdjudicatesApproveStepGranted: a plan step that hits an approve rule
+// TestApplyAdjudicatesHoldStepGranted: a plan step that hits an hold rule
 // blocks on the same authoriser a direct call would, and runs only once approved —
 // so Apply is never a way around dual control.
-func TestApplyAdjudicatesApproveStepGranted(t *testing.T) {
-	pol, states := approveStepPolicy()
+func TestApplyAdjudicatesHoldStepGranted(t *testing.T) {
+	pol, states := holdStepPolicy()
 	runner := allServed()
 	p, dest := newTestPlanner(t, pol, states, runner, nil)
 	fa := &fakePlanApprover{outcome: enforce.OutcomeApprove}
@@ -261,22 +261,22 @@ func TestApplyAdjudicatesApproveStepGranted(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 	if fa.calls != 1 {
-		t.Errorf("the approve step should have consulted the approver once, got %d", fa.calls)
+		t.Errorf("the hold step should have consulted the approver once, got %d", fa.calls)
 	}
 	if len(runner.calls) != 1 {
 		t.Errorf("an approved step must run, ran %v", runner.calls)
 	}
 	if !dest.has("approval.requested") || !dest.has("approval.decision") {
-		t.Error("Apply must audit the approval handshake for an approve step")
+		t.Error("Apply must audit the approval handshake for an hold step")
 	}
 	if !strings.Contains(app.Report, "1 completed") {
 		t.Errorf("report should record the approved step ran: %s", app.Report)
 	}
 }
 
-// TestApplyAdjudicatesApproveStepDenied: a denied step halts the plan, fail-closed.
-func TestApplyAdjudicatesApproveStepDenied(t *testing.T) {
-	pol, states := approveStepPolicy()
+// TestApplyAdjudicatesHoldStepDenied: a denied step halts the plan, fail-closed.
+func TestApplyAdjudicatesHoldStepDenied(t *testing.T) {
+	pol, states := holdStepPolicy()
 	runner := allServed()
 	p, dest := newTestPlanner(t, pol, states, runner, nil)
 	p.withApprovals(&fakePlanApprover{outcome: enforce.OutcomeDeny}, "sess", time.Second)
@@ -296,10 +296,10 @@ func TestApplyAdjudicatesApproveStepDenied(t *testing.T) {
 	}
 }
 
-// TestApplyApproveStepFailsClosedWithoutApprover: an approve step with no approver
+// TestApplyHoldStepFailsClosedWithoutApprover: an hold step with no approver
 // wired refuses rather than running unapproved.
-func TestApplyApproveStepFailsClosedWithoutApprover(t *testing.T) {
-	pol, states := approveStepPolicy()
+func TestApplyHoldStepFailsClosedWithoutApprover(t *testing.T) {
+	pol, states := holdStepPolicy()
 	runner := allServed()
 	p, _ := newTestPlanner(t, pol, states, runner, nil) // no withApprovals
 
@@ -308,7 +308,7 @@ func TestApplyApproveStepFailsClosedWithoutApprover(t *testing.T) {
 	app, _ := p.Apply(context.Background(), prop.PlanID)
 
 	if len(runner.calls) != 0 {
-		t.Errorf("an approve step with no approver must not run, ran %v", runner.calls)
+		t.Errorf("an hold step with no approver must not run, ran %v", runner.calls)
 	}
 	if !strings.Contains(app.Report, "NOT APPROVED") {
 		t.Errorf("report should refuse the unapprovable step: %s", app.Report)

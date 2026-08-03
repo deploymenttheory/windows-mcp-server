@@ -59,7 +59,7 @@ type Decision struct {
 	Detail   string
 }
 
-// Approver adjudicates an approve verdict out of band. Await blocks until the
+// Approver adjudicates an hold verdict out of band. Await blocks until the
 // external authority decides, the deadline passes, or ctx is cancelled (a kill
 // stop), and reports the outcome. It never returns OutcomeApprove on doubt.
 type Approver interface {
@@ -238,7 +238,7 @@ func (c *ApprovalClient) do(httpReq *http.Request) (webhookReply, error) {
 		return webhookReply{}, fmt.Errorf("approval webhook request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	// Cap the body: an approval reply is tiny, and an approver that streams
+	// Cap the body: an approval reply is tiny, and a approver that streams
 	// megabytes must not be able to exhaust memory on the request path.
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {

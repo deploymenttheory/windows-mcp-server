@@ -28,18 +28,18 @@ request is the **highest** severity among its failures.
 |---|---|---|
 | `allow` | green | The call proceeds. The failure is still recorded. |
 | `warn` | amber | The call proceeds and the warning is attached to the result, so the model sees it and not only the operator. |
-| `approve` | held | The call is suspended on an out-of-band human decision (see [Dual control](#dual-control-on_fail-approve)). It proceeds only if an approver says yes; a timeout denies. Stronger than a warning the model can ignore, weaker than an outright refusal, because a person can still let it through. |
+| `hold` | held | The call is suspended on an out-of-band human decision (see [Dual control](#dual-control-on_fail-hold)). It proceeds only if an approver says yes; a timeout denies. Stronger than a warning the model can ignore, weaker than an outright refusal, because a person can still let it through. |
 | `deny` | red | The call is refused. Nothing latches: the next call is evaluated afresh, so a signal that recovers restores service without a restart. |
 | `kill` | out of bounds | The kill switch trips and the containment ladder runs. |
 
-Ordered `allow < warn < approve < deny < kill`; the verdict for a request is the
+Ordered `allow < warn < hold < deny < kill`; the verdict for a request is the
 highest severity among its failures.
 
 `"mode": "audit"` caps severity at `warn`. Signals are still read and every
 verdict is still recorded, including what enforcing *would* have done — that is
 the point of audit mode, and why it does not simply skip evaluation. Note this
-caps `approve` too: an audit-mode device never suspends a call for approval,
-which is what keeps audit mode observe-only.
+caps `hold` too: an audit-mode device never suspends a call for approval, which
+is what keeps audit mode observe-only.
 
 ## Document reference
 
@@ -133,7 +133,7 @@ which is what keeps audit mode observe-only.
     "sample_ratio": 1.0            // trace sampling in [0,1]
   },
 
-  "approvals": {                   // out-of-band authoriser for on_fail: approve rules; required if any rule uses it
+  "approvals": {                   // out-of-band authoriser for on_fail: hold rules; required if any rule uses it
     "webhook_url": "https://approvals.example/decide",  // http/https; POSTed each pending call, signed with WINDOWS_MCP_APPROVAL_KEY
     "timeout": "2m",               // a call still undecided at the deadline is denied (fails closed)
     "poll_interval": "5s"          // how often to re-poll while a decision is pending
@@ -342,18 +342,20 @@ tool and executed by `Apply`. This is the preventive tier of plan-and-apply; see
 always exempt, so a `{ "toolset": "*" }` selector cannot deadlock the ability to
 plan.
 
-## Dual control (`on_fail: approve`)
+## Dual control (`on_fail: hold`)
 
-A rule can dispose to `approve` instead of `deny` — when a required signal fails,
-the call is **suspended** on a human decision rather than refused outright. This is
-dual control: the model proposes, a person disposes.
+A rule can dispose to `hold` instead of `deny` — when a required signal fails,
+the call is **held** on a human decision rather than refused outright. This is
+dual control: the model proposes, a person disposes. (The verdict word is `hold`;
+the webhook that resolves it is still an *approval* — a person approves or denies
+the held call.)
 
 ```json
 "rules": [
   { "name": "human-in-the-loop-for-destructive-tools",
     "match":   { "annotation": "destructive" },
     "require": ["bitlocker"],
-    "on_fail": "approve" }
+    "on_fail": "hold" }
 ],
 "approvals": {
   "webhook_url": "https://approvals.corp.example/decide",
@@ -363,8 +365,8 @@ dual control: the model proposes, a person disposes.
 ```
 
 **How the decision is solicited.** This server holds no inbound listener — the
-stdio-only posture is inviolable — so authorisation is asked *outbound*. When an
-`approve` verdict fires, the enforcement point `POST`s a small JSON description of
+stdio-only posture is inviolable — so authorisation is asked *outbound*. When a
+`hold` verdict fires, the enforcement point `POST`s a small JSON description of
 the pending call to `approvals.webhook_url` and blocks that one request until the
 answer comes back. The body carries identifiers and a **digest** of the arguments,
 never the raw arguments — the authoriser decides on the call's identity, the same
@@ -392,14 +394,14 @@ unintelligible reply — an approval channel that is down must not become an ope
 door. All four outcomes are audited: `approval.requested` before the POST, then
 `approval.decision` (or `approval.timeout`), arguments digested, never raw.
 
-**Constraints.** `approve` is only valid on **call-scope** rules — a startup
+**Constraints.** `hold` is only valid on **call-scope** rules — a startup
 admission is a one-shot go/no-go with no request to suspend, and a rate limit fires
 on a stream rather than one call, so both reject it at load. A rule that uses
-`approve` **without** an `approvals` webhook is refused at load: dual control that
-cannot ask anyone is not dual control. And `audit` mode caps `approve` at `warn`,
+`hold` **without** an `approvals` webhook is refused at load: dual control that
+cannot ask anyone is not dual control. And `audit` mode caps `hold` at `warn`,
 so an observe-only device never suspends a call.
 
-**Plans, too.** A plan *step* that hits an `approve` rule blocks on the same
+**Plans, too.** A plan *step* that hits a `hold` rule blocks on the same
 authoriser at `Apply` time — apply is never a way around dual control. See
 [Plan and apply](plan-and-apply.md).
 

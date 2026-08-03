@@ -172,16 +172,16 @@ func (f *fakeApprover) Await(_ context.Context, req ApprovalRequest) Decision {
 	return Decision{Outcome: f.outcome, Approver: "bob", Detail: "test"}
 }
 
-const approvePolicy = `{
+const holdPolicy = `{
   "version": 1, "mode": "enforce",
   "signals": { "bitlocker": { "ttl": "0s" } },
-  "rules": [ { "name": "gate", "match": { "toolset": "*" }, "require": ["bitlocker"], "on_fail": "approve" } ],
+  "rules": [ { "name": "gate", "match": { "toolset": "*" }, "require": ["bitlocker"], "on_fail": "hold" } ],
   "approvals": { "webhook_url": "https://approver.example/hook" }
 }`
 
 func newApprovalHarness(t *testing.T, outcome Outcome, status signals.Status) (*enforceHarness, *fakeApprover) {
 	t.Helper()
-	e := newTestEngine(t, approvePolicy, map[string]signals.Status{"bitlocker": status})
+	e := newTestEngine(t, holdPolicy, map[string]signals.Status{"bitlocker": status})
 	fa := &fakeApprover{outcome: outcome}
 	h := &enforceHarness{engine: e, dest: &memDest{}}
 	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
@@ -196,7 +196,7 @@ func newApprovalHarness(t *testing.T, outcome Outcome, status signals.Status) (*
 	return h, fa
 }
 
-func TestApproveVerdictProceedsWhenApproved(t *testing.T) {
+func TestHoldVerdictProceedsWhenApproved(t *testing.T) {
 	h, fa := newApprovalHarness(t, OutcomeApprove, signals.Fail)
 
 	res, err := h.call("tools/call", &mcp.CallToolParamsRaw{
@@ -232,7 +232,7 @@ func TestApproveVerdictProceedsWhenApproved(t *testing.T) {
 	}
 }
 
-func TestApproveVerdictRefusedOnDeny(t *testing.T) {
+func TestHoldVerdictRefusedOnDeny(t *testing.T) {
 	h, _ := newApprovalHarness(t, OutcomeDeny, signals.Fail)
 
 	res, err := h.call("tools/call", &mcp.CallToolParamsRaw{Name: "PowerShell"})
@@ -250,7 +250,7 @@ func TestApproveVerdictRefusedOnDeny(t *testing.T) {
 	}
 }
 
-func TestApproveVerdictRefusedOnTimeout(t *testing.T) {
+func TestHoldVerdictRefusedOnTimeout(t *testing.T) {
 	h, _ := newApprovalHarness(t, OutcomeTimeout, signals.Fail)
 
 	if _, err := h.call("tools/call", &mcp.CallToolParamsRaw{Name: "PowerShell"}); err != nil {
@@ -264,7 +264,7 @@ func TestApproveVerdictRefusedOnTimeout(t *testing.T) {
 	}
 }
 
-func TestApproveIsNotAskedWhenTheDevicePasses(t *testing.T) {
+func TestHoldIsNotAskedWhenTheDevicePasses(t *testing.T) {
 	h, fa := newApprovalHarness(t, OutcomeApprove, signals.Pass)
 
 	if _, err := h.call("tools/call", &mcp.CallToolParamsRaw{Name: "PowerShell"}); err != nil {
@@ -281,10 +281,10 @@ func TestApproveIsNotAskedWhenTheDevicePasses(t *testing.T) {
 	}
 }
 
-// TestApproveWithNoApproverFailsClosed: if an approve verdict somehow reaches the
+// TestHoldWithNoApproverFailsClosed: if an hold verdict somehow reaches the
 // middleware with no approver wired, it must refuse rather than fall through.
-func TestApproveWithNoApproverFailsClosed(t *testing.T) {
-	e := newTestEngine(t, approvePolicy, map[string]signals.Status{"bitlocker": signals.Fail})
+func TestHoldWithNoApproverFailsClosed(t *testing.T) {
+	e := newTestEngine(t, holdPolicy, map[string]signals.Status{"bitlocker": signals.Fail})
 	h := &enforceHarness{engine: e, dest: &memDest{}}
 	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
 		h.reached.Add(1)

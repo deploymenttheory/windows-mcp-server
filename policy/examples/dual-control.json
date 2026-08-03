@@ -17,7 +17,7 @@
       "name": "human-in-the-loop-for-destructive-tools",
       "match": { "annotation": "destructive" },
       "require": ["bitlocker"],
-      "on_fail": "approve"
+      "on_fail": "hold"
     }
   ],
   "approvals": {
