@@ -26,8 +26,8 @@ func writeSession(t *testing.T, dir, session string) {
 		t.Fatal(err)
 	}
 	log := audit.NewAuditLog(dest)
-	log.Append("server.start", map[string]any{"session": session})
-	log.Append("policy.decision", map[string]any{"verdict": "deny"})
+	log.Append("server.started", map[string]any{"session": session})
+	log.Append("policy.decided", map[string]any{"verdict": "deny"})
 	if err := log.Close(); err != nil {
 		t.Fatal(err)
 	}

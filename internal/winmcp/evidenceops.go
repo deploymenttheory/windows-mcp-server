@@ -21,8 +21,8 @@ import (
 // the decisions and containment record a reviewer looks at first, lifted out of
 // the full chain for convenience (the chain itself is bundled too).
 var verdictPrefixes = []string{
-	"policy.decision", "devicePolicy.startup", "plan.", "approval.",
-	"killswitch.", "credentials.exposure", "server.surface",
+	"policy.decided", "devicePolicy.decided", "plan.", "approval.",
+	"killswitch.", "credentials.exposure", "server.configured",
 }
 
 // BundleEvidence gathers a session's evidence from an audit directory — its audit

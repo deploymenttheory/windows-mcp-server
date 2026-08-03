@@ -188,10 +188,10 @@ secrets.
 
 ```mermaid
 flowchart LR
-    G["#0 server.start<br/>prev=∅"] --> E1["#1 preflight.decision<br/>prev=H0"]
-    E1 --> E2["#2 tools.baseline<br/>prev=H1"]
+    G["#0 server.started<br/>prev=∅"] --> E1["#1 policy.decided<br/>prev=H0"]
+    E1 --> E2["#2 tools.pinned<br/>prev=H1"]
     E2 --> E3["#3 tool.call<br/>prev=H2"]
-    E3 --> E4["#… killswitch.trip<br/>prev=H3"]
+    E3 --> E4["#… killswitch.tripped<br/>prev=H3"]
 
     note["entry_hash = SHA-256( seq · ts · event · payload · prev_hash )"]
 ```
@@ -311,7 +311,7 @@ flowchart TB
 
     TRIG --> OT["KillExecutor.OnTrip(reason)"]
 
-    OT --> A1["audit: killswitch.trip"]
+    OT --> A1["audit: killswitch.tripped"]
     A1 --> A2["ALWAYS: raise banner"]
     A2 --> A3["ALWAYS: seal audit log (flush+fsync)"]
     A3 --> E1{"isolate?"}
@@ -347,7 +347,7 @@ undone on exit (the executor keeps a `restore` handle).
 ### The agent-facing `Kill` tool is not an authoritative trigger
 
 `Kill` is deliberately absent from the ladder above. It always stops the session
-cleanly — `KillExecutor.StopGracefully`: audit `session.stop`, seal the chain,
+cleanly — `KillExecutor.StopGracefully`: audit `session.stopped`, seal the chain,
 finalize the recording, abort — but it actuates the containment ladder only when
 the master switch is armed. Containment exists to contain *the agent*, triggered
 by the authoritative detectors; letting the agent self-trigger firewall isolation
@@ -357,7 +357,7 @@ or a shutdown would be a denial-of-service vector, not a protection.
 
 The server runs in the (non-admin) user context. The elevation-only actions
 (isolate / kill-procs / shutdown) run only when the process is actually elevated;
-otherwise they are **skipped and audited** (`killaction.skip … not elevated`)
+otherwise they are **skipped and audited** (`killaction.skipped … not elevated`)
 while the banner, log-seal, recording-finalize, and abort still happen.
 
 ```mermaid
@@ -437,7 +437,7 @@ each leaves — see the [threat model in the README](../README.md#threat-model).
 | **Dynamic rug pull** — approved server mutates its tool set post-deploy | Manifest fingerprint pinned at startup + `tools/list` interception + monitor recheck; silent `list_changed` suppressed → audited always, and banner + isolate + abort when armed |
 | **Indirect prompt injection / data-exfil loops** | A `rate_limits` entry refuses the call once the window is exceeded and, at `on_exceed: "kill"`, escalates to **network isolation** (cuts the exfil channel) → abort, when armed; audit records the call sequence with arg digests either way. Where the exfil target is a domain, the egress allowlist refuses it outright |
 | **Out-of-band control / agent tampering** | Status, audit, heartbeat, monitor, and kill switch are constructed in the server, not exposed as tools; middleware runs on the receiving path — unbypassable. The only agent-facing tools are read-only `GuardrailStatus` and `Kill`, which stops the session but cannot actuate containment unarmed |
-| **High-risk action needs a human, not just a machine verdict** | A rule at `on_fail: "hold"` suspends the call on an out-of-band authoriser (an outbound webhook — no inbound listener, so the stdio-only posture holds), forwarding a digest of the call and never the raw arguments, signed with `WINDOWS_MCP_APPROVAL_KEY`. Fails closed: a timeout, an unreachable webhook or an unintelligible reply all deny. A plan step hitting the rule blocks the same way at apply time. Audited `approval.requested` → `approval.decision`/`approval.timeout` |
+| **High-risk action needs a human, not just a machine verdict** | A rule at `on_fail: "hold"` suspends the call on an out-of-band authoriser (an outbound webhook — no inbound listener, so the stdio-only posture holds), forwarding a digest of the call and never the raw arguments, signed with `WINDOWS_MCP_APPROVAL_KEY`. Fails closed: a timeout, an unreachable webhook or an unintelligible reply all deny. A plan step hitting the rule blocks the same way at apply time. Audited `approval.requested` → `approval.decided`/`approval.timed_out` |
 | **Silent posture drift** (Secure Boot off, BitLocker suspended, MDM removed mid-session) | In-flight monitor re-evaluates live posture every interval → audited always, kill on drift when armed |
 | **Log tampering / gaps** | Hash-chained append-only audit + heartbeat; `VerifyChain` detects any break |
 | **Credential disclosure to the model** | The `Credentials` tool has no read mode and no engine function returns a secret; `inject` types it and returns only a character count. Secrets never reach argv, tool results, or the audit chain |

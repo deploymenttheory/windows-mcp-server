@@ -195,7 +195,7 @@ func (p *planner) Apply(ctx context.Context, planID string) (windows.PlanApplica
 	// plan against live signals before starting; this does not spend rate-limit
 	// budget (the per-step check below does, at execution time).
 	if pv := p.engine.EvaluatePlan(ctx, p.subjects(doc)); !pv.Allowed() {
-		_, _ = p.audit.Append("plan.stale", map[string]any{"plan_id": planID, "severity": pv.Severity.String()})
+		_, _ = p.audit.Append("plan.refused", map[string]any{"plan_id": planID, "severity": pv.Severity.String()})
 		return windows.PlanApplication{
 			PlanID: planID,
 			Report: fmt.Sprintf("refused: device posture no longer admits this plan (%s)", pv.Severity),

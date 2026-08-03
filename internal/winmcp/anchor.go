@@ -67,7 +67,7 @@ func runAnchor(ctx context.Context, cadence time.Duration, auditLog *audit.Audit
 	}
 }
 
-// anchorOnce writes one audit.anchor entry naming the current head and publishes
+// anchorOnce writes one audit.anchored entry naming the current head and publishes
 // it off-box, but only when the head has advanced since lastHead. Without that
 // guard an idle server would grow its own chain by one anchor entry per tick
 // forever — each anchor advances the head, so the next tick would always see a
@@ -78,7 +78,7 @@ func anchorOnce(auditLog *audit.AuditLog, lastHead string, w anchorWriter) strin
 	if head == "" || head == lastHead {
 		return lastHead
 	}
-	_, _ = auditLog.Append("audit.anchor", map[string]any{
+	_, _ = auditLog.Append("audit.anchored", map[string]any{
 		"anchored_seq":  seq,
 		"anchored_head": head,
 	})

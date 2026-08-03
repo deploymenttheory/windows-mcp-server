@@ -142,7 +142,7 @@ func record(deps EnforcerDeps, logger *slog.Logger, v policy.Verdict) {
 		fields["reason"] = v.Reason()
 	}
 	if deps.Audit != nil {
-		_, _ = deps.Audit.Append("policy.decision", fields)
+		_, _ = deps.Audit.Append("policy.decided", fields)
 	}
 	if deps.RecordDecision != nil {
 		deps.RecordDecision(v.Subject, v.Severity.String(), string(v.Mode))
@@ -150,15 +150,15 @@ func record(deps EnforcerDeps, logger *slog.Logger, v policy.Verdict) {
 
 	switch {
 	case v.Severity >= policy.SeverityDeny:
-		logger.Error("policy.decision", "subject", v.Subject, "verdict", v.Severity.String(),
+		logger.Error("policy.decided", "subject", v.Subject, "verdict", v.Severity.String(),
 			"reason", v.Reason())
 	case len(v.Failures) > 0:
 		// Includes the audit-mode case, where Intended outranks Severity. That
 		// line is the one an operator reads to decide whether enforcing is safe.
-		logger.Warn("policy.decision", "subject", v.Subject, "verdict", v.Severity.String(),
+		logger.Warn("policy.decided", "subject", v.Subject, "verdict", v.Severity.String(),
 			"would_be", v.Intended.String(), "reason", v.Reason())
 	default:
-		logger.Debug("policy.decision", "subject", v.Subject, "verdict", v.Severity.String())
+		logger.Debug("policy.decided", "subject", v.Subject, "verdict", v.Severity.String())
 	}
 }
 

@@ -141,7 +141,7 @@ matches the recording's, so `session-<stamp>.audit.jsonl` and
 ### Entry shape
 
 ```json
-{"seq":2,"timestamp":"2026-07-31T14:27:37.13Z","event":"egress.start",
+{"seq":2,"timestamp":"2026-07-31T14:27:37.13Z","event":"egress.started",
  "payload":{"enforcement":"proxy-only","listen":"127.0.0.1:8181"},
  "prev_hash":"3cedc78a…","entry_hash":"f296ed3b…"}
 ```
@@ -179,7 +179,7 @@ who rewrites the log cannot also rewrite what was already published:
 ```
 
 `eventlog` writes the current head (seq + hash) to the Windows Application event
-log on each cadence, and also records an `audit.anchor` entry in the chain itself.
+log on each cadence, and also records an `audit.anchored` entry in the chain itself.
 It only anchors when the chain advanced, so an idle server does not grow the log.
 Anchoring is defence-in-depth and never gates startup: if the event-log source
 cannot be opened (it needs elevation to register), it degrades to chain-only
@@ -189,33 +189,33 @@ anchoring with a warning. Anchoring is **off by default**.
 
 | Event | When |
 |---|---|
-| `server.start` | Startup, carrying the server version and the session stamp |
-| `server.surface` | The resolved tool surface: persona, enabled toolsets, additional/excluded tools, read-only, credentials-file-present |
+| `server.started` | Startup, carrying the server version and the session stamp |
+| `server.configured` | The resolved tool surface: persona, enabled toolsets, additional/excluded tools, read-only, credentials-file-present |
 | `tools.persona_bypass.denied` | Startup refused: `--tools` named a tool outside the active persona's toolsets |
-| `audit.anchor` | The chain head was published off-box (when `transparency.anchor` is set) |
-| `devicePolicy.startup` | The startup admission decision |
-| `devicePolicy.startup.deny` | Startup refused; the server exits |
-| `tools.baseline`, `prompts.baseline`, `resources.baseline`, `discover.baseline` | Rug-pull fingerprints pinned |
-| `policy.decision` | Every verdict, including allows, and including audit mode |
+| `audit.anchored` | The chain head was published off-box (when `transparency.anchor` is set) |
+| `devicePolicy.decided` | The startup admission decision |
+| `devicePolicy.denied` | Startup refused; the server exits |
+| `tools.pinned`, `prompts.pinned`, `resources.pinned`, `discover.pinned` | Rug-pull fingerprints pinned |
+| `policy.decided` | Every verdict, including allows, and including audit mode |
 | `tool.call`, `resource.read`, `prompt.get` | Requests, with digested arguments |
 | `server.discover`, `subscriptions.listen` | Protocol-level events under 2026-07-28 |
 | `plan.proposed` | A plan was submitted: plan id, per-step tool + argument digest, and the whole-plan verdict |
 | `plan.step`, `plan.applied` | Each step executed under a plan (id, index, tool, argument digest, verdict), then the apply summary |
-| `plan.stale` | An apply was refused because posture no longer admitted the plan |
+| `plan.refused` | An apply was refused because posture no longer admitted the plan |
 | `plan.required` | A direct call to a tool the policy gates behind a plan was refused (preventive mode) |
 | `approval.requested` | A call hit an `on_fail: hold` rule and was suspended on the webhook (request id, subject, rules, argument digest) |
-| `approval.decision` | The authoriser resolved a suspended call (`outcome`: approve / deny / error; approver) |
-| `approval.timeout` | A suspended call reached its deadline undecided and was denied (fails closed) |
+| `approval.decided` | The authoriser resolved a suspended call (`outcome`: approve / deny / error; approver) |
+| `approval.timed_out` | A suspended call reached its deadline undecided and was denied (fails closed) |
 | `credentials.installed`, `credentials.removed` | Identifiers only, never secrets |
 | `credentials.exposure.denied` | Startup refused: credentials served next to shell/filesystem without acknowledgement |
 | `credentials.exposure.acknowledged` | Started with the exposure, acknowledged in policy — the residual risk is recorded |
-| `egress.start`, `egress.stop`, `egress.summary` | Proxy lifecycle and periodic counters. The distinct hosts refused this session ride in the `denied_hosts` payload, capped at 50 |
-| `egress.enforce.applied`, `egress.enforce.error`, `egress.recovered`, `egress.suspend` | Firewall enforcement lifecycle |
+| `egress.started`, `egress.stopped`, `egress.summary` | Proxy lifecycle and periodic counters. The distinct hosts refused this session ride in the `denied_hosts` payload, capped at 50 |
+| `egress.enforce.applied`, `egress.enforce.failed`, `egress.recovered`, `egress.suspended` | Firewall enforcement lifecycle |
 | `rugpull.detected` | A served manifest or the discover advertisement changed after startup |
-| `killswitch.trip` | A trigger fired |
+| `killswitch.tripped` | A trigger fired |
 | `killswitch.disarmed` | A trigger fired while its policy switch was off — detected and recorded, but nothing was actuated |
-| `killaction.done`, `killaction.skip`, `killaction.error` | Each rung of the containment ladder |
-| `session.stop` | Graceful stop |
+| `killaction.done`, `killaction.skipped`, `killaction.failed` | Each rung of the containment ladder |
+| `session.stopped` | Graceful stop |
 | `heartbeat` | Periodic liveness, so a stall is visible as an absence |
 
 `killswitch.disarmed` is worth watching specifically: it means something the
