@@ -32,8 +32,31 @@ func DeriveTargets(s Step) (targets []Target, undeclarable bool) {
 		return networkTargets(s.Args, mode), false
 	case "ScheduledTask":
 		return scheduledTaskTargets(s.Args, mode), false
+	case "Package":
+		return packageTargets(s.Args, mode), false
 	default:
 		return nil, false
+	}
+}
+
+// packageTargets derives the reach of a Package step: install creates a package,
+// uninstall removes one, named by the winget id or the MSI path. list and search
+// touch nothing installed and derive nothing.
+func packageTargets(args map[string]any, mode string) []Target {
+	name := strArg(args, "id")
+	if name == "" {
+		name = strArg(args, "msi")
+	}
+	if name == "" {
+		return nil
+	}
+	switch mode {
+	case "install":
+		return []Target{{KindPackage, name, VerbCreate}}
+	case "uninstall":
+		return []Target{{KindPackage, name, VerbDelete}}
+	default: // list, search
+		return nil
 	}
 }
 

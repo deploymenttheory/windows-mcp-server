@@ -57,6 +57,9 @@ func AllTools() []inventory.ServerTool {
 		EventLog(),
 		Network(),
 
+		// packages toolset (opt-in; no persona)
+		Package(),
+
 		// credentials
 		Credentials(),
 

@@ -51,6 +51,7 @@ further than looking at the screen.
 | `Process` | List and terminate processes |
 | `Registry` | Read and write registry values — **destructive** |
 | `Notification` | Raise a Windows toast |
+| `ScheduledTask` | List / get / run / enable / disable / delete / create scheduled tasks — **destructive** |
 
 ### `shell` — opt-in
 
@@ -76,6 +77,8 @@ further than looking at the screen.
 |---|---|
 | `SystemInfo` | OS, hardware, memory and disk inventory via WMI |
 | `Service` | List / start / stop / restart Windows services — **destructive** |
+| `EventLog` | Query a Windows event log via `Get-WinEvent` (log / level / provider / look-back) |
+| `Network` | Inspect adapters / DNS / IP config, and test connectivity — `test` is **open-world** (reaches the network outside the egress proxy) |
 
 Also carries the `windows://system/info` resource and the `triage-support-issue`
 prompt.
@@ -96,7 +99,14 @@ Also carries the `capture-evidence` prompt.
 | `Plan` | Propose a whole sequence of tool calls; returns a change manifest and a plan id. Changes nothing |
 | `Apply` | Execute a proposed plan by id — verbatim, posture re-checked, fail-stop. See [Plan and apply](plan-and-apply.md) |
 
-### `credentials` — opt-in
+### `packages` — opt-in
+
+| Tool | Does |
+|---|---|
+| `Package` | List / search / install / uninstall software via winget and MSI — **destructive** and **open-world** (installs download from the network, outside the egress proxy) |
+
+In **no persona**: a persona never installs software silently. Enable it
+explicitly with `--toolsets` when that is the job.
 
 | Tool | Does |
 |---|---|
