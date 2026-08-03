@@ -199,6 +199,7 @@ func (p *planner) Apply(ctx context.Context, planID string) (windows.PlanApplica
 		return windows.PlanApplication{
 			PlanID: planID,
 			Report: fmt.Sprintf("refused: device posture no longer admits this plan (%s)", pv.Severity),
+			Failed: len(doc.Steps),
 		}, nil
 	}
 
@@ -261,7 +262,10 @@ func (p *planner) Apply(ctx context.Context, planID string) (windows.PlanApplica
 	})
 	report := fmt.Sprintf("Applied plan %s: %d completed, %d failed, %d skipped\n%s",
 		shortID(planID), completed, failed, skipped, b.String())
-	return windows.PlanApplication{PlanID: planID, Report: report}, nil
+	return windows.PlanApplication{
+		PlanID: planID, Report: report,
+		Completed: completed, Failed: failed, Skipped: skipped,
+	}, nil
 }
 
 // adjudicateStep suspends one approve-disposition step on the out-of-band
