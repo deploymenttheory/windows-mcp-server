@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -72,6 +73,12 @@ const (
 	// SeverityWarn is amber: the call proceeds, the verdict is audited, and the
 	// warning is attached to the result so the caller can see it.
 	SeverityWarn
+	// SeverityApprove suspends the call on an out-of-band human decision: the
+	// enforcement point blocks it, asks the configured approvals webhook, and
+	// proceeds only if the request comes back approved. A timeout denies. It sits
+	// between warn and deny — stronger than a warning the model can ignore, weaker
+	// than an outright refusal, because a person can still let it through.
+	SeverityApprove
 	// SeverityDeny is red: this call is refused. Nothing latches — the next call
 	// is evaluated afresh, so a signal that recovers restores service without a
 	// restart.
@@ -82,10 +89,11 @@ const (
 )
 
 var severityNames = map[Severity]string{
-	SeverityAllow: "allow",
-	SeverityWarn:  "warn",
-	SeverityDeny:  "deny",
-	SeverityKill:  "kill",
+	SeverityAllow:   "allow",
+	SeverityWarn:    "warn",
+	SeverityApprove: "approve",
+	SeverityDeny:    "deny",
+	SeverityKill:    "kill",
 }
 
 func (s Severity) String() string {
@@ -119,7 +127,7 @@ func (s *Severity) UnmarshalJSON(raw []byte) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("%w: %q (want allow, warn, deny or kill)", ErrUnknownSeverity, name)
+	return fmt.Errorf("%w: %q (want allow, warn, approve, deny or kill)", ErrUnknownSeverity, name)
 }
 
 // Errors surfaced by loading and validation. They are distinct values so the
@@ -137,6 +145,7 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials policy")
 	ErrInvalidRequirePlan = errors.New("invalid require_plan selector")
 	ErrInvalidTelemetry   = errors.New("invalid telemetry policy")
+	ErrInvalidApprovals   = errors.New("invalid approvals policy")
 	// ErrNotLoopback covers every address this server is willing to bind. Both
 	// listeners it can stand up are loopback-only by design.
 	ErrNotLoopback = errors.New("address is not loopback")
@@ -249,6 +258,48 @@ type Policy struct {
 	// Telemetry exports activity to an OpenTelemetry collector. Empty endpoint (the
 	// default) disables it — nothing is exported and no exporter is constructed.
 	Telemetry TelemetryPolicy `json:"telemetry,omitempty"`
+	// Approvals configures the out-of-band authoriser for `on_fail: approve` rules.
+	// A rule that uses that disposition without a webhook here is refused at load —
+	// dual control that cannot ask anyone is not dual control.
+	Approvals ApprovalsPolicy `json:"approvals,omitempty"`
+}
+
+// ApprovalsPolicy configures out-of-band human authorisation for rules whose
+// on_fail is SeverityApprove. The server holds no inbound listener — the
+// stdio-only posture is inviolable — so authorisation is solicited outbound: the
+// enforcement point POSTs the pending call to a webhook the operator runs and
+// blocks on the answer.
+type ApprovalsPolicy struct {
+	// WebhookURL receives a POST describing each call awaiting approval and returns
+	// the decision. Required when any rule uses `on_fail: approve`. The request is
+	// signed with WINDOWS_MCP_APPROVAL_KEY (an environment secret, never this
+	// document) so the webhook can authenticate it.
+	WebhookURL string `json:"webhook_url,omitempty"`
+	// Timeout bounds how long a call may block waiting for a decision. A call still
+	// undecided at the deadline is denied — dual control fails closed. Empty means
+	// DefaultApprovalTimeout.
+	Timeout Duration `json:"timeout,omitempty"`
+	// PollInterval is how often to re-poll the webhook while a decision is pending.
+	// Empty means DefaultApprovalPoll.
+	PollInterval Duration `json:"poll_interval,omitempty"`
+}
+
+// Defaults for an approvals block. Two minutes is long enough for a human to see
+// a prompt and act, short enough that a wedged approver does not hang a session
+// indefinitely; the poll interval keeps the outbound traffic modest.
+const (
+	DefaultApprovalTimeout = 2 * time.Minute
+	DefaultApprovalPoll    = 5 * time.Second
+)
+
+// usesApprove reports whether any call-scope rule disposes to SeverityApprove.
+func (p *Policy) usesApprove() bool {
+	for _, r := range p.Rules {
+		if r.OnFail == SeverityApprove && r.scope() == ScopeCall {
+			return true
+		}
+	}
+	return false
 }
 
 // TelemetryPolicy configures OTLP export. Off unless Endpoint is set.
@@ -590,6 +641,17 @@ func Parse(raw []byte) (*Policy, error) {
 			p.Egress.AllowPorts = DefaultEgressPorts()
 		}
 	}
+	// Fill approval timings whenever a webhook is named, so the defaults are visible
+	// to the engine and the round-trip, and an operator who set only the webhook
+	// still gets the fail-closed timeout rather than an unbounded wait.
+	if p.Approvals.WebhookURL != "" {
+		if p.Approvals.Timeout <= 0 {
+			p.Approvals.Timeout = Duration(DefaultApprovalTimeout)
+		}
+		if p.Approvals.PollInterval <= 0 {
+			p.Approvals.PollInterval = Duration(DefaultApprovalPoll)
+		}
+	}
 	return &p, nil
 }
 
@@ -631,6 +693,12 @@ func (p *Policy) Validate(known []string) error {
 		if len(r.Require) == 0 {
 			add("%s: requires no signals, so it can never fail", label)
 		}
+		// A startup admission is a one-shot go/no-go with no request to suspend and
+		// no session yet to solicit a decision from, so approve has no meaning there.
+		if r.OnFail == SeverityApprove && r.scope() == ScopeStartup {
+			add("%v: %s uses on_fail approve on a startup rule; approve is only valid on call-scope rules",
+				ErrInvalidApprovals, label)
+		}
 		for _, id := range r.Require {
 			if _, declared := p.Signals[id]; !declared {
 				add("%v: %s requires %q, which is not declared in signals", ErrUndeclaredSignal, label, id)
@@ -644,6 +712,12 @@ func (p *Policy) Validate(known []string) error {
 		}
 		if rl.Max <= 0 {
 			add("%v: %s max must be positive", ErrInvalidRateLimit, label)
+		}
+		// A rate limit fires on a stream of calls, not a single decidable request, so
+		// there is no one call to hold for a human — approve does not fit here.
+		if rl.OnExceed == SeverityApprove {
+			add("%v: %s uses on_exceed approve; a rate limit cannot suspend on approval, "+
+				"use warn, deny or kill", ErrInvalidApprovals, label)
 		}
 	}
 
@@ -707,6 +781,7 @@ func (p *Policy) Validate(known []string) error {
 		}
 	}
 
+	p.validateApprovals(add)
 	p.validateEgress(add)
 
 	if len(problems) > 0 {
@@ -715,6 +790,41 @@ func (p *Policy) Validate(known []string) error {
 		return fmt.Errorf("%w:\n  - %s", ErrInvalidPolicy, strings.Join(problems, "\n  - "))
 	}
 	return nil
+}
+
+// validateApprovals checks the dual-control configuration: a rule that disposes to
+// approve must have a webhook to ask, and a webhook that is named must be reachable
+// in shape (an absolute http/https URL) with sane timings.
+func (p *Policy) validateApprovals(add func(string, ...any)) {
+	a := p.Approvals
+	if p.usesApprove() && a.WebhookURL == "" {
+		add("%v: a rule uses on_fail approve but approvals.webhook_url is not set; "+
+			"dual control needs an authoriser to ask", ErrInvalidApprovals)
+	}
+	if a.WebhookURL == "" {
+		// Nothing else to validate: an absent webhook with no approve rule is simply
+		// dual control switched off, the default.
+		return
+	}
+	u, err := url.Parse(a.WebhookURL)
+	switch {
+	case err != nil:
+		add("%v: approvals.webhook_url %q is not a URL: %v", ErrInvalidApprovals, a.WebhookURL, err)
+	case u.Scheme != "http" && u.Scheme != "https":
+		add("%v: approvals.webhook_url %q must be http or https", ErrInvalidApprovals, a.WebhookURL)
+	case u.Host == "":
+		add("%v: approvals.webhook_url %q has no host", ErrInvalidApprovals, a.WebhookURL)
+	}
+	if a.Timeout.Std() <= 0 {
+		add("%v: approvals.timeout must be positive", ErrInvalidApprovals)
+	}
+	if a.PollInterval.Std() <= 0 {
+		add("%v: approvals.poll_interval must be positive", ErrInvalidApprovals)
+	}
+	if a.PollInterval.Std() > a.Timeout.Std() {
+		add("%v: approvals.poll_interval (%s) exceeds the timeout (%s), so no poll would ever run",
+			ErrInvalidApprovals, a.PollInterval, a.Timeout)
+	}
 }
 
 // validateEgress checks the egress block, appending to the collected problems

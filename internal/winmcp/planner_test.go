@@ -8,15 +8,42 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/enforce"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/plan"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy/policytest"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
 )
+
+// fakePlanApprover returns a fixed outcome for every step it adjudicates.
+type fakePlanApprover struct {
+	outcome enforce.Outcome
+	calls   int
+}
+
+func (f *fakePlanApprover) Await(_ context.Context, _ enforce.ApprovalRequest) enforce.Decision {
+	f.calls++
+	return enforce.Decision{Outcome: f.outcome}
+}
+
+// approveStepPolicy gates FileSystem behind an approve rule that fires when
+// run-context fails.
+func approveStepPolicy() (*policy.Policy, map[string]signals.Status) {
+	return &policy.Policy{
+			Version: 1, Mode: policy.ModeEnforcing,
+			Signals: map[string]policy.SignalConfig{"run-context": {}},
+			Rules: []policy.Rule{{
+				Name: "gate", Match: policy.Match{Tool: policy.StringSet{"FileSystem"}},
+				Require: []string{"run-context"}, OnFail: policy.SeverityApprove,
+			}},
+		},
+		map[string]signals.Status{"run-context": signals.Fail}
+}
 
 type fakeRunner struct {
 	served map[string]bool
@@ -211,6 +238,80 @@ func TestApplyAbandonsOnKill(t *testing.T) {
 	}
 	if !strings.Contains(app.Report, "abandoned") {
 		t.Errorf("report should say abandoned: %s", app.Report)
+	}
+}
+
+// TestApplyAdjudicatesApproveStepGranted: a plan step that hits an approve rule
+// blocks on the same authoriser a direct call would, and runs only once approved —
+// so Apply is never a way around dual control.
+func TestApplyAdjudicatesApproveStepGranted(t *testing.T) {
+	pol, states := approveStepPolicy()
+	runner := allServed()
+	p, dest := newTestPlanner(t, pol, states, runner, nil)
+	fa := &fakePlanApprover{outcome: enforce.OutcomeApprove}
+	p.withApprovals(fa, "sess", time.Second)
+
+	raw := rawPlan(t, plan.Step{Tool: "FileSystem", Args: map[string]any{"mode": "read", "path": `C:\a`}})
+	prop, err := p.Propose(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Propose: %v", err)
+	}
+	app, err := p.Apply(context.Background(), prop.PlanID)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if fa.calls != 1 {
+		t.Errorf("the approve step should have consulted the approver once, got %d", fa.calls)
+	}
+	if len(runner.calls) != 1 {
+		t.Errorf("an approved step must run, ran %v", runner.calls)
+	}
+	if !dest.has("approval.requested") || !dest.has("approval.decision") {
+		t.Error("Apply must audit the approval handshake for an approve step")
+	}
+	if !strings.Contains(app.Report, "1 completed") {
+		t.Errorf("report should record the approved step ran: %s", app.Report)
+	}
+}
+
+// TestApplyAdjudicatesApproveStepDenied: a denied step halts the plan, fail-closed.
+func TestApplyAdjudicatesApproveStepDenied(t *testing.T) {
+	pol, states := approveStepPolicy()
+	runner := allServed()
+	p, dest := newTestPlanner(t, pol, states, runner, nil)
+	p.withApprovals(&fakePlanApprover{outcome: enforce.OutcomeDeny}, "sess", time.Second)
+
+	raw := rawPlan(t, plan.Step{Tool: "FileSystem", Args: map[string]any{"mode": "read", "path": `C:\a`}})
+	prop, _ := p.Propose(context.Background(), raw)
+	app, _ := p.Apply(context.Background(), prop.PlanID)
+
+	if len(runner.calls) != 0 {
+		t.Errorf("a denied step must not run, ran %v", runner.calls)
+	}
+	if !strings.Contains(app.Report, "NOT APPROVED") {
+		t.Errorf("report should record the step was not approved: %s", app.Report)
+	}
+	if !dest.has("approval.decision") {
+		t.Error("a denied step must still audit the decision")
+	}
+}
+
+// TestApplyApproveStepFailsClosedWithoutApprover: an approve step with no approver
+// wired refuses rather than running unapproved.
+func TestApplyApproveStepFailsClosedWithoutApprover(t *testing.T) {
+	pol, states := approveStepPolicy()
+	runner := allServed()
+	p, _ := newTestPlanner(t, pol, states, runner, nil) // no withApprovals
+
+	raw := rawPlan(t, plan.Step{Tool: "FileSystem", Args: map[string]any{"mode": "read", "path": `C:\a`}})
+	prop, _ := p.Propose(context.Background(), raw)
+	app, _ := p.Apply(context.Background(), prop.PlanID)
+
+	if len(runner.calls) != 0 {
+		t.Errorf("an approve step with no approver must not run, ran %v", runner.calls)
+	}
+	if !strings.Contains(app.Report, "NOT APPROVED") {
+		t.Errorf("report should refuse the unapprovable step: %s", app.Report)
 	}
 }
 

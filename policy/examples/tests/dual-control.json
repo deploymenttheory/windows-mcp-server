@@ -1,0 +1,16 @@
+{
+  "policy": "../dual-control.json",
+  "device": { "run-context": "pass", "not-admin": "pass", "bitlocker": "fail" },
+  "cases": [
+    {
+      "name": "a destructive tool on an unverified device is held for approval",
+      "call": { "tool": "PowerShell", "toolset": "shell", "annotations": { "destructive": true } },
+      "expect": { "severity": "approve", "failed_signals": ["bitlocker"], "rules": ["human-in-the-loop-for-destructive-tools"] }
+    },
+    {
+      "name": "a read-only tool is not held: it carries no destructive annotation",
+      "call": { "tool": "Snapshot", "toolset": "screen", "annotations": { "read_only": true } },
+      "expect": { "severity": "allow" }
+    }
+  ]
+}

@@ -28,12 +28,18 @@ request is the **highest** severity among its failures.
 |---|---|---|
 | `allow` | green | The call proceeds. The failure is still recorded. |
 | `warn` | amber | The call proceeds and the warning is attached to the result, so the model sees it and not only the operator. |
+| `approve` | held | The call is suspended on an out-of-band human decision (see [Dual control](#dual-control-on_fail-approve)). It proceeds only if an approver says yes; a timeout denies. Stronger than a warning the model can ignore, weaker than an outright refusal, because a person can still let it through. |
 | `deny` | red | The call is refused. Nothing latches: the next call is evaluated afresh, so a signal that recovers restores service without a restart. |
 | `kill` | out of bounds | The kill switch trips and the containment ladder runs. |
 
+Ordered `allow < warn < approve < deny < kill`; the verdict for a request is the
+highest severity among its failures.
+
 `"mode": "audit"` caps severity at `warn`. Signals are still read and every
 verdict is still recorded, including what enforcing *would* have done — that is
-the point of audit mode, and why it does not simply skip evaluation.
+the point of audit mode, and why it does not simply skip evaluation. Note this
+caps `approve` too: an audit-mode device never suspends a call for approval,
+which is what keeps audit mode observe-only.
 
 ## Document reference
 
@@ -125,6 +131,12 @@ the point of audit mode, and why it does not simply skip evaluation.
     "endpoint": "",                // "host:4318" or "https://collector:4318"
     "protocol": "http",            // only http is implemented
     "sample_ratio": 1.0            // trace sampling in [0,1]
+  },
+
+  "approvals": {                   // out-of-band authoriser for on_fail: approve rules; required if any rule uses it
+    "webhook_url": "https://approvals.example/decide",  // http/https; POSTed each pending call, signed with WINDOWS_MCP_APPROVAL_KEY
+    "timeout": "2m",               // a call still undecided at the deadline is denied (fails closed)
+    "poll_interval": "5s"          // how often to re-poll while a decision is pending
   },
 
   "egress": {                      // device egress proxy; omit or disable to leave networking untouched
@@ -329,6 +341,67 @@ tool and executed by `Apply`. This is the preventive tier of plan-and-apply; see
 [Plan and apply](plan-and-apply.md) for the whole model. The planning tools are
 always exempt, so a `{ "toolset": "*" }` selector cannot deadlock the ability to
 plan.
+
+## Dual control (`on_fail: approve`)
+
+A rule can dispose to `approve` instead of `deny` — when a required signal fails,
+the call is **suspended** on a human decision rather than refused outright. This is
+dual control: the model proposes, a person disposes.
+
+```json
+"rules": [
+  { "name": "human-in-the-loop-for-destructive-tools",
+    "match":   { "annotation": "destructive" },
+    "require": ["bitlocker"],
+    "on_fail": "approve" }
+],
+"approvals": {
+  "webhook_url": "https://approvals.corp.example/decide",
+  "timeout": "2m",
+  "poll_interval": "5s"
+}
+```
+
+**How the decision is solicited.** This server holds no inbound listener — the
+stdio-only posture is inviolable — so authorisation is asked *outbound*. When an
+`approve` verdict fires, the enforcement point `POST`s a small JSON description of
+the pending call to `approvals.webhook_url` and blocks that one request until the
+answer comes back. The body carries identifiers and a **digest** of the arguments,
+never the raw arguments — the authoriser decides on the call's identity, the same
+discipline the audit chain follows:
+
+```json
+{ "request_id": "...", "session_id": "...", "method": "tools/call",
+  "tool": "PowerShell", "args_sha256": "...", "rules": ["rule \"...\""],
+  "failed_signals": ["bitlocker"], "requested_at": "...", "expires_at": "..." }
+```
+
+The webhook replies `{ "decision": "approve" | "deny" | "pending", "approver": "...",
+"poll_url": "..." }`. A `pending` reply is re-polled (the `poll_url` with a GET, or
+the webhook again) every `poll_interval` until it resolves or the `timeout` passes.
+
+**Signing.** Each request carries an `X-WindowsMCP-Signature` header: the
+HMAC-SHA256 of the body under the key in the `WINDOWS_MCP_APPROVAL_KEY` environment
+variable, so the webhook can authenticate that the request is really from this
+server. The key is an environment secret, never the policy document or a flag —
+argv and the policy are both reviewable. Without a key, requests are unsigned and
+the server warns.
+
+**Fails closed.** A timeout denies. So does an unreachable webhook or an
+unintelligible reply — an approval channel that is down must not become an open
+door. All four outcomes are audited: `approval.requested` before the POST, then
+`approval.decision` (or `approval.timeout`), arguments digested, never raw.
+
+**Constraints.** `approve` is only valid on **call-scope** rules — a startup
+admission is a one-shot go/no-go with no request to suspend, and a rate limit fires
+on a stream rather than one call, so both reject it at load. A rule that uses
+`approve` **without** an `approvals` webhook is refused at load: dual control that
+cannot ask anyone is not dual control. And `audit` mode caps `approve` at `warn`,
+so an observe-only device never suspends a call.
+
+**Plans, too.** A plan *step* that hits an `approve` rule blocks on the same
+authoriser at `Apply` time — apply is never a way around dual control. See
+[Plan and apply](plan-and-apply.md).
 
 ## Credentials exposure
 

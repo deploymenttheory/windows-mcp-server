@@ -385,11 +385,31 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	kill := contain.NewKillSwitch(executor.OnTrip)
 	defer func() { _ = executor.Restore() }() // undo firewall isolation on exit
 
+	// Out-of-band approvals for on_fail: approve rules. Off unless a webhook is
+	// configured; a policy that uses approve without one is refused at load, so a nil
+	// approver here means no approve rule can fire. The signing key is an environment
+	// secret, never the policy document — argv and the policy are both reviewable.
+	var approver enforce.Approver
+	if devicePolicy.Approvals.WebhookURL != "" {
+		approver = enforce.NewApprovalClient(enforce.ApprovalConfig{
+			WebhookURL:   devicePolicy.Approvals.WebhookURL,
+			Timeout:      devicePolicy.Approvals.Timeout.Std(),
+			PollInterval: devicePolicy.Approvals.PollInterval.Std(),
+			HMACKey:      []byte(os.Getenv("WINDOWS_MCP_APPROVAL_KEY")),
+			Logger:       logger,
+		})
+		logger.Info("dual control enabled", "webhook", devicePolicy.Approvals.WebhookURL,
+			"timeout", devicePolicy.Approvals.Timeout)
+	}
+
 	// Plan-and-apply. Wired after the kill switch so an apply can abandon its
 	// remaining steps when containment trips; deps is a pointer the surface's
 	// middleware already captured, so setting the planner now reaches the handlers.
 	sessionPlanner := newPlanner(engine, audit, inventoryRegistry{inv: inv, deps: deps},
 		func() bool { tripped, _ := kill.Tripped(); return tripped })
+	if approver != nil {
+		sessionPlanner.withApprovals(approver, sessionStamp, devicePolicy.Approvals.Timeout.Std())
+	}
 	deps.WithPlanner(sessionPlanner)
 
 	// Kill triggers come from the policy's kill.triggers block. A trigger left off
@@ -452,10 +472,13 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// The policy engine, innermost so nothing can route around it and so the audit
 	// and rug-pull layers still observe the requests it refuses.
 	server.AddReceivingMiddleware(enforce.Middleware(engine, enforce.EnforcerDeps{
-		Audit:          audit,
-		Kill:           tripPolicy,
-		RecordDecision: recordDecision,
-		Logger:         logger,
+		Audit:           audit,
+		Kill:            tripPolicy,
+		RecordDecision:  recordDecision,
+		Approver:        approver,
+		SessionID:       sessionStamp,
+		ApprovalTimeout: devicePolicy.Approvals.Timeout.Std(),
+		Logger:          logger,
 	}))
 
 	// RegisterAll rather than RegisterTools: resources and prompts are part of the
