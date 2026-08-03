@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "mode": "enforce",
+  "signals": {
+    "run-context": { "ttl": "0s" },
+    "not-admin": { "ttl": "0s" },
+    "bitlocker": { "ttl": "30s" }
+  },
+  "rules": [
+    {
+      "name": "baseline-posture",
+      "match": { "toolset": "*" },
+      "require": ["run-context", "not-admin"],
+      "on_fail": "deny"
+    },
+    {
+      "name": "human-in-the-loop-for-destructive-tools",
+      "match": { "annotation": "destructive" },
+      "require": ["bitlocker"],
+      "on_fail": "approve"
+    }
+  ],
+  "approvals": {
+    "webhook_url": "https://approvals.corp.example/windows-mcp/decide",
+    "timeout": "2m",
+    "poll_interval": "5s"
+  },
+  "transparency": {
+    "audit_destination": "C:\\ProgramData\\WindowsMCP\\audit",
+    "heartbeat": "30s"
+  }
+}

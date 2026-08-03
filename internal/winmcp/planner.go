@@ -13,10 +13,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/enforce"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/plan"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
@@ -94,6 +96,14 @@ type planner struct {
 	// remaining steps rather than pressing on through a kill.
 	killed func() bool
 
+	// approver adjudicates approve-disposition steps at execution time; nil unless
+	// the policy configures an approvals webhook, in which case no approve rule can
+	// exist (the policy is refused at load), so a nil approver here is never reached
+	// by an approve step.
+	approver        enforce.Approver
+	sessionID       string
+	approvalTimeout time.Duration
+
 	mu    sync.Mutex
 	store map[string]plan.Document
 }
@@ -106,6 +116,17 @@ func newPlanner(engine *policy.Engine, auditLog *audit.AuditLog, runner toolRunn
 		killed: killed,
 		store:  map[string]plan.Document{},
 	}
+}
+
+// withApprovals wires the out-of-band authoriser used for approve-disposition
+// steps. Called only when the policy configures an approvals webhook; a plan step
+// that hits an approve rule then blocks on the same authoriser a direct call would,
+// so apply is never a way around dual control.
+func (p *planner) withApprovals(approver enforce.Approver, sessionID string, timeout time.Duration) *planner {
+	p.approver = approver
+	p.sessionID = sessionID
+	p.approvalTimeout = timeout
+	return p
 }
 
 // Propose validates and adjudicates a submitted plan, stores it under its content
@@ -212,6 +233,18 @@ func (p *planner) Apply(ctx context.Context, planID string) (windows.PlanApplica
 			break
 		}
 
+		// An approve-disposition step suspends on the same authoriser a direct call
+		// would. A plan is pre-authored, so this is the moment a human sees the exact
+		// operation about to run; a denial or a timeout halts the plan, fail-closed.
+		if v.Severity == policy.SeverityApprove {
+			if d := p.adjudicateStep(ctx, s, v); d.Outcome != enforce.OutcomeApprove {
+				failed++
+				skipped = len(doc.Steps) - i - 1
+				fmt.Fprintf(&b, "  %d. %s — NOT APPROVED: %s\n", i+1, stepLabel(s), approvalDetail(d))
+				break
+			}
+		}
+
 		res, err := p.runner.Invoke(ctx, s.Tool, rawArgs)
 		if err != nil || (res != nil && res.IsError) {
 			failed++
@@ -229,6 +262,55 @@ func (p *planner) Apply(ctx context.Context, planID string) (windows.PlanApplica
 	report := fmt.Sprintf("Applied plan %s: %d completed, %d failed, %d skipped\n%s",
 		shortID(planID), completed, failed, skipped, b.String())
 	return windows.PlanApplication{PlanID: planID, Report: report}, nil
+}
+
+// adjudicateStep suspends one approve-disposition step on the out-of-band
+// authoriser, recording the request and outcome in the audit chain exactly as a
+// suspended direct call does. A missing approver fails closed.
+func (p *planner) adjudicateStep(ctx context.Context, s plan.Step, v policy.Verdict) enforce.Decision {
+	if p.approver == nil {
+		return enforce.Decision{Outcome: enforce.OutcomeError, Detail: "no approver configured"}
+	}
+	failed := make([]string, 0, len(v.Failures))
+	for _, f := range v.Failures {
+		failed = append(failed, f.Signal)
+	}
+	timeout := p.approvalTimeout
+	if timeout <= 0 {
+		timeout = policy.DefaultApprovalTimeout
+	}
+	now := time.Now()
+	req := enforce.ApprovalRequest{
+		RequestID:     enforce.NewRequestID(),
+		SessionID:     p.sessionID,
+		Method:        "tools/call",
+		Tool:          s.Tool,
+		ArgsDigest:    argsDigest(s.Args),
+		Rules:         v.Rules,
+		FailedSignals: failed,
+		Reason:        v.Reason(),
+		RequestedAt:   now,
+		ExpiresAt:     now.Add(timeout),
+	}
+	return enforce.Adjudicate(ctx, p.approver, p.audit, req)
+}
+
+// approvalDetail renders an approval decision for the apply report.
+func approvalDetail(d enforce.Decision) string {
+	switch d.Outcome {
+	case enforce.OutcomeTimeout:
+		return "no decision before the deadline"
+	case enforce.OutcomeDeny:
+		if d.Detail != "" {
+			return "refused by an approver: " + d.Detail
+		}
+		return "refused by an approver"
+	default:
+		if d.Detail != "" {
+			return "approval unavailable: " + d.Detail
+		}
+		return "approval unavailable"
+	}
 }
 
 // StoredPlans returns every plan proposed this session, ordered by id, so the
