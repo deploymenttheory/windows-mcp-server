@@ -16,7 +16,7 @@ func (f *fakeAnchorWriter) publish(_ uint64, head string) { f.heads = append(f.h
 // growing its own chain: an anchor advances the head, so without the guard every
 // subsequent tick would see a "new" head and anchor forever.
 func TestAnchorOnceOnlyAnchorsOnActivity(t *testing.T) {
-	log := audit.NewAuditLog(nil) // nil sink: Head/Append still advance the chain
+	log := audit.NewAuditLog(nil) // nil dest: Head/Append still advance the chain
 	log.Append("server.start", nil)
 
 	w := &fakeAnchorWriter{}

@@ -58,22 +58,22 @@ func TestGuardrailEnvCarriesEnforceHTTPS(t *testing.T) {
 	}
 }
 
-// capturingSink records audit entries so the disarmed path can be inspected.
-type capturingSink struct{ entries []audit.AuditEntry }
+// capturingDest records audit entries so the disarmed path can be inspected.
+type capturingDest struct{ entries []audit.AuditEntry }
 
-func (s *capturingSink) Write(e audit.AuditEntry) error {
+func (s *capturingDest) Write(e audit.AuditEntry) error {
 	s.entries = append(s.entries, e)
 	return nil
 }
-func (s *capturingSink) Flush() error { return nil }
-func (s *capturingSink) Close() error { return nil }
+func (s *capturingDest) Flush() error { return nil }
+func (s *capturingDest) Close() error { return nil }
 
 func TestTripFuncArmedTripsTheSwitch(t *testing.T) {
 	var reason string
 	kill := contain.NewKillSwitch(func(r string) { reason = r })
-	sink := &capturingSink{}
+	dest := &capturingDest{}
 
-	trip := tripFunc("rugpull", true, kill, audit.NewAuditLog(sink), nil)
+	trip := tripFunc("rugpull", true, kill, audit.NewAuditLog(dest), nil)
 	trip("manifest drift")
 
 	if tripped, _ := kill.Tripped(); !tripped {
@@ -90,9 +90,9 @@ func TestTripFuncArmedTripsTheSwitch(t *testing.T) {
 func TestTripFuncDisarmedAuditsWithoutContaining(t *testing.T) {
 	var tripped bool
 	kill := contain.NewKillSwitch(func(string) { tripped = true })
-	sink := &capturingSink{}
+	dest := &capturingDest{}
 
-	trip := tripFunc("posture-drift", false, kill, audit.NewAuditLog(sink), nil)
+	trip := tripFunc("posture-drift", false, kill, audit.NewAuditLog(dest), nil)
 	trip("secure-boot=fail")
 
 	if tripped {
@@ -101,10 +101,10 @@ func TestTripFuncDisarmedAuditsWithoutContaining(t *testing.T) {
 	if got, _ := kill.Tripped(); got {
 		t.Error("disarmed trigger must leave the kill switch untripped")
 	}
-	if len(sink.entries) != 1 {
-		t.Fatalf("want 1 audit entry, got %d", len(sink.entries))
+	if len(dest.entries) != 1 {
+		t.Fatalf("want 1 audit entry, got %d", len(dest.entries))
 	}
-	e := sink.entries[0]
+	e := dest.entries[0]
 	if e.Event != "killswitch.disarmed" {
 		t.Errorf("event = %q, want killswitch.disarmed", e.Event)
 	}
@@ -114,7 +114,7 @@ func TestTripFuncDisarmedAuditsWithoutContaining(t *testing.T) {
 			t.Errorf("audit payload missing %q: %s", want, payload)
 		}
 	}
-	if err := audit.VerifyChain(sink.entries); err != nil {
+	if err := audit.VerifyChain(dest.entries); err != nil {
 		t.Errorf("disarmed entries must keep the chain verifiable: %v", err)
 	}
 }

@@ -183,7 +183,7 @@ func buildConformanceServer(
 	// The transparency services, as RunStdio wires them. A trip here logs and
 	// records rather than actuating containment: the conformance host has no
 	// desktop to contain, and a kill mid-suite would destroy the evidence.
-	audit := audit.NewAuditLog(&conformanceAuditSink{logger: logger})
+	audit := audit.NewAuditLog(&conformanceAuditDestination{logger: logger})
 	rugpull := watch.NewRugPull(func(reason string) {
 		logger.Error("guardrail.rugpull", "reason", reason)
 	}, audit)
@@ -304,14 +304,14 @@ func (*conformanceProbe) DeviceIdentity() signals.DeviceIdentity {
 }
 func (*conformanceProbe) IsAdmin() bool { return false }
 
-// conformanceAuditSink writes the hash-chained audit entries to the logger, so a
+// conformanceAuditDestination writes the hash-chained audit entries to the logger, so a
 // conformance run leaves the same transparency trail a real session would and the
 // entries land in the workflow log next to the harness output.
-type conformanceAuditSink struct{ logger *slog.Logger }
+type conformanceAuditDestination struct{ logger *slog.Logger }
 
-func (s *conformanceAuditSink) Write(e audit.AuditEntry) error {
+func (s *conformanceAuditDestination) Write(e audit.AuditEntry) error {
 	s.logger.Info("audit", "seq", e.Seq, "event", e.Event, "hash", e.EntryHash)
 	return nil
 }
-func (s *conformanceAuditSink) Flush() error { return nil }
-func (s *conformanceAuditSink) Close() error { return nil }
+func (s *conformanceAuditDestination) Flush() error { return nil }
+func (s *conformanceAuditDestination) Close() error { return nil }

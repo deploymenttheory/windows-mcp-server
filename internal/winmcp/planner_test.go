@@ -34,21 +34,21 @@ func (f *fakeRunner) Invoke(_ context.Context, tool string, _ json.RawMessage) (
 	return &mcp.CallToolResult{}, nil
 }
 
-type capSink struct {
+type capDest struct {
 	mu     sync.Mutex
 	events []string
 }
 
-func (c *capSink) Write(e audit.AuditEntry) error {
+func (c *capDest) Write(e audit.AuditEntry) error {
 	c.mu.Lock()
 	c.events = append(c.events, e.Event)
 	c.mu.Unlock()
 	return nil
 }
-func (c *capSink) Flush() error { return nil }
-func (c *capSink) Close() error { return nil }
+func (c *capDest) Flush() error { return nil }
+func (c *capDest) Close() error { return nil }
 
-func (c *capSink) has(event string) bool {
+func (c *capDest) has(event string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, e := range c.events {
@@ -65,15 +65,15 @@ var planTestIndex = policytest.StaticIndex{
 	"PowerShell": {Name: "PowerShell", Toolset: "shell", Destructive: true},
 }
 
-func newTestPlanner(t *testing.T, p *policy.Policy, states map[string]signals.Status, runner toolRunner, killed func() bool) (*planner, *capSink) {
+func newTestPlanner(t *testing.T, p *policy.Policy, states map[string]signals.Status, runner toolRunner, killed func() bool) (*planner, *capDest) {
 	t.Helper()
-	sink := &capSink{}
-	log := audit.NewAuditLog(sink)
+	dest := &capDest{}
+	log := audit.NewAuditLog(dest)
 	engine := policytest.NewEngine(p, planTestIndex, states)
 	if killed == nil {
 		killed = func() bool { return false }
 	}
-	return newPlanner(engine, log, runner, killed), sink
+	return newPlanner(engine, log, runner, killed), dest
 }
 
 func rawPlan(t *testing.T, steps ...plan.Step) []byte {
@@ -115,7 +115,7 @@ func TestPlanningToolsetServesPlanAndApply(t *testing.T) {
 
 func TestProposeThenApplyRunsEveryStep(t *testing.T) {
 	runner := allServed()
-	p, sink := newTestPlanner(t, permissivePolicy(), nil, runner, nil)
+	p, dest := newTestPlanner(t, permissivePolicy(), nil, runner, nil)
 
 	raw := rawPlan(t,
 		plan.Step{Name: "look", Tool: "Snapshot", Args: map[string]any{}},
@@ -129,7 +129,7 @@ func TestProposeThenApplyRunsEveryStep(t *testing.T) {
 	if !prop.Allowed || prop.PlanID == "" {
 		t.Fatalf("expected an admitted plan with an id, got %+v", prop)
 	}
-	if !sink.has("plan.proposed") {
+	if !dest.has("plan.proposed") {
 		t.Error("Propose should audit plan.proposed")
 	}
 
@@ -143,7 +143,7 @@ func TestProposeThenApplyRunsEveryStep(t *testing.T) {
 	if !strings.Contains(app.Report, "2 completed") {
 		t.Errorf("report should record 2 completed: %s", app.Report)
 	}
-	if !sink.has("plan.step") || !sink.has("plan.applied") {
+	if !dest.has("plan.step") || !dest.has("plan.applied") {
 		t.Error("Apply should audit plan.step and plan.applied")
 	}
 }
@@ -181,7 +181,7 @@ func TestApplyRefusesWhenPostureDrifts(t *testing.T) {
 	}
 	states := map[string]signals.Status{"run-context": signals.Pass}
 	runner := allServed()
-	p, sink := newTestPlanner(t, pol, states, runner, nil)
+	p, dest := newTestPlanner(t, pol, states, runner, nil)
 
 	raw := rawPlan(t, plan.Step{Tool: "PowerShell", Args: map[string]any{"command": "x"}})
 	prop, err := p.Propose(context.Background(), raw)
@@ -195,7 +195,7 @@ func TestApplyRefusesWhenPostureDrifts(t *testing.T) {
 	if len(runner.calls) != 0 {
 		t.Errorf("a stale plan must not run any step, ran %v", runner.calls)
 	}
-	if !strings.Contains(app.Report, "refused") || !sink.has("plan.stale") {
+	if !strings.Contains(app.Report, "refused") || !dest.has("plan.stale") {
 		t.Errorf("a stale plan should be refused and audited: %s", app.Report)
 	}
 }

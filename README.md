@@ -422,7 +422,7 @@ internal/desktop         the Windows engine — one COM STA thread serving UIA
                          PowerShell, plus a WMI worker thread
 internal/guardrails/     the security stack, split by lifecycle layer:
     signals              signal vocabulary, probes, registry, checks
-    audit                hash chain, sink, VerifyChain
+    audit                hash chain, destination, VerifyChain
     hostmatch            egress allowlist matching + forbidden address ranges
     policy               document schema, signal cache, engine, verdict
     egress               the egress proxy + Windows firewall enforcement

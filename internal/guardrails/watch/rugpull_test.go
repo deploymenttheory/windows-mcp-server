@@ -37,7 +37,7 @@ func TestHashToolsChangesOnMutation(t *testing.T) {
 
 func TestRugPullRecheckTripsOnDrift(t *testing.T) {
 	var trips int32
-	rp := NewRugPull(func(string) { atomic.AddInt32(&trips, 1) }, audit.NewAuditLog(&memSink{}))
+	rp := NewRugPull(func(string) { atomic.AddInt32(&trips, 1) }, audit.NewAuditLog(&memDest{}))
 	base := []*mcp.Tool{tool("A", "d"), tool("B", "d")}
 	rp.SetBaseline(base)
 
@@ -63,7 +63,7 @@ func TestRugPullRecheckTripsOnDrift(t *testing.T) {
 
 func TestRugPullMiddlewareTripsOnServedDrift(t *testing.T) {
 	var trips int32
-	rp := NewRugPull(func(string) { atomic.AddInt32(&trips, 1) }, audit.NewAuditLog(&memSink{}))
+	rp := NewRugPull(func(string) { atomic.AddInt32(&trips, 1) }, audit.NewAuditLog(&memDest{}))
 	base := []*mcp.Tool{tool("A", "d")}
 	rp.SetBaseline(base)
 
@@ -297,7 +297,7 @@ func TestDiscoverMiddlewareCoversBothHandshakes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.method, func(t *testing.T) {
 			var tripped atomic.Int32
-			rp := NewRugPull(func(string) { tripped.Add(1) }, audit.NewAuditLog(&memSink{}))
+			rp := NewRugPull(func(string) { tripped.Add(1) }, audit.NewAuditLog(&memDest{}))
 			rp.SetDiscoverBaseline(caps, instructions)
 
 			next := func(context.Context, string, mcp.Request) (mcp.Result, error) { return tc.result, nil }

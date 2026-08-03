@@ -62,7 +62,7 @@
     }
   },
   "transparency": {
-    "audit_sink": "C:\\ProgramData\\windows-mcp\\audit\\",
+    "audit_destination": "C:\\ProgramData\\windows-mcp\\audit\\",
     "heartbeat": "15s",
     "recording_dir": "C:\\ProgramData\\windows-mcp\\recordings",
     "evidence_dir": "C:\\ProgramData\\windows-mcp\\evidence",

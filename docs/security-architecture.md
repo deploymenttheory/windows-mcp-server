@@ -195,7 +195,7 @@ flowchart LR
     note["entry_hash = SHA-256( seq · ts · event · payload · prev_hash )"]
 ```
 
-`transparency.audit_sink` selects the sink: empty/`stderr` → JSON lines on stderr; a path
+`transparency.audit_destination` selects the destination: empty/`stderr` → JSON lines on stderr; a path
 → append-only JSONL, fsync-ed on flush (so the chain survives an abrupt kill).
 
 ### Heartbeat
@@ -483,7 +483,7 @@ evaluated unless a policy asks for it.
 | Tool index adapter (toolset + annotations) | `internal/winmcp/guardrails.go` (`newToolIndex`) |
 | Operator commands (`policy validate/check/explain`) | `internal/winmcp/policyops.go` |
 | Example policies | `policy/examples/*.json` |
-| Audit log (hash chain, sink, middleware) | `internal/guardrails/audit/audit.go` |
+| Audit log (hash chain, destination, middleware) | `internal/guardrails/audit/audit.go` |
 | Heartbeat + watchdog | `internal/guardrails/watch/heartbeat.go` |
 | Rug-pull detector | `internal/guardrails/watch/rugpull.go` |
 | Enforce HTTPS (URL scheme policy) | `pkg/windows/urlpolicy.go`, `internal/guardrails/signals/remote.go` |

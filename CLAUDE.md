@@ -175,7 +175,7 @@ acyclic in that order:
 | Package | Holds | Depends on |
 |---|---|---|
 | `signals` | signal vocabulary, probes, `Registry`, the checks, `Decision` | — |
-| `audit` | hash chain, sink, `VerifyChain` | — |
+| `audit` | hash chain, destination, `VerifyChain` | — |
 | `hostmatch` | egress allowlist compiler, wildcard matcher, forbidden-address ranges | — |
 | `policy` | document schema, signal cache, engine, verdict | `signals`, `hostmatch` |
 | `egress` | device egress proxy, counters, `Enforcer` | `hostmatch` |
@@ -523,7 +523,7 @@ go test -tags conformance ./internal/winmcp/ -count=1
 ## Notable gotchas
 
 - **stdout is reserved** for the MCP stdio transport. Logs go to stderr or a file
-  (`newLogger`, `server.go:451`); the audit `stderrSink` writes `AUDIT {json}`
+  (`newLogger`, `server.go:451`); the audit `stderrDestination` writes `AUDIT {json}`
   lines to stderr for the same reason.
 - **`winenv.go` exists because MCP hosts strip the environment.** It rebuilds
   `PATH` and friends from the registry (merging, not overwriting, PATH). Resolve

@@ -8,16 +8,16 @@ import (
 	"testing"
 )
 
-// runSession opens a directory sink for sessionID, appends n events through a
+// runSession opens a directory destination for sessionID, appends n events through a
 // fresh AuditLog (as a real run does — each run starts its own chain at seq 0),
 // and seals it via Close.
 func runSession(t *testing.T, dir, sessionID string, n int) {
 	t.Helper()
-	sink, err := OpenSink(dir, sessionID)
+	dest, err := OpenDestination(dir, sessionID)
 	if err != nil {
-		t.Fatalf("OpenSink(%q): %v", sessionID, err)
+		t.Fatalf("OpenDestination(%q): %v", sessionID, err)
 	}
-	log := NewAuditLog(sink)
+	log := NewAuditLog(dest)
 	log.Append("server.start", map[string]any{"session": sessionID})
 	for i := 1; i < n; i++ {
 		log.Append("tool.call", map[string]any{"i": i})
@@ -125,10 +125,10 @@ func TestDirModeDetectsRewrittenSession(t *testing.T) {
 
 	files, _ := filepath.Glob(filepath.Join(dir, "session-*.audit.jsonl"))
 	// Rewrite the session as a shorter but internally valid chain.
-	sink := &memSink{}
-	log := NewAuditLog(sink)
+	dest := &memDest{}
+	log := NewAuditLog(dest)
 	log.Append("server.start", map[string]any{"session": "forged"})
-	rewritten := marshalEntries(t, sink.entries)
+	rewritten := marshalEntries(t, dest.entries)
 	if err := os.WriteFile(files[0], rewritten, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -158,12 +158,12 @@ func TestDirModeDetectsDroppedSession(t *testing.T) {
 }
 
 func TestVerifyChainSegment(t *testing.T) {
-	sink := &memSink{}
-	log := NewAuditLog(sink)
+	dest := &memDest{}
+	log := NewAuditLog(dest)
 	for i := 0; i < 5; i++ {
 		log.Append("e", map[string]any{"i": i})
 	}
-	all := sink.entries
+	all := dest.entries
 
 	// A tail slice verifies against the correct start seq and preceding hash.
 	seg := all[2:]
@@ -188,11 +188,11 @@ func TestNewSinkFileAndStderrModesUnchanged(t *testing.T) {
 	// A plain file path stays single-file append-only (no session/manifest files).
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit.jsonl")
-	sink, err := OpenSink(path, "20260803-170000")
+	dest, err := OpenDestination(path, "20260803-170000")
 	if err != nil {
 		t.Fatal(err)
 	}
-	log := NewAuditLog(sink)
+	log := NewAuditLog(dest)
 	log.Append("server.start", nil)
 	if err := log.Close(); err != nil {
 		t.Fatal(err)
@@ -204,9 +204,9 @@ func TestNewSinkFileAndStderrModesUnchanged(t *testing.T) {
 		t.Errorf("file mode chain: entries=%d err=%v", len(entries), err)
 	}
 
-	// stderr mode still yields a working, non-nil sink.
-	if s, err := OpenSink("stderr", "x"); err != nil || s == nil {
-		t.Errorf("stderr sink: %v", err)
+	// stderr mode still yields a working, non-nil dest.
+	if s, err := OpenDestination("stderr", "x"); err != nil || s == nil {
+		t.Errorf("stderr destination: %v", err)
 	}
 }
 

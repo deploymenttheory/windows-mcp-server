@@ -78,7 +78,7 @@ func TestProtectedPathsCoverGuardrailFiles(t *testing.T) {
 		PolicyConfig:    `C:\policy.json`,
 		CredentialsFile: `C:\secrets\creds.json`,
 	}
-	dp := &policy.Policy{Transparency: policy.TransparencyPolicy{AuditSink: `C:\ProgramData\windows-mcp\audit\`}}
+	dp := &policy.Policy{Transparency: policy.TransparencyPolicy{AuditDestination: `C:\ProgramData\windows-mcp\audit\`}}
 
 	deps := windows.NewBaseDeps(nil, nil, nil).WithProtectedPaths(protectedPaths(cfg, dp))
 

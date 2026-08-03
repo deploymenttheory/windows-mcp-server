@@ -34,7 +34,7 @@ func (f *fakeActuator) LoggedOnUser() (string, error) { return "tester", nil }
 
 func newExec(cfg KillActionConfig, act SystemActuator, seq *[]string) *KillExecutor {
 	return NewKillExecutor(KillExecutorDeps{
-		Config: cfg, Actuator: act, Audit: audit.NewAuditLog(&memSink{}),
+		Config: cfg, Actuator: act, Audit: audit.NewAuditLog(&memDest{}),
 		Banner:   func(string) { *seq = append(*seq, "banner") },
 		Finalize: func() { *seq = append(*seq, "finalize") },
 		Abort:    func(error) { *seq = append(*seq, "abort") },
@@ -136,7 +136,7 @@ func TestStopGracefullyDoesNotContain(t *testing.T) {
 func TestStopGracefullyCauseIsMatchable(t *testing.T) {
 	var cause error
 	e := NewKillExecutor(KillExecutorDeps{
-		Audit: audit.NewAuditLog(&memSink{}),
+		Audit: audit.NewAuditLog(&memDest{}),
 		Abort: func(err error) { cause = err },
 	})
 	e.StopGracefully("journey complete")

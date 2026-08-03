@@ -68,7 +68,7 @@ are refused and why a Unix permission check would prove nothing.
 **The audit log needs append access for the agent's user** but should not be
 freely rewritable. There is no way to express append-only cleanly in an ACL for a
 file the process also opens for writing — if tamper-evidence matters more than
-convenience, ship entries off the box (`audit_sink` to a file, collected by your
+convenience, ship entries off the box (`audit_destination` to a file, collected by your
 agent) and treat the local copy as a buffer. The hash chain is what detects
 editing; the ACL only raises the cost.
 
