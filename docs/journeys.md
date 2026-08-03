@@ -91,6 +91,34 @@ The testing toolset (`Assert`, `WaitFor`, `CaptureEvidence`) is served
 automatically for a journey run, so a journey's assertions work regardless of the
 rest of the toolset selection.
 
+## Recording a journey
+
+Rather than hand-writing a journey, you can record one:
+
+```powershell
+windows-mcp-server journey record --out journeys/login.json --name login
+# interact with the desktop, then press F9 to stop
+```
+
+`record` installs low-level mouse and keyboard hooks and captures what you do:
+
+- **each click** is resolved to the UI element under it (by accessible name and
+  control type, so the step targets the element rather than a coordinate) and
+  emitted as a `Click` step — falling back to `[x,y]` only when the element has no
+  name;
+- **typed characters** coalesce into `Type` steps; a trailing Enter folds into the
+  step as `press_enter`, and other non-text keys (Tab, Escape, …) become `Shortcut`
+  steps;
+- **password fields are redacted** — input into a control the accessibility tree
+  reports as a password is *never written to the file*. A placeholder `Type` step
+  with empty text marks where it went, for you to fill in before running.
+
+The result is a **reviewable draft**: the recorder captures actions, not intent, so
+you confirm the steps and add the assertions (`assertions: [...]`) and evidence
+that make it a test. Recording needs an interactive desktop; on a US keyboard the
+character mapping is exact, and other layouts fall back to the base character or a
+named key.
+
 ## Relationship to plans
 
 A journey **is** a pre-authored plan plus interleaved assertions and evidence. That

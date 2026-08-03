@@ -293,7 +293,42 @@ func journeyCmd() *cobra.Command {
 			"fail-stopped executor as Apply — so a UI regression test is expressed as code and run " +
 			"deterministically.",
 	}
-	cmd.AddCommand(journeyValidateCmd(), journeyRunCmd())
+	cmd.AddCommand(journeyValidateCmd(), journeyRunCmd(), journeyRecordCmd())
+	return cmd
+}
+
+// journeyRecordCmd records a human's desktop interaction into a journey file.
+func journeyRecordCmd() *cobra.Command {
+	var out, name string
+	cmd := &cobra.Command{
+		Use:   "record --out <journey.json>",
+		Short: "Record a desktop session into a journey file (press F9 to stop)",
+		Long: "record installs input hooks and captures what you click and type, resolving each click to a " +
+			"UI element and each keystroke to text. Input into password fields is redacted — the keystrokes " +
+			"are never written. Press F9 to stop; the captured steps are written to --out as a reviewable " +
+			"draft to confirm and add assertions to. Requires an interactive desktop.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if out == "" {
+				return errNeedOutputPath
+			}
+			if name == "" {
+				name = "recorded-journey"
+			}
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			fmt.Fprintln(cmd.ErrOrStderr(), "Recording… interact with the desktop, then press F9 to stop.")
+			journey, err := winmcp.RecordJourney(ctx, winmcp.Config{Version: version}, name, out)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s: %q with %d step(s). Review it and add assertions before use.\n",
+				out, journey.Name, len(journey.Steps))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&out, "out", "", "Path to write the recorded journey (required).")
+	cmd.Flags().StringVar(&name, "name", "", "Name for the recorded journey (default \"recorded-journey\").")
 	return cmd
 }
 
@@ -585,6 +620,8 @@ func policyExplainCmd() *cobra.Command {
 var errNoToolNamed = errors.New("no tool named: use --tool <name>")
 
 var errNeedDirAndSession = errors.New("evidence bundle needs both --dir and --session")
+
+var errNeedOutputPath = errors.New("journey record needs an output path (--out)")
 
 func printCoverage(w io.Writer, cov winmcp.PolicyCoverage) {
 	fmt.Fprintf(w, "tool: %s\n", cov.Tool)
