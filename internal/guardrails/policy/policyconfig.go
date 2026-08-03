@@ -391,6 +391,11 @@ type TransparencyPolicy struct {
 	Heartbeat Duration `json:"heartbeat,omitempty"`
 	// RecordingDir enables session video recording when set.
 	RecordingDir string `json:"recording_dir,omitempty"`
+	// EvidenceDir enables automatic evidence-bundle sealing at session end: a
+	// signed archive of the session's audit chain, verdicts, plan documents and
+	// recording is written here. Empty disables it (the default). Requires a
+	// directory-mode audit_sink, since there is otherwise no per-session file.
+	EvidenceDir string `json:"evidence_dir,omitempty"`
 	// Banner shows the on-screen security banner on a kill.
 	Banner bool `json:"banner"`
 	// StatusAddr is a loopback address for the status endpoint; empty disables.
