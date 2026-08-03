@@ -11,7 +11,11 @@ package windows
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -54,6 +58,39 @@ type ToolDependencies interface {
 	EnforceHTTPS() bool
 }
 
+// ProtectedPath marks a filesystem location the FileSystem tool must not touch,
+// so the agent cannot use it to reach the guardrail state that governs it — read
+// the credentials file back, or write over the audit log or the policy document.
+// It is a guardrail, not a sandbox: matching is by cleaned, case-insensitive path,
+// so 8.3 short names and hard links are not canonicalized.
+type ProtectedPath struct {
+	path      string // cleaned, lower-cased absolute path
+	label     string // human name for the refusal message
+	tree      bool   // protect everything under path (a directory), not just path
+	denyRead  bool
+	denyWrite bool
+}
+
+// NewProtectedPath builds a ProtectedPath, normalizing the path for matching.
+func NewProtectedPath(path, label string, tree, denyRead, denyWrite bool) ProtectedPath {
+	return ProtectedPath{
+		path:      strings.ToLower(filepath.Clean(path)),
+		label:     label,
+		tree:      tree,
+		denyRead:  denyRead,
+		denyWrite: denyWrite,
+	}
+}
+
+// covers reports whether target (cleaned, lower-cased) falls under this protected
+// path: exact match, or anywhere below it when it protects a tree.
+func (p ProtectedPath) covers(target string) bool {
+	if p.tree {
+		return target == p.path || strings.HasPrefix(target, p.path+string(os.PathSeparator))
+	}
+	return target == p.path
+}
+
 // BaseDeps is the standard ToolDependencies implementation for the local
 // (stdio) server. It holds pre-created, process-lifetime services.
 type BaseDeps struct {
@@ -62,6 +99,7 @@ type BaseDeps struct {
 	featureChecker inventory.FeatureFlagChecker
 	credentials    []desktop.CredentialInfo
 	enforceHTTPS   bool
+	protectedPaths []ProtectedPath
 }
 
 // Compile-time assertion that BaseDeps satisfies ToolDependencies.
@@ -87,6 +125,35 @@ func (d *BaseDeps) WithCredentials(creds []desktop.CredentialInfo) *BaseDeps {
 func (d *BaseDeps) WithEnforceHTTPS(on bool) *BaseDeps {
 	d.enforceHTTPS = on
 	return d
+}
+
+// WithProtectedPaths records the guardrail paths the FileSystem tool must not
+// touch. Returns the receiver for chaining.
+func (d *BaseDeps) WithProtectedPaths(paths []ProtectedPath) *BaseDeps {
+	d.protectedPaths = paths
+	return d
+}
+
+// ProtectedPathViolation reports whether accessing absPath (for write when write
+// is true, otherwise read) would touch a protected guardrail path, and a reason
+// suitable for a tool error. It implements the optional interface the FileSystem
+// tool checks.
+func (d *BaseDeps) ProtectedPathViolation(absPath string, write bool) (string, bool) {
+	target := strings.ToLower(filepath.Clean(absPath))
+	verb := "read"
+	if write {
+		verb = "written"
+	}
+	for _, p := range d.protectedPaths {
+		if !p.covers(target) {
+			continue
+		}
+		if (write && p.denyWrite) || (!write && p.denyRead) {
+			return fmt.Sprintf("%s cannot be %s via the FileSystem tool: it is %s, a guardrail path",
+				absPath, verb, p.label), true
+		}
+	}
+	return "", false
 }
 
 // Desktop implements ToolDependencies.

@@ -108,6 +108,12 @@ var ErrPersonaNeedsUser = errors.New(
 // of the active policy.
 var ErrStartupDenied = errors.New("device devicePolicy denied startup")
 
+// ErrPersonaToolBypass reports a --tools entry that escapes the active persona's
+// toolset selection via the additional-tools bypass. A persona is a documented
+// surface guarantee, so this is a configuration error: the fix is to compose the
+// surface explicitly with --toolsets, or to drop the tool.
+var ErrPersonaToolBypass = errors.New("--tools escapes the persona's toolsets")
+
 // ErrCredentialExposureDenied reports a --credentials-file served alongside a
 // toolset that can read the installed credentials back (shell or filesystem)
 // without the policy acknowledging the exposure. It is a configuration error, not
@@ -241,6 +247,36 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			"Running as SYSTEM — desktop automation is disabled; diagnostics/system tools only.")
 	}
 
+	// Record the resolved tool surface: an operator (or an incident review) can
+	// see exactly what was served under which persona and selection, which the
+	// per-manifest hash baseline deliberately does not spell out.
+	enabledToolsetIDs := toolsetIDs(inv.EnabledToolsets())
+	_, _ = audit.Append("server.surface", map[string]any{
+		"persona":               cfg.Persona,
+		"toolsets":              enabledToolsetIDs,
+		"unrecognized_toolsets": inv.UnrecognizedToolsets(),
+		"additional_tools":      cfg.Tools,
+		"excluded_tools":        cfg.ExcludeTools,
+		"read_only":             cfg.ReadOnly,
+		"credentials_file":      cfg.CredentialsFile != "",
+	})
+
+	// A persona is a documented guarantee about the served surface. --tools bypasses
+	// toolset membership (that is its purpose), so combined with a persona it would
+	// silently widen that guarantee. Refuse it: name the escaping tools and point at
+	// the explicit way to compose a surface by hand.
+	if cfg.Persona != "" {
+		if outside := toolsOutsidePersona(cfg.Tools, inv.EnabledToolsets()); len(outside) > 0 {
+			_, _ = audit.Append("tools.persona_bypass.denied", map[string]any{
+				"persona": cfg.Persona,
+				"tools":   outside,
+			})
+			_ = audit.Flush()
+			return fmt.Errorf("%w: %v are outside the %q persona's toolsets; select --toolsets "+
+				"explicitly instead of a persona, or drop those tools", ErrPersonaToolBypass, outside, cfg.Persona)
+		}
+	}
+
 	// --- Init-time credentials ---
 	// Installed credentials live in the calling user's Credential Manager, so a
 	// toolset that can read that back (shell via CredRead, filesystem via a
@@ -286,7 +322,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 
 	deps := windows.NewBaseDeps(dsk, logger, nil).
 		WithCredentials(credentialInfos(installedCreds)).
-		WithEnforceHTTPS(enforceHTTPS(cfg))
+		WithEnforceHTTPS(enforceHTTPS(cfg)).
+		WithProtectedPaths(protectedPaths(cfg, devicePolicy))
 
 	// Built by the same function the conformance host uses, so the surface the
 	// official suite is measured against is the surface this binary serves.

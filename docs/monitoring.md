@@ -190,6 +190,8 @@ anchoring with a warning. Anchoring is **off by default**.
 | Event | When |
 |---|---|
 | `server.start` | Startup, carrying the server version and the session stamp |
+| `server.surface` | The resolved tool surface: persona, enabled toolsets, additional/excluded tools, read-only, credentials-file-present |
+| `tools.persona_bypass.denied` | Startup refused: `--tools` named a tool outside the active persona's toolsets |
 | `audit.anchor` | The chain head was published off-box (when `transparency.anchor` is set) |
 | `devicePolicy.startup` | The startup admission decision |
 | `devicePolicy.startup.deny` | Startup refused; the server exits |

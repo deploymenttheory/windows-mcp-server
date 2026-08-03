@@ -184,6 +184,24 @@ covered by 2 rule(s):
 signals that must pass: [bitlocker run-context]
 ```
 
+### What the policy does not cover
+
+Two tools are served under every persona and belong to no toolset:
+**`GuardrailStatus`** (read-only posture) and **`Kill`** (stop the session). They
+are registered outside the tool inventory, so the policy tool index does not
+contain them, and a rule matching `annotation: destructive` therefore does **not**
+cover `Kill` — even though it is annotated destructive. This is deliberate:
+denying the agent its own stop lever under bad posture would suppress a safety
+action, and `Kill` routes to a graceful stop unless the policy has separately
+armed containment. They are also outside the reach of `--exclude-tools` and
+`--read-only`, so "always served" means always served.
+
+The `FileSystem` tool is covered by policy like any other, but it additionally
+refuses — regardless of policy — to read the credentials file or to write over the
+audit log or the policy document. Those are guardrail paths; letting the agent
+read a secret back or edit its own audit trail through a general file tool would
+undo the controls around them.
+
 ### Freshness
 
 `ttl` is how long a reading stays usable. `dsregcmd`, WMI and `tpmtool` each cost
