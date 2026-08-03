@@ -199,6 +199,35 @@ func StartupSubject() Subject { return Subject{Scope: ScopeStartup, Method: "sta
 // The verdict is the highest severity among the failures, then capped by the
 // policy mode.
 func (e *Engine) Evaluate(ctx context.Context, subj Subject) Verdict {
+	v := e.evaluateSignals(ctx, subj)
+
+	// Rate limits are evaluated after the signals: exceeding one is a property of
+	// the request stream rather than of the device, but it lands in the same
+	// verdict so a caller sees one decision rather than two. This is the only part
+	// of evaluation that mutates state — it records the call in the window — which
+	// is why EvaluatePlan, which must not spend budget on a plan that has not run,
+	// uses evaluateSignals directly instead.
+	if sev, label, ok := e.limits.exceeded(subj, time.Now()); ok {
+		v.Rules = append(v.Rules, label)
+		v.Failures = append(v.Failures, Failure{
+			Signal: "rate-limit", Rule: label, Severity: sev,
+			Detail: "too many matching calls within the window",
+		})
+		if sev > v.Intended {
+			v.Intended = sev
+		}
+	}
+
+	v.Severity = e.policy.Mode.clamp(v.Intended)
+	return v
+}
+
+// evaluateSignals is the device-signal half of a decision: it attributes each
+// required signal to the most specific matching rule, reads the signals, and sets
+// Intended to the worst failure. It does not apply rate limits (which mutate) or
+// clamp the mode, so it is safe to call speculatively — once per step of a plan
+// under evaluation — without side effects.
+func (e *Engine) evaluateSignals(ctx context.Context, subj Subject) Verdict {
 	v := Verdict{Subject: subj.String(), Mode: e.policy.Mode}
 
 	// Attribute each required signal to the most specific rule requiring it.
@@ -238,22 +267,48 @@ func (e *Engine) Evaluate(ctx context.Context, subj Subject) Verdict {
 		}
 	}
 
-	// Rate limits are evaluated after the signals: exceeding one is a property of
-	// the request stream rather than of the device, but it lands in the same
-	// verdict so a caller sees one decision rather than two.
-	if sev, label, ok := e.limits.exceeded(subj, time.Now()); ok {
-		v.Rules = append(v.Rules, label)
-		v.Failures = append(v.Failures, Failure{
-			Signal: "rate-limit", Rule: label, Severity: sev,
-			Detail: "too many matching calls within the window",
-		})
-		if sev > v.Intended {
-			v.Intended = sev
-		}
-	}
-
-	v.Severity = e.policy.Mode.clamp(v.Intended)
 	return v
+}
+
+// PlanVerdict is the decision about a whole proposed plan: the worst severity any
+// step would incur, and the per-step verdicts behind it. It lets a plan be
+// adjudicated before any of it runs — the gap through which benign steps compose
+// into a destructive outcome one call at a time.
+type PlanVerdict struct {
+	Severity Severity      `json:"severity"`
+	Intended Severity      `json:"intended"`
+	Mode     PolicyMode    `json:"mode"`
+	Steps    []StepVerdict `json:"steps"`
+}
+
+// Allowed reports whether the plan as a whole would be admitted.
+func (pv PlanVerdict) Allowed() bool { return pv.Severity < SeverityDeny }
+
+// StepVerdict is one step's decision within a plan.
+type StepVerdict struct {
+	Index   int     `json:"index"`
+	Subject string  `json:"subject"`
+	Verdict Verdict `json:"verdict"`
+}
+
+// EvaluatePlan decides every subject in a plan and aggregates: the plan's severity
+// is the worst of its steps, and a plan is admitted only if every step is. It does
+// not consume rate-limit budget — a plan under review has not run — so the limits
+// are enforced per call at execution time, not here.
+func (e *Engine) EvaluatePlan(ctx context.Context, subjects []Subject) PlanVerdict {
+	pv := PlanVerdict{Mode: e.policy.Mode}
+	for i, subj := range subjects {
+		v := e.evaluateSignals(ctx, subj)
+		v.Severity = e.policy.Mode.clamp(v.Intended)
+		if v.Severity > pv.Severity {
+			pv.Severity = v.Severity
+		}
+		if v.Intended > pv.Intended {
+			pv.Intended = v.Intended
+		}
+		pv.Steps = append(pv.Steps, StepVerdict{Index: i, Subject: subj.String(), Verdict: v})
+	}
+	return pv
 }
 
 // Explain reports which rules cover a subject and what they require, without
