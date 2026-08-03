@@ -18,7 +18,7 @@ an agent whose actions are conditional, bounded, and reviewable.
 - **Device policy engine** — every tool call, resource read and prompt fetch is
   evaluated against live device signals (MDM enrolment, Entra join, Secure Boot,
   BitLocker, VBS/HVCI, TPM attestation) before it runs, and refused, warned or
-  contained per a policy document. Rules match by tool, toolset or annotation, so
+  contained by policy configuration. Rules match by tool, toolset or annotation, so
   a screenshot is not gated like a shell command. → [Policy configuration](docs/policy-config.md)
 - **Egress allowlist** — a loopback proxy admits only the domains you declare,
   checking the allowlist before it resolves a name, optionally backed by firewall
