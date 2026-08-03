@@ -222,7 +222,7 @@ func TestApplyRefusesWhenPostureDrifts(t *testing.T) {
 	if len(runner.calls) != 0 {
 		t.Errorf("a stale plan must not run any step, ran %v", runner.calls)
 	}
-	if !strings.Contains(app.Report, "refused") || !dest.has("plan.stale") {
+	if !strings.Contains(app.Report, "refused") || !dest.has("plan.refused") {
 		t.Errorf("a stale plan should be refused and audited: %s", app.Report)
 	}
 }
@@ -266,7 +266,7 @@ func TestApplyAdjudicatesHoldStepGranted(t *testing.T) {
 	if len(runner.calls) != 1 {
 		t.Errorf("an approved step must run, ran %v", runner.calls)
 	}
-	if !dest.has("approval.requested") || !dest.has("approval.decision") {
+	if !dest.has("approval.requested") || !dest.has("approval.decided") {
 		t.Error("Apply must audit the approval handshake for an hold step")
 	}
 	if !strings.Contains(app.Report, "1 completed") {
@@ -291,7 +291,7 @@ func TestApplyAdjudicatesHoldStepDenied(t *testing.T) {
 	if !strings.Contains(app.Report, "NOT APPROVED") {
 		t.Errorf("report should record the step was not approved: %s", app.Report)
 	}
-	if !dest.has("approval.decision") {
+	if !dest.has("approval.decided") {
 		t.Error("a denied step must still audit the decision")
 	}
 }

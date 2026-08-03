@@ -174,7 +174,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			sealAtExit()
 		}
 	}()
-	_, _ = audit.Append("server.start", map[string]any{"version": cfg.Version, "session": sessionStamp})
+	_, _ = audit.Append("server.started", map[string]any{"version": cfg.Version, "session": sessionStamp})
 
 	// Off-box anchoring of the chain head, if the policy asks for it. It is
 	// defence-in-depth beyond keying — the key lives on this box, the anchor does
@@ -222,7 +222,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	startup := engine.Evaluate(ctx, policy.StartupSubject())
 	decision := engine.DecisionFrom(startup, probe.DeviceIdentity(), runContext)
 	holder.set(decision)
-	_, _ = audit.Append("devicePolicy.startup", decision)
+	_, _ = audit.Append("devicePolicy.decided", decision)
 
 	// Session 0 has no desktop to drive, so the automation toolsets are dropped
 	// there regardless of what was asked for. This is detected rather than
@@ -235,7 +235,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 
 	if !startup.Allowed() {
 		signals.LogDecision(logger, "deny", decision)
-		_, _ = audit.Append("devicePolicy.startup.deny", decision.Reasons)
+		_, _ = audit.Append("devicePolicy.denied", decision.Reasons)
 		_ = audit.Flush()
 		dsk.ShowSecurityBanner("STARTUP BLOCKED — device did not meet devicePolicy")
 		dsk.Notify(ctx, "Windows MCP: startup blocked",
@@ -263,7 +263,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// see exactly what was served under which persona and selection, which the
 	// per-manifest hash baseline deliberately does not spell out.
 	enabledToolsetIDs := toolsetIDs(inv.EnabledToolsets())
-	_, _ = audit.Append("server.surface", map[string]any{
+	_, _ = audit.Append("server.configured", map[string]any{
 		"persona":               cfg.Persona,
 		"toolsets":              enabledToolsetIDs,
 		"unrecognized_toolsets": inv.UnrecognizedToolsets(),
@@ -511,22 +511,22 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// rug-pull vectors as much as a mutated tool is.
 	baselineTools := append(invMCPTools(runCtx, inv), statusTool, killTool)
 	baseHash := rugpull.SetBaseline(baselineTools)
-	_, _ = audit.Append("tools.baseline", map[string]any{"hash": baseHash, "count": len(baselineTools)})
+	_, _ = audit.Append("tools.pinned", map[string]any{"hash": baseHash, "count": len(baselineTools)})
 
 	basePrompts := invMCPPrompts(runCtx, inv)
 	promptHash := rugpull.SetPromptBaseline(basePrompts)
-	_, _ = audit.Append("prompts.baseline", map[string]any{"hash": promptHash, "count": len(basePrompts)})
+	_, _ = audit.Append("prompts.pinned", map[string]any{"hash": promptHash, "count": len(basePrompts)})
 
 	baseResources := invMCPResources(runCtx, inv)
 	resourceHash := rugpull.SetResourceBaseline(baseResources)
-	_, _ = audit.Append("resources.baseline", map[string]any{"hash": resourceHash, "count": len(baseResources)})
+	_, _ = audit.Append("resources.pinned", map[string]any{"hash": resourceHash, "count": len(baseResources)})
 
 	// Protocol 2026-07-28 removed the initialize handshake and made server/discover
 	// the canonical advertisement of capabilities and instructions, so it is pinned
 	// too — otherwise a widened capability set or rewritten model instructions would
 	// drift entirely unwatched.
 	discoverHash := rugpull.SetDiscoverBaseline(surface.Capabilities, surface.Instructions)
-	_, _ = audit.Append("discover.baseline", map[string]any{"hash": discoverHash})
+	_, _ = audit.Append("discover.pinned", map[string]any{"hash": discoverHash})
 
 	// The engine can now resolve tools; from here every request is decided against
 	// the manifest that is actually served.

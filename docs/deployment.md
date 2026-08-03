@@ -146,7 +146,7 @@ Each step is safe to sit on for a while.
 1. **Audit mode, no enforcement.** Copy `policy/examples/audit.json`, point the
    server at it, and let it run. Every verdict is recorded with the severity
    enforcing *would* have applied.
-2. **Read the audit log.** Look for `policy.decision` entries whose intended
+2. **Read the audit log.** Look for `policy.decided` entries whose intended
    verdict is deny. Those are the calls that will break when you flip the mode.
 3. **Switch to `"mode": "enforce"`** once that list is empty or understood.
 4. **Arm the kill triggers** you want, one at a time. Watch for

@@ -219,10 +219,10 @@ func TestHoldVerdictProceedsWhenApproved(t *testing.T) {
 		t.Errorf("approval request = %+v, want the tool named and args digested", fa.gotReq)
 	}
 	events := h.events()
-	if !slices.Contains(events, "approval.requested") || !slices.Contains(events, "approval.decision") {
+	if !slices.Contains(events, "approval.requested") || !slices.Contains(events, "approval.decided") {
 		t.Errorf("an approved call must audit request and decision, got %v", events)
 	}
-	if events[0] != "policy.decision" {
+	if events[0] != "policy.decided" {
 		t.Errorf("the verdict must be recorded before the approval handshake, got %v", events)
 	}
 	for _, e := range h.dest.entries {
@@ -245,7 +245,7 @@ func TestHoldVerdictRefusedOnDeny(t *testing.T) {
 	if h.reached.Load() != 0 {
 		t.Error("a denied call must not reach the handler")
 	}
-	if !slices.Contains(h.events(), "approval.decision") {
+	if !slices.Contains(h.events(), "approval.decided") {
 		t.Errorf("a denial must be audited approval.decision, got %v", h.events())
 	}
 }
@@ -259,7 +259,7 @@ func TestHoldVerdictRefusedOnTimeout(t *testing.T) {
 	if h.reached.Load() != 0 {
 		t.Error("a timed-out call must not reach the handler")
 	}
-	if !slices.Contains(h.events(), "approval.timeout") {
+	if !slices.Contains(h.events(), "approval.timed_out") {
 		t.Errorf("a timeout must be audited distinctly, got %v", h.events())
 	}
 }
@@ -276,7 +276,7 @@ func TestHoldIsNotAskedWhenTheDevicePasses(t *testing.T) {
 	if fa.calls.Load() != 0 {
 		t.Error("no approval should be sought when the signal passes")
 	}
-	if events := h.events(); len(events) != 1 || events[0] != "policy.decision" {
+	if events := h.events(); len(events) != 1 || events[0] != "policy.decided" {
 		t.Errorf("a passing call needs only the decision record, got %v", events)
 	}
 }

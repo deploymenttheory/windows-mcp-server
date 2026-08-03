@@ -78,7 +78,7 @@ func provisionEgress(
 	// get a server where they silently can.
 	wantsEnforcement := len(cfg.Applications) > 0 || cfg.BlockAllOutbound
 	if wantsEnforcement && !enforcer.Elevated() {
-		_, _ = auditLog.Append("egress.enforce.error", map[string]any{
+		_, _ = auditLog.Append("egress.enforce.failed", map[string]any{
 			"reason":      "not elevated",
 			"enforcement": cfg.Enforcement(),
 		})
@@ -113,7 +113,7 @@ func provisionEgress(
 	})
 	if err != nil {
 		svc.Stop()
-		_, _ = auditLog.Append("egress.enforce.error", map[string]any{"error": err.Error()})
+		_, _ = auditLog.Append("egress.enforce.failed", map[string]any{"error": err.Error()})
 		return nil, noop, noop, fmt.Errorf("apply egress enforcement: %w", err)
 	}
 	if wantsEnforcement {
@@ -123,7 +123,7 @@ func provisionEgress(
 		})
 	}
 
-	_, _ = auditLog.Append("egress.start", map[string]any{
+	_, _ = auditLog.Append("egress.started", map[string]any{
 		"listen":         svc.Addr(),
 		"enforcement":    cfg.Enforcement(),
 		"allow_patterns": allow.Len(),
@@ -156,10 +156,10 @@ func provisionEgress(
 				// process, and the next start's Recover is what will clear them.
 				logger.Error("could not remove egress firewall rules; they will be cleaned up on the next start",
 					"error", err)
-				_, _ = auditLog.Append("egress.enforce.error",
+				_, _ = auditLog.Append("egress.enforce.failed",
 					map[string]any{"phase": "restore", "error": err.Error()})
 			}
-			_, _ = auditLog.Append("egress.stop", map[string]any{
+			_, _ = auditLog.Append("egress.stopped", map[string]any{
 				"counters":     svc.Counters(),
 				"denied_hosts": svc.DeniedHosts(),
 			})
@@ -174,7 +174,7 @@ func provisionEgress(
 		if err := enforcer.Suspend(); err != nil {
 			logger.Error("could not disable egress allow rules for containment", "error", err)
 		}
-		_, _ = auditLog.Append("egress.suspend", map[string]any{"counters": svc.Counters()})
+		_, _ = auditLog.Append("egress.suspended", map[string]any{"counters": svc.Counters()})
 	}
 	return svc, cleanup, suspend, nil
 }

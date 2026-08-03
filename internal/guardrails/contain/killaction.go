@@ -98,8 +98,8 @@ func NewKillExecutor(d KillExecutorDeps) *KillExecutor {
 // seal the audit chain and finalize the recording BEFORE any shutdown, or the
 // forensic trail is lost. See the plan's "ordering hazards".
 func (e *KillExecutor) OnTrip(reason string) {
-	auditAppend(e.audit, "killswitch.trip", map[string]any{"reason": reason}) // ALWAYS, first
-	e.logger.Error("killswitch.trip", "reason", reason)
+	auditAppend(e.audit, "killswitch.tripped", map[string]any{"reason": reason}) // ALWAYS, first
+	e.logger.Error("killswitch.tripped", "reason", reason)
 	if e.banner != nil { // ALWAYS: human-visible, captured by the recording
 		e.banner("SECURITY EVENT — session terminating: " + reason)
 	}
@@ -113,10 +113,10 @@ func (e *KillExecutor) OnTrip(reason string) {
 		switch {
 		case e.act == nil:
 		case !elevated:
-			auditAppend(e.audit, "killaction.skip", map[string]any{"action": "isolate", "why": "not elevated"})
+			auditAppend(e.audit, "killaction.skipped", map[string]any{"action": "isolate", "why": "not elevated"})
 		default:
 			if restore, err := e.act.IsolateNetwork(); err != nil {
-				auditAppend(e.audit, "killaction.error", map[string]any{"action": "isolate", "err": err.Error()})
+				auditAppend(e.audit, "killaction.failed", map[string]any{"action": "isolate", "err": err.Error()})
 			} else {
 				e.mu.Lock()
 				e.restore = restore
@@ -134,13 +134,13 @@ func (e *KillExecutor) OnTrip(reason string) {
 				map[string]any{"action": "kill-procs", "targets": e.cfg.ProcNames, "errors": len(errs)},
 			)
 		} else {
-			auditAppend(e.audit, "killaction.skip", map[string]any{"action": "kill-procs", "why": "not elevated"})
+			auditAppend(e.audit, "killaction.skipped", map[string]any{"action": "kill-procs", "why": "not elevated"})
 		}
 	}
 
 	if e.cfg.Lock && e.act != nil { // no elevation required
 		if err := e.act.LockWorkstation(); err != nil {
-			auditAppend(e.audit, "killaction.error", map[string]any{"action": "lock", "err": err.Error()})
+			auditAppend(e.audit, "killaction.failed", map[string]any{"action": "lock", "err": err.Error()})
 		} else {
 			auditAppend(e.audit, "killaction.done", map[string]any{"action": "lock"})
 		}
@@ -154,10 +154,10 @@ func (e *KillExecutor) OnTrip(reason string) {
 		if elevated && e.act != nil {
 			_ = e.audit.Flush()
 			if err := e.act.Shutdown(reason, e.cfg.ShutdownDelay); err != nil {
-				auditAppend(e.audit, "killaction.error", map[string]any{"action": "shutdown", "err": err.Error()})
+				auditAppend(e.audit, "killaction.failed", map[string]any{"action": "shutdown", "err": err.Error()})
 			}
 		} else {
-			auditAppend(e.audit, "killaction.skip", map[string]any{"action": "shutdown", "why": "not elevated"})
+			auditAppend(e.audit, "killaction.skipped", map[string]any{"action": "shutdown", "why": "not elevated"})
 		}
 	}
 
@@ -175,8 +175,8 @@ func (e *KillExecutor) OnTrip(reason string) {
 // cannot escalate to network isolation, process termination, or shutdown. The
 // authoritative triggers still route through OnTrip.
 func (e *KillExecutor) StopGracefully(reason string) {
-	auditAppend(e.audit, "session.stop", map[string]any{"reason": reason})
-	e.logger.Info("session.stop", "reason", reason)
+	auditAppend(e.audit, "session.stopped", map[string]any{"reason": reason})
+	e.logger.Info("session.stopped", "reason", reason)
 	if e.audit != nil {
 		_ = e.audit.Flush()
 	}

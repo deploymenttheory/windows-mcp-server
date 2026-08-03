@@ -187,7 +187,7 @@ func TestKillVerdictTripsOnceAndStillRefuses(t *testing.T) {
 	}
 	// The audit entry must exist and must precede containment; the trip is
 	// recorded by the executor, this entry is the decision that caused it.
-	if events := h.events(); len(events) == 0 || events[0] != "policy.decision" {
+	if events := h.events(); len(events) == 0 || events[0] != "policy.decided" {
 		t.Errorf("the decision must be audited before containment, got %v", events)
 	}
 }
@@ -236,7 +236,7 @@ func TestAuditRecordsEveryDecisionIncludingAllows(t *testing.T) {
 	if h.reached.Load() != 1 {
 		t.Fatal("a passing device must let the call through")
 	}
-	if events := h.events(); len(events) != 1 || events[0] != "policy.decision" {
+	if events := h.events(); len(events) != 1 || events[0] != "policy.decided" {
 		t.Errorf("an allowed call must still be audited, got %v", events)
 	}
 	if err := audit.VerifyChain(h.dest.entries); err != nil {

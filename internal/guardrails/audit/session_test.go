@@ -18,7 +18,7 @@ func runSession(t *testing.T, dir, sessionID string, n int) {
 		t.Fatalf("OpenDestination(%q): %v", sessionID, err)
 	}
 	log := NewAuditLog(dest)
-	log.Append("server.start", map[string]any{"session": sessionID})
+	log.Append("server.started", map[string]any{"session": sessionID})
 	for i := 1; i < n; i++ {
 		log.Append("tool.call", map[string]any{"i": i})
 	}
@@ -127,7 +127,7 @@ func TestDirModeDetectsRewrittenSession(t *testing.T) {
 	// Rewrite the session as a shorter but internally valid chain.
 	dest := &memDest{}
 	log := NewAuditLog(dest)
-	log.Append("server.start", map[string]any{"session": "forged"})
+	log.Append("server.started", map[string]any{"session": "forged"})
 	rewritten := marshalEntries(t, dest.entries)
 	if err := os.WriteFile(files[0], rewritten, 0o600); err != nil {
 		t.Fatal(err)
@@ -193,7 +193,7 @@ func TestNewSinkFileAndStderrModesUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := NewAuditLog(dest)
-	log.Append("server.start", nil)
+	log.Append("server.started", nil)
 	if err := log.Close(); err != nil {
 		t.Fatal(err)
 	}

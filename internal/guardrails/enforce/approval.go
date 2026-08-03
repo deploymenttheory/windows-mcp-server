@@ -296,9 +296,9 @@ func Adjudicate(ctx context.Context, approver Approver, auditLog *audit.AuditLog
 	}
 	d := approver.Await(ctx, req)
 	if auditLog != nil {
-		event := "approval.decision"
+		event := "approval.decided"
 		if d.Outcome == OutcomeTimeout {
-			event = "approval.timeout"
+			event = "approval.timed_out"
 		}
 		_, _ = auditLog.Append(event, map[string]any{
 			"request_id": req.RequestID,

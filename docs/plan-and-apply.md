@@ -104,7 +104,7 @@ bundle, which is the artifact a reviewer opens to compare intent against what ra
 
 - **Posture re-check.** The whole plan is re-adjudicated against live signals
   before the first step; if posture has drifted so the plan is no longer admitted,
-  the apply is refused and audited `plan.stale`.
+  the apply is refused and audited `plan.refused`.
 - **Per-step evaluation.** Each step is evaluated again at the moment it runs —
   apply is an extra gate, never a bypass — and this is the decision that counts
   against rate limits (planning does not spend rate-limit budget).

@@ -17,7 +17,7 @@ func (f *fakeAnchorWriter) publish(_ uint64, head string) { f.heads = append(f.h
 // subsequent tick would see a "new" head and anchor forever.
 func TestAnchorOnceOnlyAnchorsOnActivity(t *testing.T) {
 	log := audit.NewAuditLog(nil) // nil dest: Head/Append still advance the chain
-	log.Append("server.start", nil)
+	log.Append("server.started", nil)
 
 	w := &fakeAnchorWriter{}
 	last := ""
@@ -49,7 +49,7 @@ func TestAnchorOnceOnlyAnchorsOnActivity(t *testing.T) {
 // writer could not be opened, an audit.anchor entry is still appended.
 func TestAnchorOnceNilWriterStillChains(t *testing.T) {
 	log := audit.NewAuditLog(nil)
-	log.Append("server.start", nil)
+	log.Append("server.started", nil)
 	before, _ := log.Head()
 	anchorOnce(log, "", nil)
 	after, _ := log.Head()

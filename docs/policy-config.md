@@ -392,7 +392,7 @@ the server warns.
 **Fails closed.** A timeout denies. So does an unreachable webhook or an
 unintelligible reply — an approval channel that is down must not become an open
 door. All four outcomes are audited: `approval.requested` before the POST, then
-`approval.decision` (or `approval.timeout`), arguments digested, never raw.
+`approval.decided` (or `approval.timed_out`), arguments digested, never raw.
 
 **Constraints.** `hold` is only valid on **call-scope** rules — a startup
 admission is a one-shot go/no-go with no request to suspend, and a rate limit fires
@@ -483,7 +483,7 @@ and the proxy is the one route out.
 
 **Elevation is required, and its absence is fatal.** A policy naming
 `applications` in a process that cannot install rules refuses to start, after
-auditing `egress.enforce.error`. This is deliberately stricter than the kill
+auditing `egress.enforce.failed`. This is deliberately stricter than the kill
 ladder, which degrades and continues: containment that cannot act mid-incident
 is still better than nothing, whereas an operator whose document says these
 programs cannot bypass the proxy must never get a server where they silently

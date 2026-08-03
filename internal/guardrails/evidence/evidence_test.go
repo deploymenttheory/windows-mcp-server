@@ -13,7 +13,7 @@ func sealSample(t *testing.T, signer *Signer) string {
 	out := filepath.Join(t.TempDir(), "b.evidence.zip")
 	_, err := Seal([]Source{
 		{ArchivePath: "audit/session-x.audit.jsonl", Bytes: []byte("line1\nline2\n")},
-		{ArchivePath: "verdicts.json", Bytes: []byte(`[{"event":"policy.decision"}]`)},
+		{ArchivePath: "verdicts.json", Bytes: []byte(`[{"event":"policy.decided"}]`)},
 	}, SealOptions{
 		OutPath: out, Session: "20260803-120000",
 		CreatedAt: "2026-08-03T12:00:00Z", AuditHead: "abc123", Signer: signer,

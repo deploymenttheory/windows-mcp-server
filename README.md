@@ -346,10 +346,26 @@ Every flag has a `WINDOWS_MCP_`-prefixed environment variable (`--read-only` ↔
 | `--credentials-file` | JSON file of credentials to install at init |
 | `--log-file` | Write debug logs to a file (stdout is reserved for the transport) |
 
-Some settings are environment-only, because they are secrets and `argv` is
-world-readable: `WINDOWS_MCP_GRAPH_TENANT`, `WINDOWS_MCP_GRAPH_CLIENT_ID`,
-`WINDOWS_MCP_GRAPH_CLIENT_SECRET`, `WINDOWS_MCP_REMOTE_POLICY_TOKEN`, and
-whatever variable `egress.auth_token_env` names.
+### Secrets in the environment
+
+Key material and credentials are **environment-only**, never flags or the policy
+document — `argv` is world-readable and the policy is meant to be reviewed and
+checked in. The suffix says how the value is delivered:
+
+- **`…_KEY` / `…_TOKEN` / `…_SECRET` / `…_HEADERS`** hold the value **inline**.
+- **`…_KEY_FILE`** holds a **path** to a file whose contents are the material —
+  used where the material is a key file with its own ACLs (the ed25519 evidence
+  signing seed), so it never sits in the process environment.
+
+| Variable | Delivery | Purpose |
+|---|---|---|
+| `WINDOWS_MCP_AUDIT_KEY` | value | HMAC key that seals the audit chain (absent → unkeyed) |
+| `WINDOWS_MCP_APPROVAL_KEY` | value | HMAC key signing dual-control webhook requests |
+| `WINDOWS_MCP_EVIDENCE_KEY_FILE` | **path** | ed25519 seed that signs evidence bundles |
+| `WINDOWS_MCP_OTLP_HEADERS` | value | `k=v,k=v` auth headers for the OTLP collector |
+| `WINDOWS_MCP_GRAPH_TENANT` / `_CLIENT_ID` / `_CLIENT_SECRET` | value | Graph/Intune tier-2 signal credentials |
+| `WINDOWS_MCP_REMOTE_POLICY_TOKEN` | value | bearer token for the remote may-run endpoint |
+| whatever `egress.auth_token_env` names | value | `Proxy-Authorization` secret the egress proxy requires |
 
 **Everything the security subsystem does** — which signals are read and how
 often, which rules cover which tools, what a failure does, what trips the kill
