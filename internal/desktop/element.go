@@ -38,6 +38,9 @@ type ElementInfo struct {
 	Enabled       bool
 	Offscreen     bool
 	ProcessID     int32
+	// IsPassword marks a field that masks its input (a password box). The journey
+	// recorder reads it to redact keystrokes typed into such a field.
+	IsPassword bool
 }
 
 // readElementInfo reads the commonly-needed properties of a UIA element. It
@@ -74,6 +77,9 @@ func readElementInfo(el *accessibility.IUIAutomationElement) ElementInfo {
 	}
 	if pid, err := el.Get_CurrentProcessId(); err == nil {
 		info.ProcessID = pid
+	}
+	if b, err := el.Get_CurrentIsPassword(); err == nil {
+		info.IsPassword = boolVal(b)
 	}
 	return info
 }
