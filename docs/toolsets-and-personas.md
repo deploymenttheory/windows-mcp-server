@@ -128,7 +128,14 @@ windows-mcp-server.exe stdio --toolsets all --exclude-tools PowerShell
 
 `--read-only` exposes only tools annotated read-only. It is the blunt instrument;
 a persona's own stance is usually better, and note that passing `--read-only`
-explicitly overrides a persona's stance in either direction.
+explicitly overrides a persona's stance in either direction. `--tools` does **not**
+escape `--read-only`: a write tool added there is still filtered.
+
+`--tools` bypasses toolset filtering, which is fine when you are composing a
+surface by hand — but a **persona is a documented guarantee** about what is
+served. So `--tools` naming a tool outside the active persona's toolsets is
+**refused at startup** rather than silently widening the persona. Select
+`--toolsets` explicitly instead of a persona if you want to add to that set.
 
 ### Resources and prompts follow their toolset
 

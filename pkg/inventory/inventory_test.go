@@ -117,6 +117,28 @@ func TestAdditionalToolsBypassToolset(t *testing.T) {
 	}
 }
 
+// TestReadOnlyFiltersAdditionalTools pins that --tools bypasses toolset membership
+// but NOT the read-only filter, which sits ahead of the bypass: a write tool named
+// in WithTools is still dropped under WithReadOnly. Otherwise --read-only would be
+// a suggestion any --tools entry could escape.
+func TestReadOnlyFiltersAdditionalTools(t *testing.T) {
+	inv, err := NewBuilder().SetTools(sampleTools()).
+		WithToolsets([]string{"alpha"}).
+		WithReadOnly(true).
+		WithTools([]string{"c_write"}). // c_write is destructive; charlie is disabled
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := toolNames(inv.AvailableTools(context.Background()))
+	if slices.Contains(got, "c_write") {
+		t.Errorf("a write tool added via WithTools must still be filtered under WithReadOnly, got %v", got)
+	}
+	if !slices.Contains(got, "a_read") {
+		t.Errorf("read-only tools should remain, got %v", got)
+	}
+}
+
 func TestUnknownAdditionalToolErrors(t *testing.T) {
 	_, err := NewBuilder().SetTools(sampleTools()).WithTools([]string{"does_not_exist"}).Build()
 	if !errors.Is(err, ErrUnknownTools) {

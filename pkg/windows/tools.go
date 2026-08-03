@@ -63,6 +63,20 @@ func AllTools() []inventory.ServerTool {
 	}
 }
 
+// ToolToolsets maps each tool's name to its toolset ID. Callers that need to
+// reason about a tool's membership use it — for example, to detect a --tools
+// entry that escapes a persona's toolset selection via the additional-tools
+// bypass. GuardrailStatus and Kill are absent because they belong to no toolset
+// and are served unconditionally.
+func ToolToolsets() map[string]string {
+	tools := AllTools()
+	m := make(map[string]string, len(tools))
+	for _, t := range tools {
+		m[t.Tool.Name] = string(t.Toolset.ID)
+	}
+	return m
+}
+
 // NewInventory builds an inventory Builder seeded with the full tool manifest.
 // Callers apply persona/toolset/read-only configuration and call Build.
 func NewInventory() *inventory.Builder {

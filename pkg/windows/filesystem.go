@@ -20,6 +20,27 @@ import (
 // maxFileReadBytes caps how much a single read returns.
 const maxFileReadBytes = 1 << 20 // 1 MiB
 
+// protectedPathChecker is the optional capability the FileSystem tool uses to
+// refuse touching a guardrail path (the audit log, the credentials file, the
+// policy document). BaseDeps implements it; a fake that does not is simply
+// unrestricted, which is correct for tests that never install guardrail paths.
+type protectedPathChecker interface {
+	ProtectedPathViolation(absPath string, write bool) (reason string, denied bool)
+}
+
+// checkProtected returns a tool error result when deps protects absPath against
+// the requested access, or nil to proceed.
+func checkProtected(deps ToolDependencies, absPath string, write bool) *mcp.CallToolResult {
+	pc, ok := deps.(protectedPathChecker)
+	if !ok {
+		return nil
+	}
+	if reason, denied := pc.ProtectedPathViolation(absPath, write); denied {
+		return NewToolResultError(reason)
+	}
+	return nil
+}
+
 // resolvePath resolves a possibly-relative path against the user's Desktop
 // folder (matching the Python implementation's convention).
 func resolvePath(path string) (string, error) {
@@ -85,14 +106,29 @@ func FileSystem() inventory.ServerTool {
 
 			switch mode {
 			case "read":
+				if r := checkProtected(deps, abs, false); r != nil {
+					return r, nil
+				}
 				return fsRead(abs)
 			case "write":
+				if r := checkProtected(deps, abs, true); r != nil {
+					return r, nil
+				}
 				return fsWrite(abs, OptionalString(args, "content", ""), OptionalBool(args, "append", false))
 			case "list":
+				if r := checkProtected(deps, abs, false); r != nil {
+					return r, nil
+				}
 				return fsList(abs)
 			case "info":
+				if r := checkProtected(deps, abs, false); r != nil {
+					return r, nil
+				}
 				return fsInfo(abs)
 			case "delete":
+				if r := checkProtected(deps, abs, true); r != nil {
+					return r, nil
+				}
 				return fsDelete(abs)
 			case "copy", "move":
 				dest := OptionalString(args, "destination", "")
@@ -103,8 +139,19 @@ func FileSystem() inventory.ServerTool {
 				if err != nil {
 					return NewToolResultError(err.Error()), nil
 				}
+				// A move removes the source, so the source is a write; a copy only
+				// reads it. The destination is always written.
+				if r := checkProtected(deps, abs, mode == "move"); r != nil {
+					return r, nil
+				}
+				if r := checkProtected(deps, absDest, true); r != nil {
+					return r, nil
+				}
 				return fsCopyMove(abs, absDest, mode == "move")
 			case "search":
+				if r := checkProtected(deps, abs, false); r != nil {
+					return r, nil
+				}
 				return fsSearch(abs, OptionalString(args, "pattern", "*"), OptionalBool(args, "recursive", false))
 			default:
 				return NewToolResultError("invalid mode"), nil
