@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/evidence"
 	"github.com/deploymenttheory/windows-mcp-server/internal/mcpconf"
 	"github.com/deploymenttheory/windows-mcp-server/internal/winmcp"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
@@ -50,6 +52,7 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(stdioCmd())
 	root.AddCommand(policyCmd())
 	root.AddCommand(auditCmd())
+	root.AddCommand(evidenceCmd())
 	root.AddCommand(personasCmd())
 	root.AddCommand(conformanceReportCmd())
 	// Adds `conformance-serve` only under the `conformance` build tag. The
@@ -164,6 +167,117 @@ func allPolicyTestsPassed(reports []winmcp.PolicyTestReport) bool {
 		}
 	}
 	return true
+}
+
+// evidenceCmd groups the evidence-bundle operations: seal a session's record into
+// a signed archive, verify one, and generate a signing key.
+func evidenceCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "evidence",
+		Short: "Seal, verify, and key session evidence bundles",
+		Long: "An evidence bundle packages a session's audit chain, extracted verdicts, and any " +
+			"recording into one self-verifying, optionally signed archive — the artifact handed to an " +
+			"auditor or an incident review.",
+	}
+	cmd.AddCommand(evidenceBundleCmd(), evidenceVerifyCmd(), evidenceKeygenCmd())
+	return cmd
+}
+
+// evidenceBundleCmd seals a session's evidence from an audit directory.
+func evidenceBundleCmd() *cobra.Command {
+	var dir, session, recordingDir, out, keyFile string
+	cmd := &cobra.Command{
+		Use:   "bundle",
+		Short: "Seal a session's evidence into a signed archive",
+		Long: "bundle reads a session's audit chain from --dir, extracts its verdicts, gathers any " +
+			"recording, and writes a self-verifying archive. With a signing key it is signed with " +
+			"ed25519; without one it is unsigned but still hash-verifiable.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if dir == "" || session == "" {
+				return errNeedDirAndSession
+			}
+			if keyFile == "" {
+				keyFile = os.Getenv("WINDOWS_MCP_EVIDENCE_KEY_FILE")
+			}
+			man, err := winmcp.BundleEvidence(dir, session, recordingDir, out, keyFile)
+			if err != nil {
+				return err
+			}
+			state := "unsigned"
+			if man.Signed {
+				state = "signed by " + man.PublicKey[:16] + "…"
+			}
+			if out == "" {
+				out = filepath.Join(dir, "session-"+session+".evidence.zip")
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "sealed %s (%d file(s), %s)\n", out, len(man.Files), state)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&dir, "dir", "", "The audit directory holding the session's chain (required).")
+	cmd.Flags().StringVar(&session, "session", "", "The session stamp, e.g. 20260803-120000 (required).")
+	cmd.Flags().StringVar(&recordingDir, "recording-dir", "", "Directory holding the session recording, if any.")
+	cmd.Flags().StringVar(&out, "out", "", "Output path (default: <dir>/session-<session>.evidence.zip).")
+	cmd.Flags().StringVar(&keyFile, "key-file", "", "ed25519 signing key (default: $WINDOWS_MCP_EVIDENCE_KEY_FILE; unsigned if unset).")
+	return cmd
+}
+
+// evidenceVerifyCmd verifies a bundle against its manifest and an expected key.
+func evidenceVerifyCmd() *cobra.Command {
+	var pubKey string
+	cmd := &cobra.Command{
+		Use:   "verify <bundle.zip>",
+		Short: "Verify an evidence bundle's integrity and signature",
+		Long: "verify checks that every member hashes as the manifest records, that nothing was added, " +
+			"and — when signed — that the signature is valid. Pass --pubkey with the key you expect " +
+			"(published out of band) to check provenance, not just internal consistency. Exits 1 on any " +
+			"problem.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rep, err := winmcp.VerifyEvidence(args[0], pubKey)
+			if err != nil {
+				return err
+			}
+			fmt.Fprint(cmd.OutOrStdout(), rep.String())
+			if !rep.OK() {
+				os.Exit(1)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&pubKey, "pubkey", "", "The hex ed25519 public key you expect the bundle to be signed by.")
+	return cmd
+}
+
+// evidenceKeygenCmd mints an ed25519 signing keypair.
+func evidenceKeygenCmd() *cobra.Command {
+	var outDir string
+	cmd := &cobra.Command{
+		Use:   "keygen",
+		Short: "Generate an ed25519 evidence signing key",
+		Long: "keygen writes a private seed to evidence.key (0600) and the public key to evidence.pub. " +
+			"Point --key-file (or $WINDOWS_MCP_EVIDENCE_KEY_FILE) at the seed to sign bundles, and " +
+			"publish the public key so a reviewer can verify provenance.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			signer, err := evidence.GenerateSigner()
+			if err != nil {
+				return err
+			}
+			keyPath := filepath.Join(outDir, "evidence.key")
+			pubPath := filepath.Join(outDir, "evidence.pub")
+			if err := os.WriteFile(keyPath, []byte(signer.SeedHex()), 0o600); err != nil {
+				return fmt.Errorf("write key: %w", err)
+			}
+			if err := os.WriteFile(pubPath, []byte(signer.PublicHex()), 0o644); err != nil {
+				return fmt.Errorf("write public key: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (keep secret) and %s\npublic key: %s\n",
+				keyPath, pubPath, signer.PublicHex())
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&outDir, "out", ".", "Directory to write evidence.key and evidence.pub into.")
+	return cmd
 }
 
 // auditCmd groups operations on the tamper-evident audit chain. Today there is
@@ -367,6 +481,8 @@ func policyExplainCmd() *cobra.Command {
 
 // errNoToolNamed is returned when `policy explain` is run without --tool.
 var errNoToolNamed = errors.New("no tool named: use --tool <name>")
+
+var errNeedDirAndSession = errors.New("evidence bundle needs both --dir and --session")
 
 func printCoverage(w io.Writer, cov winmcp.PolicyCoverage) {
 	fmt.Fprintf(w, "tool: %s\n", cov.Tool)
