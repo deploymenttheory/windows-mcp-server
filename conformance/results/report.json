@@ -1,8 +1,8 @@
 {
   "server_version": "dev",
-  "commit": "d239ad3c5a8660ce497e8e876f1e9d1bcc668e35",
-  "generated_at": "2026-07-31T12:22:56Z",
-  "run_url": "https://github.com/deploymenttheory/windows-mcp-server/actions/runs/30630276261",
+  "commit": "a8ab59ef8ae160c5dd14da01bce308db9cc8ed3d",
+  "generated_at": "2026-08-03T07:31:43Z",
+  "run_url": "https://github.com/deploymenttheory/windows-mcp-server/actions/runs/30793807866",
   "passes": [
     {
       "name": "product",
@@ -699,39 +699,58 @@
           "status": "SUCCESS"
         },
         {
-          "id": "sep-2243-server-no-xmcp-tool",
-          "name": "HttpCustomHeaderServerNoTool",
-          "description": "Server has no tools with x-mcp-header annotations to test",
-          "status": "FAILURE",
-          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations, so none of the custom-header validation requirements could be exercised"
-        },
-        {
           "id": "sep-2243-server-decode-base64",
-          "name": "NotTestable",
-          "description": "Declared check sep-2243-server-decode-base64 is not testable against this server",
-          "status": "FAILURE",
-          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
-        },
-        {
-          "id": "sep-2243-server-validate-param-match",
-          "name": "NotTestable",
-          "description": "Declared check sep-2243-server-validate-param-match is not testable against this server",
-          "status": "FAILURE",
-          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
+          "name": "ServerAcceptsValidBase64",
+          "description": "Server decodes valid Base64 header value and validates against body",
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2243-server-reject-invalid-param-chars",
-          "name": "NotTestable",
-          "description": "Declared check sep-2243-server-reject-invalid-param-chars is not testable against this server",
-          "status": "FAILURE",
-          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
+          "name": "ServerRejectsInvalidBase64Padding",
+          "description": "Server MUST reject Mcp-Param header with invalid Base64 padding (per SEP-2243 test-case table)",
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2243-server-reject-param-mismatch",
-          "name": "NotTestable",
-          "description": "Declared check sep-2243-server-reject-param-mismatch is not testable against this server",
-          "status": "FAILURE",
-          "errorMessage": "Not testable: server exposes no tool with x-mcp-header annotations"
+          "name": "ServerRejectsInvalidBase64PaddingErrorCode",
+          "description": "Server MUST reject Mcp-Param header with invalid Base64 padding (per SEP-2243 test-case table) — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-invalid-param-chars",
+          "name": "ServerRejectsInvalidBase64Chars",
+          "description": "Server MUST reject Mcp-Param header with non-alphabet Base64 characters (per SEP-2243 test-case table)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-param-mismatch",
+          "name": "ServerRejectsInvalidBase64CharsErrorCode",
+          "description": "Server MUST reject Mcp-Param header with non-alphabet Base64 characters (per SEP-2243 test-case table) — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-validate-param-match",
+          "name": "ServerLiteralMissingBase64Prefix",
+          "description": "Server treats value without =?base64? prefix as literal (not Base64)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-validate-param-match",
+          "name": "ServerLiteralMissingBase64Suffix",
+          "description": "Server treats value without ?= suffix as literal (not Base64)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-validate-param-match",
+          "name": "ServerRejectsMissingCustomHeader",
+          "description": "Server MUST reject request where custom header is omitted but value is present in body",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2243-server-reject-param-mismatch",
+          "name": "ServerRejectsMissingCustomHeaderErrorCode",
+          "description": "Server MUST reject request where custom header is omitted but value is present in body — uses JSON-RPC error code -32020 (HeaderMismatch)",
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2243-server-reject-invalid-headers",
@@ -815,85 +834,121 @@
           "id": "sep-2322-elicitation-incomplete",
           "name": "InputRequiredResultElicitationIncomplete",
           "description": "Server returns InputRequiredResult with elicitation inputRequest",
-          "status": "FAILURE",
-          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_elicitation\""
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-elicitation-complete",
+          "name": "InputRequiredResultElicitationComplete",
+          "description": "Server returns complete result after retry with inputResponses",
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-list-roots-incomplete",
           "name": "InputRequiredResultListRootsIncomplete",
           "description": "Server returns InputRequiredResult with roots/list inputRequest",
-          "status": "FAILURE",
-          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_list_roots\""
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-list-roots-complete",
+          "name": "InputRequiredResultListRootsComplete",
+          "description": "Server returns complete result after retry with roots response",
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-sampling-incomplete",
           "name": "InputRequiredResultSamplingIncomplete",
           "description": "Server returns InputRequiredResult with sampling inputRequest",
-          "status": "FAILURE",
-          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_sampling\""
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-sampling-complete",
+          "name": "InputRequiredResultSamplingComplete",
+          "description": "Server returns complete result after retry with sampling response",
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-respect-client-capabilities",
           "name": "RespectClientCapabilities",
           "description": "Server only includes inputRequests for declared client capabilities",
-          "status": "FAILURE",
-          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_capabilities\""
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-ignore-unexpected-params",
           "name": "IgnoreUnexpectedParams",
           "description": "Server ignores extra unrecognized keys in inputResponses",
-          "status": "WARNING",
-          "errorMessage": "Server returned JSON-RPC error when extra params were included: unknown tool \"test_input_required_result_elicitation\". Servers SHOULD ignore unrecognized information."
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-missing-response-rerequests",
           "name": "InputRequiredResultMissingResponseRerequests",
           "description": "Server re-requests missing inputResponses via new InputRequiredResult",
-          "status": "WARNING",
-          "errorMessage": "Server returned JSON-RPC error instead of re-requesting via InputRequiredResult. SEP-2322 recommends servers re-request missing information."
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-multi-round-r1",
           "name": "InputRequiredResultMultiRoundR1",
           "description": "Round 1: Server returns InputRequiredResult with requestState",
-          "status": "FAILURE",
-          "errorMessage": "Expected InputRequiredResult with inputRequests and requestState"
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-multi-round-r2",
+          "name": "InputRequiredResultMultiRoundR2",
+          "description": "Round 2: Server returns another InputRequiredResult with updated requestState",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-multi-round-r3",
+          "name": "InputRequiredResultMultiRoundR3",
+          "description": "Round 3: Server returns complete result",
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-multiple-inputs-incomplete",
           "name": "InputRequiredResultMultipleInputsIncomplete",
           "description": "Server returns InputRequiredResult with multiple inputRequests of different types",
-          "status": "FAILURE",
-          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_multiple_inputs\""
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-multiple-inputs-complete",
+          "name": "InputRequiredResultMultipleInputsComplete",
+          "description": "Server returns complete result after all inputResponses are provided",
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-non-tool-incomplete",
           "name": "InputRequiredResultNonToolIncomplete",
           "description": "prompts/get returns InputRequiredResult with inputRequests",
-          "status": "FAILURE",
-          "errorMessage": "JSON-RPC error: unknown prompt \"test_input_required_result_prompt\""
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-non-tool-complete",
+          "name": "InputRequiredResultNonToolComplete",
+          "description": "prompts/get returns complete GetPromptResult after retry with inputResponses",
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-request-state-incomplete",
           "name": "InputRequiredResultRequestStateIncomplete",
           "description": "Server returns InputRequiredResult with both inputRequests and requestState",
-          "status": "FAILURE",
-          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_request_state\""
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2322-request-state-complete",
+          "name": "InputRequiredResultRequestStateComplete",
+          "description": "Server validates echoed requestState and returns complete result",
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-result-type-included",
           "name": "ResultTypeIncluded",
           "description": "Server includes resultType field in InputRequiredResult response",
-          "status": "FAILURE",
-          "errorMessage": "JSON-RPC error: unknown tool \"test_input_required_result_elicitation\""
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-reject-tampered-state",
           "name": "RejectTamperedState",
           "description": "Server rejects tampered requestState with error",
-          "status": "FAILURE",
-          "errorMessage": "Prerequisite failed: could not get initial InputRequiredResult with requestState"
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2322-not-on-unsupported-requests",
@@ -917,8 +972,43 @@
           "id": "json-schema-2020-12-tool-found",
           "name": "JsonSchema2020_12ToolFound",
           "description": "Server advertises tool 'json_schema_2020_12_tool'",
-          "status": "FAILURE",
-          "errorMessage": "Tool 'json_schema_2020_12_tool' not found. Available tools: App, Assert, CaptureEvidence, Click, Clipboard, Credentials, DisplayInventory, FileSystem, GetText, GuardrailStatus, Invoke, Kill, Move, MultiEdit, MultiSelect, Notification, PowerShell, Process, Recording, Registry, Scrape, Screenshot, Scroll, Service, Shortcut, Snapshot, SystemInfo, Type, Wait, WaitFor, test_audio_content, test_embedded_resource, test_error_handling, test_image_content, test_multiple_content_types, test_simple_text, test_tool_with_progress"
+          "status": "SUCCESS"
+        },
+        {
+          "id": "json-schema-2020-12-$schema",
+          "name": "JsonSchema2020_12$Schema",
+          "description": "inputSchema.$schema field preserved with value 'https://json-schema.org/draft/2020-12/schema'",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "json-schema-2020-12-$defs",
+          "name": "JsonSchema2020_12$Defs",
+          "description": "inputSchema.$defs field preserved with expected structure",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "json-schema-2020-12-additionalProperties",
+          "name": "JsonSchema2020_12AdditionalProperties",
+          "description": "inputSchema.additionalProperties field preserved",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2106-composition-keywords-preserved",
+          "name": "JsonSchema2020_12CompositionKeywords",
+          "description": "inputSchema composition keywords (allOf/anyOf) preserved (SEP-2106)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2106-conditional-keywords-preserved",
+          "name": "JsonSchema2020_12ConditionalKeywords",
+          "description": "inputSchema conditional keywords (if/then/else) preserved (SEP-2106)",
+          "status": "SUCCESS"
+        },
+        {
+          "id": "sep-2106-anchor-keyword-preserved",
+          "name": "JsonSchema2020_12AnchorKeyword",
+          "description": "inputSchema reference keyword ($anchor) preserved in $defs (SEP-2106)",
+          "status": "SUCCESS"
         },
         {
           "id": "prompts-get-embedded-resource",
@@ -1092,15 +1182,13 @@
           "id": "sep-2575-server-rejects-undeclared-capability",
           "name": "ServerRejectsUndeclaredCapability",
           "description": "A server MUST NOT rely on capabilities the client has not declared. If processing a request requires a capability the client did not include in io.modelcontextprotocol/clientCapabilities, the server MUST return a MissingRequiredClientCapabilityError (-32021).",
-          "status": "FAILURE",
-          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_missing_capability' in tools/list and the probe call did not exercise it (required for the undeclared-capability rejection)"
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2575-missing-capability-http-400",
           "name": "MissingCapabilityHttp400",
           "description": "On HTTP, the response status MUST be 400 Bad Request [for MissingRequiredClientCapabilityError].",
-          "status": "FAILURE",
-          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_missing_capability' in tools/list, so the -32021 HTTP status could not be validated"
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2575-http-server-method-not-found-404-initialize",
@@ -1142,15 +1230,13 @@
           "id": "sep-2575-http-server-no-independent-requests-on-stream",
           "name": "HttpServerNoIndependentRequestsOnStream",
           "description": "Request stream contains only IncompleteResult, never independent JSON-RPC requests",
-          "status": "FAILURE",
-          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_streaming_elicitation' in tools/list, so the response stream could not be exercised"
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2575-server-no-log-without-loglevel",
           "name": "ServerNoLogWithoutLogLevel",
           "description": "No notifications/message for requests that didn't set _meta.../logLevel",
-          "status": "FAILURE",
-          "errorMessage": "Not testable: server does not list the diagnostic tool 'test_logging_tool' in tools/list, so the no-log-without-logLevel requirement could not be exercised"
+          "status": "SUCCESS"
         },
         {
           "id": "sep-2575-server-sends-subscription-ack",
