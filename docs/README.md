@@ -25,6 +25,7 @@ what you are trying to do.
 | [Session recording](recording.md) | Recording sessions for audit and playback; codecs, ffmpeg, markers, retention |
 | [Remote signals](remote-signals.md) | Microsoft Graph compliance and an external may-run endpoint — the signals a local admin cannot spoof |
 | [Monitoring](monitoring.md) | The loopback status endpoint and the hash-chained audit log |
+| [Evidence bundles](evidence-bundles.md) | Sealing a session's audit chain, verdicts and recording into one signed, self-verifying archive |
 | [Deployment](deployment.md) | Putting this on a managed machine: layout, ACLs, running at logon, pairing with WDAC |
 | [Deciding to deploy this](deployment-decision.md) | For the approver: what you are allowing, the threat model, non-goals, choosing a posture, and the residual risk to sign off |
 | [VM isolation](vm-isolation.md) | **Design/research note.** Why a disposable VM is stronger containment than in-process controls, comparing Windows Sandbox, Hyper-V VMMS and the HCS API |
