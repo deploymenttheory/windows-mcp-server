@@ -12,6 +12,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	golang.org/x/net v0.57.0
 	golang.org/x/sys v0.47.0
+	pgregory.net/rapid v1.3.0
 )
 
 require (
