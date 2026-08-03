@@ -1,0 +1,109 @@
+# Release packaging for windows-mcp-server.
+#
+# The server is pure Go — the Win32/UIA/WMI bindings are syscall-based, with no
+# cgo anywhere — so both Windows targets build from one runner rather than
+# needing a machine per arch. That is the same property the CI build matrix
+# relies on (it cross-compiles the arm64 build from the amd64 runner).
+version: 2
+
+project_name: windows-mcp-server
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: windows-mcp-server
+    main: ./cmd/windows-mcp-server
+    binary: windows-mcp-server
+    env:
+      # No cgo: every binding is syscall-based. Setting it explicitly keeps a
+      # cgo-enabled runner from producing binaries that will not run elsewhere.
+      - CGO_ENABLED=0
+    # Windows-only by design: nearly every file is //go:build windows, and the
+    # transport is stdio. amd64 and arm64 are the two supported architectures,
+    # asserted by the (amd64 || arm64) build tag across the tree.
+    goos: [windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      # -s -w drop the symbol and DWARF tables a released binary does not need.
+      # The version is stamped into main.version so `--version` names the tag it
+      # was cut from rather than the "dev" default in main.go.
+      - -s -w
+      - -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: windows-mcp-server
+    ids: [windows-mcp-server]
+    # A predictable name: windows-mcp-server_1.1.0_windows_arm64.zip.
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      # The starting-point policy documents ship alongside the binary so an
+      # operator has something to point --policy-config at on first run.
+      - policy/examples/*.json
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+# A CycloneDX SBOM per archive, since the audience is enterprise and provenance
+# is part of the pitch. Requires syft on the runner (release.yml installs it).
+sboms:
+  - id: archives
+    artifacts: archive
+
+# Sign the checksum file rather than each archive: verifying the checksums
+# verifies every archive through it, and one signature is one thing to check.
+# Keyless signing binds the signature to this workflow's identity, so there is
+# no private key to hold or rotate.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  # release-please writes CHANGELOG.md from the conventional commits and owns
+  # the release notes; duplicating them here would only disagree with it.
+  disable: true
+
+release:
+  # The release already exists: release-please creates it when it merges its
+  # pull request, and this run attaches the artifacts to it.
+  mode: append
+  footer: |
+    ---
+
+    Windows binaries (amd64, arm64) are pure Go and require no runtime
+    dependencies. The transport is stdio only — there is no network listener.
+
+    Verify a download against the signed checksum file:
+
+    ```console
+    cosign verify-blob \
+      --bundle windows-mcp-server_{{ .Version }}_checksums.txt.sigstore.json \
+      --certificate-identity-regexp 'https://github.com/deploymenttheory/windows-mcp-server/.*' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      windows-mcp-server_{{ .Version }}_checksums.txt
+
+    sha256sum -c windows-mcp-server_{{ .Version }}_checksums.txt --ignore-missing
+    ```
+
+# A winget manifest can be generated here once a fork of microsoft/winget-pkgs
+# and a publishing token are in place. Left out rather than stubbed so
+# `goreleaser check` stays green; wiring it is tracked separately.
