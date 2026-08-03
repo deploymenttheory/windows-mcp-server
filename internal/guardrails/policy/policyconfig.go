@@ -73,12 +73,14 @@ const (
 	// SeverityWarn is amber: the call proceeds, the verdict is audited, and the
 	// warning is attached to the result so the caller can see it.
 	SeverityWarn
-	// SeverityApprove suspends the call on an out-of-band human decision: the
-	// enforcement point blocks it, asks the configured approvals webhook, and
+	// SeverityHold suspends the call on an out-of-band human decision: the
+	// enforcement point holds it, asks the configured approvals webhook, and
 	// proceeds only if the request comes back approved. A timeout denies. It sits
 	// between warn and deny — stronger than a warning the model can ignore, weaker
-	// than an outright refusal, because a person can still let it through.
-	SeverityApprove
+	// than an outright refusal, because a person can still let it through. The word
+	// names what happens to the call (it is held); the webhook that resolves it is
+	// still an approval (a person approves or denies the held call).
+	SeverityHold
 	// SeverityDeny is red: this call is refused. Nothing latches — the next call
 	// is evaluated afresh, so a signal that recovers restores service without a
 	// restart.
@@ -89,11 +91,11 @@ const (
 )
 
 var severityNames = map[Severity]string{
-	SeverityAllow:   "allow",
-	SeverityWarn:    "warn",
-	SeverityApprove: "approve",
-	SeverityDeny:    "deny",
-	SeverityKill:    "kill",
+	SeverityAllow: "allow",
+	SeverityWarn:  "warn",
+	SeverityHold:  "hold",
+	SeverityDeny:  "deny",
+	SeverityKill:  "kill",
 }
 
 func (s Severity) String() string {
@@ -127,7 +129,7 @@ func (s *Severity) UnmarshalJSON(raw []byte) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("%w: %q (want allow, warn, approve, deny or kill)", ErrUnknownSeverity, name)
+	return fmt.Errorf("%w: %q (want allow, warn, hold, deny or kill)", ErrUnknownSeverity, name)
 }
 
 // Errors surfaced by loading and validation. They are distinct values so the
@@ -258,20 +260,20 @@ type Policy struct {
 	// Telemetry exports activity to an OpenTelemetry collector. Empty endpoint (the
 	// default) disables it — nothing is exported and no exporter is constructed.
 	Telemetry TelemetryPolicy `json:"telemetry,omitempty"`
-	// Approvals configures the out-of-band authoriser for `on_fail: approve` rules.
+	// Approvals configures the out-of-band authoriser for `on_fail: hold` rules.
 	// A rule that uses that disposition without a webhook here is refused at load —
 	// dual control that cannot ask anyone is not dual control.
 	Approvals ApprovalsPolicy `json:"approvals,omitempty"`
 }
 
 // ApprovalsPolicy configures out-of-band human authorisation for rules whose
-// on_fail is SeverityApprove. The server holds no inbound listener — the
+// on_fail is SeverityHold. The server holds no inbound listener — the
 // stdio-only posture is inviolable — so authorisation is solicited outbound: the
 // enforcement point POSTs the pending call to a webhook the operator runs and
 // blocks on the answer.
 type ApprovalsPolicy struct {
 	// WebhookURL receives a POST describing each call awaiting approval and returns
-	// the decision. Required when any rule uses `on_fail: approve`. The request is
+	// the decision. Required when any rule uses `on_fail: hold`. The request is
 	// signed with WINDOWS_MCP_APPROVAL_KEY (an environment secret, never this
 	// document) so the webhook can authenticate it.
 	WebhookURL string `json:"webhook_url,omitempty"`
@@ -292,10 +294,10 @@ const (
 	DefaultApprovalPoll    = 5 * time.Second
 )
 
-// usesApprove reports whether any call-scope rule disposes to SeverityApprove.
-func (p *Policy) usesApprove() bool {
+// usesHold reports whether any call-scope rule disposes to SeverityHold.
+func (p *Policy) usesHold() bool {
 	for _, r := range p.Rules {
-		if r.OnFail == SeverityApprove && r.scope() == ScopeCall {
+		if r.OnFail == SeverityHold && r.scope() == ScopeCall {
 			return true
 		}
 	}
@@ -694,9 +696,9 @@ func (p *Policy) Validate(known []string) error {
 			add("%s: requires no signals, so it can never fail", label)
 		}
 		// A startup admission is a one-shot go/no-go with no request to suspend and
-		// no session yet to solicit a decision from, so approve has no meaning there.
-		if r.OnFail == SeverityApprove && r.scope() == ScopeStartup {
-			add("%v: %s uses on_fail approve on a startup rule; approve is only valid on call-scope rules",
+		// no session yet to solicit a decision from, so hold has no meaning there.
+		if r.OnFail == SeverityHold && r.scope() == ScopeStartup {
+			add("%v: %s uses on_fail hold on a startup rule; hold is only valid on call-scope rules",
 				ErrInvalidApprovals, label)
 		}
 		for _, id := range r.Require {
@@ -714,9 +716,9 @@ func (p *Policy) Validate(known []string) error {
 			add("%v: %s max must be positive", ErrInvalidRateLimit, label)
 		}
 		// A rate limit fires on a stream of calls, not a single decidable request, so
-		// there is no one call to hold for a human — approve does not fit here.
-		if rl.OnExceed == SeverityApprove {
-			add("%v: %s uses on_exceed approve; a rate limit cannot suspend on approval, "+
+		// there is no one call to hold for a human — hold does not fit here.
+		if rl.OnExceed == SeverityHold {
+			add("%v: %s uses on_exceed hold; a rate limit cannot suspend on approval, "+
 				"use warn, deny or kill", ErrInvalidApprovals, label)
 		}
 	}
@@ -797,8 +799,8 @@ func (p *Policy) Validate(known []string) error {
 // in shape (an absolute http/https URL) with sane timings.
 func (p *Policy) validateApprovals(add func(string, ...any)) {
 	a := p.Approvals
-	if p.usesApprove() && a.WebhookURL == "" {
-		add("%v: a rule uses on_fail approve but approvals.webhook_url is not set; "+
+	if p.usesHold() && a.WebhookURL == "" {
+		add("%v: a rule uses on_fail hold but approvals.webhook_url is not set; "+
 			"dual control needs an authoriser to ask", ErrInvalidApprovals)
 	}
 	if a.WebhookURL == "" {

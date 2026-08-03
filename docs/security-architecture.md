@@ -74,7 +74,7 @@ policy's mode.
 |---|---|---|
 | `allow` | green | Proceeds. The failure is still recorded. |
 | `warn` | amber | Proceeds, and the warning is attached to the result, so the model sees it and not only the operator. |
-| `approve` | held | The call is suspended on an out-of-band human decision solicited over a webhook; it proceeds only if approved, and a timeout denies. Dual control — see `docs/policy-config.md`. |
+| `hold` | held | The call is suspended on an out-of-band human decision solicited over a webhook; it proceeds only if approved, and a timeout denies. Dual control — see `docs/policy-config.md`. |
 | `deny` | red | This call is refused. Nothing latches — the next call is evaluated afresh, so a signal that recovers restores service without a restart. |
 | `kill` | out of bounds | The kill switch trips and the containment ladder runs. |
 
@@ -437,7 +437,7 @@ each leaves — see the [threat model in the README](../README.md#threat-model).
 | **Dynamic rug pull** — approved server mutates its tool set post-deploy | Manifest fingerprint pinned at startup + `tools/list` interception + monitor recheck; silent `list_changed` suppressed → audited always, and banner + isolate + abort when armed |
 | **Indirect prompt injection / data-exfil loops** | A `rate_limits` entry refuses the call once the window is exceeded and, at `on_exceed: "kill"`, escalates to **network isolation** (cuts the exfil channel) → abort, when armed; audit records the call sequence with arg digests either way. Where the exfil target is a domain, the egress allowlist refuses it outright |
 | **Out-of-band control / agent tampering** | Status, audit, heartbeat, monitor, and kill switch are constructed in the server, not exposed as tools; middleware runs on the receiving path — unbypassable. The only agent-facing tools are read-only `GuardrailStatus` and `Kill`, which stops the session but cannot actuate containment unarmed |
-| **High-risk action needs a human, not just a machine verdict** | A rule at `on_fail: "approve"` suspends the call on an out-of-band authoriser (an outbound webhook — no inbound listener, so the stdio-only posture holds), forwarding a digest of the call and never the raw arguments, signed with `WINDOWS_MCP_APPROVAL_KEY`. Fails closed: a timeout, an unreachable webhook or an unintelligible reply all deny. A plan step hitting the rule blocks the same way at apply time. Audited `approval.requested` → `approval.decision`/`approval.timeout` |
+| **High-risk action needs a human, not just a machine verdict** | A rule at `on_fail: "hold"` suspends the call on an out-of-band authoriser (an outbound webhook — no inbound listener, so the stdio-only posture holds), forwarding a digest of the call and never the raw arguments, signed with `WINDOWS_MCP_APPROVAL_KEY`. Fails closed: a timeout, an unreachable webhook or an unintelligible reply all deny. A plan step hitting the rule blocks the same way at apply time. Audited `approval.requested` → `approval.decision`/`approval.timeout` |
 | **Silent posture drift** (Secure Boot off, BitLocker suspended, MDM removed mid-session) | In-flight monitor re-evaluates live posture every interval → audited always, kill on drift when armed |
 | **Log tampering / gaps** | Hash-chained append-only audit + heartbeat; `VerifyChain` detects any break |
 | **Credential disclosure to the model** | The `Credentials` tool has no read mode and no engine function returns a secret; `inject` types it and returns only a character count. Secrets never reach argv, tool results, or the audit chain |
