@@ -62,6 +62,12 @@ Point any MCP client at the binary with the `stdio` subcommand:
 Codex CLI and Claude Desktop specifically, and what to do before pointing this at
 a machine you care about.
 
+Not sure this is for you? If you have to **approve** it on a fleet, read
+[Deciding to deploy this](docs/deployment-decision.md). If you have a **job to
+do**, see the walk-throughs for a
+[UI regression suite](docs/use-case-ui-regression.md) or a
+[first-line support queue](docs/use-case-first-line-support.md).
+
 ---
 
 ## Features
