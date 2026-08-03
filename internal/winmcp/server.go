@@ -108,6 +108,15 @@ var ErrPersonaNeedsUser = errors.New(
 // of the active policy.
 var ErrStartupDenied = errors.New("device devicePolicy denied startup")
 
+// ErrCredentialExposureDenied reports a --credentials-file served alongside a
+// toolset that can read the installed credentials back (shell or filesystem)
+// without the policy acknowledging the exposure. It is a configuration error, not
+// a device denial: the fix is to the toolset selection or the policy document, so
+// it is not routed through the guardrail decision.
+var ErrCredentialExposureDenied = errors.New(
+	"credentials exposed to a toolset that can read them back",
+)
+
 // RunStdio builds the server and serves the MCP protocol over stdio until the
 // context is cancelled or the client disconnects.
 func RunStdio(ctx context.Context, cfg Config) error {
@@ -217,15 +226,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	}
 	signals.LogDecision(logger, "admit", decision)
 
-	// --- Init-time credentials ---
-	// Provisioned only after admission, so a denied startup never installs
-	// credentials, and removed again on every shutdown path below.
-	installedCreds, cleanupCreds, err := provisionCredentials(dsk, cfg, audit, logger)
-	if err != nil {
-		return err
-	}
-	defer cleanupCreds()
-
+	// The tool surface is resolved before credentials are provisioned, so the
+	// exposure check below sees exactly the toolsets that will be served.
 	inv, personaInstructions, err := buildInventory(cfg, autoLimit)
 	if err != nil {
 		return err
@@ -238,6 +240,49 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		dsk.Notify(ctx, "Windows MCP: limited mode",
 			"Running as SYSTEM — desktop automation is disabled; diagnostics/system tools only.")
 	}
+
+	// --- Init-time credentials ---
+	// Installed credentials live in the calling user's Credential Manager, so a
+	// toolset that can read that back (shell via CredRead, filesystem via a
+	// Credential Manager backup) defeats the never-read guarantee. Refuse that
+	// exposure before anything is installed, unless the policy explicitly
+	// accepts it — the same "refuse rather than serve a weaker posture
+	// than the document describes" stance the firewall tiers take. The refusal is
+	// audited first, then a typed error names the toolsets and both remedies.
+	if cfg.CredentialsFile != "" {
+		unacked, acked := splitCredentialExposure(
+			inv.EnabledToolsets(),
+			devicePolicy.Credentials.AcknowledgeToolsetExposure,
+		)
+		if len(unacked) > 0 {
+			_, _ = audit.Append("credentials.exposure.denied", map[string]any{
+				"credentials_file": true,
+				"exposed_toolsets": unacked,
+			})
+			_ = audit.Flush()
+			return fmt.Errorf("%w: the %v toolset(s) can read installed credentials back out of the "+
+				"Credential Manager; remove them, or acknowledge the exposure in the policy document "+
+				"(credentials.acknowledge_toolset_exposure)", ErrCredentialExposureDenied, unacked)
+		}
+		if len(acked) > 0 {
+			logger.Warn(
+				"credentials served alongside toolsets that can read them back; exposure acknowledged in policy",
+				"toolsets",
+				acked,
+			)
+			_, _ = audit.Append("credentials.exposure.acknowledged", map[string]any{
+				"exposed_toolsets": acked,
+			})
+		}
+	}
+
+	// Provisioned only after admission and the exposure check, so a denied
+	// startup never installs credentials, and removed again on every shutdown path.
+	installedCreds, cleanupCreds, err := provisionCredentials(dsk, cfg, audit, logger)
+	if err != nil {
+		return err
+	}
+	defer cleanupCreds()
 
 	deps := windows.NewBaseDeps(dsk, logger, nil).
 		WithCredentials(credentialInfos(installedCreds)).

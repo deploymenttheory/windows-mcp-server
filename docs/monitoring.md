@@ -198,6 +198,8 @@ anchoring with a warning. Anchoring is **off by default**.
 | `tool.call`, `resource.read`, `prompt.get` | Requests, with digested arguments |
 | `server.discover`, `subscriptions.listen` | Protocol-level events under 2026-07-28 |
 | `credentials.installed`, `credentials.removed` | Identifiers only, never secrets |
+| `credentials.exposure.denied` | Startup refused: credentials served next to shell/filesystem without acknowledgement |
+| `credentials.exposure.acknowledged` | Started with the exposure, acknowledged in policy — the residual risk is recorded |
 | `egress.start`, `egress.stop`, `egress.summary` | Proxy lifecycle and periodic counters. The distinct hosts refused this session ride in the `denied_hosts` payload, capped at 50 |
 | `egress.enforce.applied`, `egress.enforce.error`, `egress.recovered`, `egress.suspend` | Firewall enforcement lifecycle |
 | `rugpull.detected` | A served manifest or the discover advertisement changed after startup |

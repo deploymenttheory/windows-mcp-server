@@ -253,6 +253,39 @@ func TestAnchorValidation(t *testing.T) {
 	}
 }
 
+// TestCredentialsAcknowledgementValidation pins that only the two toolsets that
+// actually expose installed credentials — shell and filesystem — may be
+// acknowledged, so a typo does not silently accept an exposure it does not name.
+func TestCredentialsAcknowledgementValidation(t *testing.T) {
+	doc := func(credentials string) *Policy {
+		t.Helper()
+		raw := `{"version":1,"mode":"audit","signals":{"run-context":{"ttl":"0s"}},
+		  "rules":[{"name":"baseline","match":{"toolset":"*"},"require":["run-context"],"on_fail":"warn"}],
+		  "credentials":` + credentials + `}`
+		p, err := Parse([]byte(raw))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return p
+	}
+
+	if err := doc(`{"acknowledge_toolset_exposure":["screen"]}`).Validate(knownSignals); err == nil ||
+		!strings.Contains(err.Error(), "not a toolset that exposes") {
+		t.Errorf("an ack of a non-exposing toolset should be rejected, got %v", err)
+	}
+
+	for _, credentials := range []string{
+		`{}`,
+		`{"acknowledge_toolset_exposure":["shell"]}`,
+		`{"acknowledge_toolset_exposure":["shell","filesystem"]}`,
+		`{"acknowledge_toolset_exposure":"filesystem"}`,
+	} {
+		if err := doc(credentials).Validate(knownSignals); err != nil {
+			t.Errorf("%s should validate: %v", credentials, err)
+		}
+	}
+}
+
 // TestEgressValidationReportsEveryProblemAtOnce matches the rest of the package:
 // an operator fixing a document one error per run gives up before it is right.
 func TestEgressValidationReportsEveryProblemAtOnce(t *testing.T) {
