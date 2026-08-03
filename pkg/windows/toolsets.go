@@ -65,6 +65,16 @@ var (
 		Description: "UI test assertions and evidence capture, for authoring and running automated tests. Disabled by default.",
 		Icon:        "beaker",
 	}
+	// ToolsetPlanning: propose a sequence of tool calls for whole-plan
+	// adjudication, then apply it (non-default). Opt-in because it is a distinct
+	// way of working — the agent proposes, the plan is reviewed and adjudicated as
+	// a whole, then executed — rather than an extra tool for the usual loop.
+	ToolsetPlanning = inventory.ToolsetMetadata{
+		ID: "planning",
+		Description: "Propose a whole sequence of tool calls as a reviewable plan, adjudicated up front, then " +
+			"apply it. Disabled by default.",
+		Icon: "checklist",
+	}
 	// ToolsetCredentials: use of credentials installed at init (non-default).
 	// Enabled automatically when --credentials-file is supplied; there is nothing
 	// to use without it.

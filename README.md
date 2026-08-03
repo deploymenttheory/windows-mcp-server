@@ -74,7 +74,7 @@ do**, see the walk-throughs for a
 
 | | What it does | Guide |
 |---|---|---|
-| **Desktop automation** | 28 tools across 10 toolsets: accessibility-tree perception, UI Automation pattern invocation, synthetic input, screenshots, apps, windows, PowerShell, registry, filesystem, processes, services, scraping | [Toolsets and personas](docs/toolsets-and-personas.md) |
+| **Desktop automation** | 30 tools across 11 toolsets: accessibility-tree perception, UI Automation pattern invocation, synthetic input, screenshots, apps, windows, PowerShell, registry, filesystem, processes, services, scraping, plan-and-apply | [Toolsets and personas](docs/toolsets-and-personas.md) |
 | **Personas** | Presets that select toolsets *and* inject workflow guidance, so the agent adopts a role rather than just getting a tool list | [Toolsets and personas](docs/toolsets-and-personas.md#personas) |
 | **Credentials** | The agent signs in to apps and sites without ever being told the secret. The `Credentials` tool has no read mode and no engine method returns plaintext — but see the note below on toolset exposure | [Credentials](docs/credentials.md) |
 | **Session recording** | Once `transparency.recording_dir` is set, the whole session goes to one video file — automatically, under every persona — with timeline markers | [Session recording](docs/recording.md) |
@@ -111,6 +111,7 @@ are on by default; the rest are opt-in.
 | `web` | | `Scrape` |
 | `diagnostics` | | `SystemInfo` (OS/hardware/disk via WMI), `Service` (list / start / stop / restart) |
 | `testing` | | `Assert` (PASS/FAIL UI condition), `CaptureEvidence` (screenshot + tree) |
+| `planning` | | `Plan`, `Apply` — propose a whole sequence, adjudicate it up front, then run it verbatim — see [Plan and apply](docs/plan-and-apply.md) |
 | `credentials` | | `Credentials` (list / verify / inject) — enabled automatically by `--credentials-file` |
 
 Two more are served under every persona and belong to no toolset:

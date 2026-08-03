@@ -100,6 +100,7 @@ type BaseDeps struct {
 	credentials    []desktop.CredentialInfo
 	enforceHTTPS   bool
 	protectedPaths []ProtectedPath
+	planner        Planner
 }
 
 // Compile-time assertion that BaseDeps satisfies ToolDependencies.
@@ -133,6 +134,17 @@ func (d *BaseDeps) WithProtectedPaths(paths []ProtectedPath) *BaseDeps {
 	d.protectedPaths = paths
 	return d
 }
+
+// WithPlanner wires the plan-and-apply engine, so the Plan and Apply tools can
+// reach it. Returns the receiver for chaining.
+func (d *BaseDeps) WithPlanner(p Planner) *BaseDeps {
+	d.planner = p
+	return d
+}
+
+// Planner implements PlannerProvider. It returns nil when plan-and-apply is not
+// wired, which the Plan/Apply tools treat as "planning not available".
+func (d *BaseDeps) Planner() Planner { return d.planner }
 
 // ProtectedPathViolation reports whether accessing absPath (for write when write
 // is true, otherwise read) would touch a protected guardrail path, and a reason

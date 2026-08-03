@@ -89,6 +89,13 @@ prompt.
 
 Also carries the `capture-evidence` prompt.
 
+### `planning` — opt-in
+
+| Tool | Does |
+|---|---|
+| `Plan` | Propose a whole sequence of tool calls; returns a change manifest and a plan id. Changes nothing |
+| `Apply` | Execute a proposed plan by id — verbatim, posture re-checked, fail-stop. See [Plan and apply](plan-and-apply.md) |
+
 ### `credentials` — opt-in
 
 | Tool | Does |
