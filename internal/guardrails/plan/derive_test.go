@@ -83,6 +83,21 @@ func TestDeriveTargets(t *testing.T) {
 			nil, false,
 		},
 		{
+			"package install creates a package",
+			Step{Tool: "Package", Args: map[string]any{"mode": "install", "id": "Vendor.App"}},
+			[]Target{{KindPackage, "Vendor.App", VerbCreate}}, false,
+		},
+		{
+			"package uninstall removes a package",
+			Step{Tool: "Package", Args: map[string]any{"mode": "uninstall", "id": "Vendor.App"}},
+			[]Target{{KindPackage, "Vendor.App", VerbDelete}}, false,
+		},
+		{
+			"package search derives nothing",
+			Step{Tool: "Package", Args: map[string]any{"mode": "search", "query": "editor"}},
+			nil, false,
+		},
+		{
 			"an unknown tool derives nothing",
 			Step{Tool: "Snapshot"},
 			nil, false,

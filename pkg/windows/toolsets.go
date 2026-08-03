@@ -76,6 +76,16 @@ var (
 			"apply it. Disabled by default.",
 		Icon: "checklist",
 	}
+	// ToolsetPackages: software install/removal via winget and MSI (non-default).
+	// Opt-in and in no persona: it downloads and runs installers from the network,
+	// outside the egress proxy, so it stays off the default surface until an
+	// operator deliberately asks for it.
+	ToolsetPackages = inventory.ToolsetMetadata{
+		ID: "packages",
+		Description: "Install, remove, list, and search software via winget and MSI. Downloads run installers " +
+			"from the network, outside the egress proxy. Disabled by default and in no persona.",
+		Icon: "package",
+	}
 	// ToolsetCredentials: use of credentials installed at init (non-default).
 	// Enabled automatically when --credentials-file is supplied; there is nothing
 	// to use without it.
