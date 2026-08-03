@@ -28,9 +28,25 @@ func DeriveTargets(s Step) (targets []Target, undeclarable bool) {
 		// An arbitrary command: its reach cannot be read from its arguments. Flag
 		// it so the manifest says as much rather than implying it touches nothing.
 		return []Target{{Kind: KindShell, Name: "PowerShell command", Verb: VerbExecute}}, true
+	case "Network":
+		return networkTargets(s.Args, mode), false
 	default:
 		return nil, false
 	}
+}
+
+// networkTargets derives the reach of a Network step. Only mode=test leaves the
+// machine — it reaches a host — so it is the only mode that names a target; the
+// inspection modes touch nothing outside the local configuration.
+func networkTargets(args map[string]any, mode string) []Target {
+	if mode != "test" {
+		return nil
+	}
+	host := strArg(args, "host")
+	if host == "" {
+		return nil
+	}
+	return []Target{{KindHost, host, VerbReach}}
 }
 
 func fileTargets(args map[string]any, mode string) []Target {

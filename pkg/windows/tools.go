@@ -53,6 +53,8 @@ func AllTools() []inventory.ServerTool {
 		// diagnostics toolset (1st-line support)
 		SystemInfo(),
 		Service(),
+		EventLog(),
+		Network(),
 
 		// credentials
 		Credentials(),

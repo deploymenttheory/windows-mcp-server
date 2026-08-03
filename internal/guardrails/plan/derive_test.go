@@ -58,6 +58,16 @@ func TestDeriveTargets(t *testing.T) {
 			[]Target{{KindShell, "PowerShell command", VerbExecute}}, true,
 		},
 		{
+			"network test reaches a host",
+			Step{Tool: "Network", Args: map[string]any{"mode": "test", "host": "example.com"}},
+			[]Target{{KindHost, "example.com", VerbReach}}, false,
+		},
+		{
+			"network inspection touches nothing outside the machine",
+			Step{Tool: "Network", Args: map[string]any{"mode": "adapters"}},
+			nil, false,
+		},
+		{
 			"an unknown tool derives nothing",
 			Step{Tool: "Snapshot"},
 			nil, false,

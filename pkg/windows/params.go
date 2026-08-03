@@ -85,6 +85,18 @@ func OptionalInt(args map[string]any, key string, fallback int) (int, error) {
 	}
 }
 
+// clampInt bounds v to the inclusive range [lo, hi]. It is how tools keep a
+// caller-supplied count or window from becoming an absurd query.
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 // OptionalBool returns a bool argument or the fallback. It accepts real JSON
 // booleans and the strings "true"/"false" (case-insensitive), matching how some
 // MCP clients encode booleans.
