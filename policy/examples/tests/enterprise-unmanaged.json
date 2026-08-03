@@ -1,0 +1,16 @@
+{
+  "policy": "../enterprise.json",
+  "device": { "mdm-enrolled": "fail" },
+  "cases": [
+    {
+      "name": "an unmanaged device is denied PowerShell",
+      "call": { "tool": "PowerShell", "toolset": "shell", "annotations": { "destructive": true } },
+      "expect": { "severity": "deny", "failed_signals": ["mdm-enrolled"], "rules": ["managed-device"] }
+    },
+    {
+      "name": "the managed-device rule covers even a screenshot",
+      "call": { "tool": "Snapshot", "toolset": "screen", "annotations": { "read_only": true } },
+      "expect": { "severity": "deny", "failed_signals": ["mdm-enrolled"], "rules": ["managed-device"] }
+    }
+  ]
+}
