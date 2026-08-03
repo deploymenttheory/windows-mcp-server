@@ -121,6 +121,12 @@ the point of audit mode, and why it does not simply skip evaluation.
     { "annotation": "destructive" }   // a direct call to a matching tool is refused; same match syntax as a rule
   ],
 
+  "telemetry": {                   // OTLP export; empty endpoint (the default) disables it
+    "endpoint": "",                // "host:4318" or "https://collector:4318"
+    "protocol": "http",            // only http is implemented
+    "sample_ratio": 1.0            // trace sampling in [0,1]
+  },
+
   "egress": {                      // device egress proxy; omit or disable to leave networking untouched
     "enabled": true,
     "allow": ["*.contoso.com", "login.microsoftonline.com"],
