@@ -1,0 +1,63 @@
+# Fuzzes the two adversarial-input surfaces that are pure, platform-independent
+# Go: the egress allowlist (operator text in, attacker-chosen hostnames matched)
+# and the policy-document parser (a document an operator may source elsewhere).
+#
+# Run weekly rather than per-PR — a fuzz run is minutes of CPU, and the seed
+# corpus already runs as an ordinary unit test on every PR, so a regression on a
+# known input is caught there. These packages carry no build tag, so unlike the
+# rest of the suite they run on Linux.
+name: fuzz
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 05:17 UTC. Off the hour, and a different slot from the other
+    # scheduled workflows so they do not contend for runners.
+    - cron: '17 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: 🔀 ${{ matrix.func }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pkg: ./internal/guardrails/hostmatch/
+            func: FuzzCompileAndMatch
+          - pkg: ./internal/guardrails/hostmatch/
+            func: FuzzForbiddenAddr
+          - pkg: ./internal/guardrails/policy/
+            func: FuzzParse
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Fuzz ${{ matrix.func }}
+        run: go test ${{ matrix.pkg }} -run='^$' -fuzz='^${{ matrix.func }}$' -fuzztime=10m
+
+      # A failing fuzz run writes the crashing input under testdata/fuzz; keep it
+      # so the crasher can be reproduced locally and committed as a regression seed.
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crashers-${{ matrix.func }}
+          path: '**/testdata/fuzz/**'
+          if-no-files-found: ignore
