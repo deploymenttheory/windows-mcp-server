@@ -56,7 +56,26 @@ compare what was **approved** against what **ran**. The chain in the bundle can 
 re-checked independently with `audit verify`, and if it was keyed
 ([monitoring](monitoring.md)), its own HMAC still holds.
 
-Today bundles are sealed **on demand** with `evidence bundle`. Automatic sealing
-at session end — driven by a `transparency.evidence_dir` setting, capturing the
-full approved plan documents and the closing posture snapshot — is the next step
-on the [roadmap](../roadmap.md).
+## On demand, or automatically
+
+Bundles are sealed either way:
+
+- **On demand** with `evidence bundle`, from any audit directory, at any time.
+- **Automatically at session end** when `transparency.evidence_dir` is set. Every
+  session then writes `session-<stamp>.evidence.zip` there as it exits — and the
+  automatic seal additionally captures what only exists live: the **full approved
+  plan documents** (the audit chain records only their digests) under `plans/`,
+  and the **closing posture snapshot** as `posture-end.json`.
+
+```jsonc
+"transparency": {
+  "audit_sink": "C:\\ProgramData\\windows-mcp\\audit\\",   // must be a directory
+  "recording_dir": "C:\\ProgramData\\windows-mcp\\recordings",
+  "evidence_dir": "C:\\ProgramData\\windows-mcp\\evidence"
+}
+```
+
+Auto-sealing requires a **directory-mode `audit_sink`** — there is otherwise no
+per-session file to bundle — and it never crashes shutdown: a seal failure is
+logged and the session still exits cleanly. Point
+`WINDOWS_MCP_EVIDENCE_KEY_FILE` at a signing key to sign the automatic bundles too.

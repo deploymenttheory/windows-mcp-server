@@ -96,6 +96,7 @@ the point of audit mode, and why it does not simply skip evaluation.
     "audit_sink": "stderr",        // "stderr", a file path, or a directory for one file per session
     "heartbeat": "30s",
     "recording_dir": "",           // non-empty records the session to video
+    "evidence_dir": "",            // non-empty auto-seals a signed evidence bundle per session (needs a directory audit_sink)
     "banner": true,                // on-screen banner on a kill
     "status_addr": "",             // loopback status endpoint, e.g. 127.0.0.1:8177
     "status_token": "",

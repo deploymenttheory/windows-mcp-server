@@ -7,6 +7,7 @@ package winmcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -161,7 +162,17 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// local name shadows the package; on the right-hand side it is still the
 	// package, since a := binding is not in scope until after the statement.)
 	audit := audit.NewAuditLog(sink, audit.WithHMACKey([]byte(os.Getenv("WINDOWS_MCP_AUDIT_KEY"))))
-	defer func() { _ = audit.Close() }()
+	// sealAtExit is populated later, once the planner exists and the closing posture
+	// is captured. It runs from inside the audit-close defer, so it fires after the
+	// chain is sealed and (defers being LIFO) after the recorder is finalized — both
+	// are inputs to the bundle.
+	var sealAtExit func()
+	defer func() {
+		_ = audit.Close()
+		if sealAtExit != nil {
+			sealAtExit()
+		}
+	}()
 	_, _ = audit.Append("server.start", map[string]any{"version": cfg.Version, "session": sessionStamp})
 
 	// Off-box anchoring of the chain head, if the policy asks for it. It is
@@ -376,8 +387,9 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// Plan-and-apply. Wired after the kill switch so an apply can abandon its
 	// remaining steps when containment trips; deps is a pointer the surface's
 	// middleware already captured, so setting the planner now reaches the handlers.
-	deps.WithPlanner(newPlanner(engine, audit, inventoryRegistry{inv: inv, deps: deps},
-		func() bool { tripped, _ := kill.Tripped(); return tripped }))
+	sessionPlanner := newPlanner(engine, audit, inventoryRegistry{inv: inv, deps: deps},
+		func() bool { tripped, _ := kill.Tripped(); return tripped })
+	deps.WithPlanner(sessionPlanner)
 
 	// Kill triggers come from the policy's kill.triggers block. A trigger left off
 	// is report-only: still detected and audited, but it contains nothing and the
@@ -524,6 +536,23 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	)
 
 	err = server.Run(runCtx, &mcp.StdioTransport{})
+
+	// The session is over but the engine and desktop are still up (their defers
+	// have not run). Capture the closing posture now, and arm the evidence seal to
+	// fire from the audit-close defer once the chain and recording are finalized.
+	if devicePolicy.Transparency.EvidenceDir != "" {
+		var posture []byte
+		if b, mErr := json.Marshal(
+			snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress)(),
+		); mErr == nil {
+			posture = b
+		}
+		plans := sessionPlanner.StoredPlans()
+		sealAtExit = func() {
+			autoSealEvidence(devicePolicy.Transparency, sessionStamp, plans, posture, logger)
+		}
+	}
+
 	if tripped, reason := kill.Tripped(); tripped {
 		logger.Error("session terminated by kill switch", "reason", reason)
 		return fmt.Errorf("session terminated by kill switch: %s", reason)

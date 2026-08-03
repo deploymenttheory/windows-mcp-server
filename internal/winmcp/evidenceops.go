@@ -5,6 +5,7 @@ package winmcp
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/evidence"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/plan"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
 )
 
 // verdictPrefixes are the audit events extracted into a bundle's verdicts.json —
@@ -23,9 +26,13 @@ var verdictPrefixes = []string{
 }
 
 // BundleEvidence gathers a session's evidence from an audit directory — its audit
-// chain, the extracted verdicts, and any recording — and seals it into a signed
-// (or, without a key, unsigned) archive.
-func BundleEvidence(auditDir, session, recordingDir, outPath, keyFile string) (evidence.Manifest, error) {
+// chain, the extracted verdicts, and any recording — plus any extra sources the
+// caller supplies (the full plan documents and closing posture, for an
+// auto-seal), and seals it into a signed (or, without a key, unsigned) archive.
+func BundleEvidence(
+	auditDir, session, recordingDir, outPath, keyFile string,
+	extra ...evidence.Source,
+) (evidence.Manifest, error) {
 	sessionFile := filepath.Join(auditDir, "session-"+session+".audit.jsonl")
 
 	// Read the chain to extract verdicts and the head. A broken chain is not a
@@ -50,6 +57,7 @@ func BundleEvidence(auditDir, session, recordingDir, outPath, keyFile string) (e
 	for _, rec := range recordingFiles(recordingDir, session) {
 		sources = append(sources, evidence.Source{ArchivePath: "recording/" + filepath.Base(rec), FilePath: rec})
 	}
+	sources = append(sources, extra...)
 
 	var signer *evidence.Signer
 	if keyFile != "" {
@@ -74,6 +82,66 @@ func BundleEvidence(auditDir, session, recordingDir, outPath, keyFile string) (e
 		return evidence.Manifest{}, fmt.Errorf("evidence bundle: %w", err)
 	}
 	return man, nil
+}
+
+// autoSealEvidence seals a bundle into the evidence directory at session end,
+// adding what only exists live: the full approved plan documents and the closing
+// posture snapshot. It never crashes shutdown — a seal failure or a panic is
+// logged and swallowed, because a missing bundle must not turn a clean exit into a
+// crash the host reads as instability.
+func autoSealEvidence(
+	tp policy.TransparencyPolicy,
+	session string,
+	plans []plan.Document,
+	posture []byte,
+	logger *slog.Logger,
+) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("evidence auto-seal panicked", "panic", r)
+		}
+	}()
+
+	if !auditSinkIsDir(tp.AuditSink) {
+		logger.Warn("evidence_dir is set but audit_sink is not a directory; skipping auto-seal",
+			"hint", "point audit_sink at a directory so each session has its own file to bundle")
+		return
+	}
+	if err := os.MkdirAll(tp.EvidenceDir, 0o700); err != nil {
+		logger.Error("evidence auto-seal: create evidence dir", "error", err)
+		return
+	}
+
+	var extra []evidence.Source
+	for _, d := range plans {
+		if b, err := json.MarshalIndent(d, "", "  "); err == nil {
+			extra = append(extra, evidence.Source{
+				ArchivePath: "plans/plan-" + shortPlanID(d.PlanID) + ".json", Bytes: b,
+			})
+		}
+	}
+	if len(posture) > 0 {
+		extra = append(extra, evidence.Source{ArchivePath: "posture-end.json", Bytes: posture})
+	}
+
+	outPath := filepath.Join(tp.EvidenceDir, "session-"+session+".evidence.zip")
+	man, err := BundleEvidence(tp.AuditSink, session, tp.RecordingDir, outPath,
+		os.Getenv("WINDOWS_MCP_EVIDENCE_KEY_FILE"), extra...)
+	if err != nil {
+		logger.Error("evidence auto-seal failed", "error", err)
+		return
+	}
+	logger.Info("session evidence sealed", "path", outPath, "files", len(man.Files), "signed", man.Signed)
+}
+
+func shortPlanID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	if id == "" {
+		return "unhashed"
+	}
+	return id
 }
 
 // VerifyEvidence checks a bundle against its manifest and, when given, an expected

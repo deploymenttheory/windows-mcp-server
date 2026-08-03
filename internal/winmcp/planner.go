@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -228,6 +229,20 @@ func (p *planner) Apply(ctx context.Context, planID string) (windows.PlanApplica
 	report := fmt.Sprintf("Applied plan %s: %d completed, %d failed, %d skipped\n%s",
 		shortID(planID), completed, failed, skipped, b.String())
 	return windows.PlanApplication{PlanID: planID, Report: report}, nil
+}
+
+// StoredPlans returns every plan proposed this session, ordered by id, so the
+// evidence bundle can carry the full approved documents (the compact audit chain
+// records only their digests).
+func (p *planner) StoredPlans() []plan.Document {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]plan.Document, 0, len(p.store))
+	for _, d := range p.store {
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PlanID < out[j].PlanID })
+	return out
 }
 
 func (p *planner) subjects(doc plan.Document) []policy.Subject {
