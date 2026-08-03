@@ -186,6 +186,26 @@ func (e *Engine) SubjectForTool(method, tool string) Subject {
 // StartupSubject is the subject for the once-per-process admission decision.
 func StartupSubject() Subject { return Subject{Scope: ScopeStartup, Method: "startup"} }
 
+// RequiresPlan reports whether a subject names a tool the policy gates behind an
+// approved plan. The enforcement point calls this on a direct request; a plan step
+// never reaches it, because the planner executes steps itself, so a matching call
+// here is always a direct call to gate.
+//
+// The planning tools themselves are never gated — you cannot require a plan to
+// make a plan — so a subject in the planning toolset is exempt regardless of the
+// selectors.
+func (e *Engine) RequiresPlan(subj Subject) bool {
+	if subj.Scope != ScopeCall || subj.Facts.Toolset == "planning" {
+		return false
+	}
+	for _, m := range e.policy.RequirePlan {
+		if matchesLimit(m, subj) {
+			return true
+		}
+	}
+	return false
+}
+
 // Evaluate decides one subject.
 //
 // Rule precedence. Every rule whose match selects the subject contributes its

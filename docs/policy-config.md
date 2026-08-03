@@ -116,6 +116,10 @@ the point of audit mode, and why it does not simply skip evaluation.
     "acknowledge_toolset_exposure": []  // accept serving credentials next to "shell"/"filesystem"
   },
 
+  "require_plan": [                // tools that may only run inside an approved plan (via Apply)
+    { "annotation": "destructive" }   // a direct call to a matching tool is refused; same match syntax as a rule
+  ],
+
   "egress": {                      // device egress proxy; omit or disable to leave networking untouched
     "enabled": true,
     "allow": ["*.contoso.com", "login.microsoftonline.com"],
@@ -307,6 +311,17 @@ field. Because `severity` is the verdict *after* the mode is applied, a fixture
 against an `audit`-mode policy asserts the capped verdict (never above `warn`),
 which is the truth of what that policy does; assert `deny`/`kill` against an
 `enforce`-mode policy. See `policy/examples/tests/` for worked fixtures.
+
+## Requiring a plan
+
+`require_plan` is a list of selectors — same `tool` / `toolset` / `annotation`
+syntax as a rule's `match` — naming tools that may only run inside an approved
+plan. A **direct** call to a matching tool is refused (audited `plan.required`);
+the same tool runs normally as a *step* of a plan submitted through the `Plan`
+tool and executed by `Apply`. This is the preventive tier of plan-and-apply; see
+[Plan and apply](plan-and-apply.md) for the whole model. The planning tools are
+always exempt, so a `{ "toolset": "*" }` selector cannot deadlock the ability to
+plan.
 
 ## Credentials exposure
 

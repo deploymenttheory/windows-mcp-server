@@ -202,6 +202,7 @@ anchoring with a warning. Anchoring is **off by default**.
 | `plan.proposed` | A plan was submitted: plan id, per-step tool + argument digest, and the whole-plan verdict |
 | `plan.step`, `plan.applied` | Each step executed under a plan (id, index, tool, argument digest, verdict), then the apply summary |
 | `plan.stale` | An apply was refused because posture no longer admitted the plan |
+| `plan.required` | A direct call to a tool the policy gates behind a plan was refused (preventive mode) |
 | `credentials.installed`, `credentials.removed` | Identifiers only, never secrets |
 | `credentials.exposure.denied` | Startup refused: credentials served next to shell/filesystem without acknowledgement |
 | `credentials.exposure.acknowledged` | Started with the exposure, acknowledged in policy — the residual risk is recorded |

@@ -78,5 +78,8 @@
   "enforce_https": true,
   "credentials": {
     "acknowledge_toolset_exposure": ["shell"]
-  }
+  },
+  "require_plan": [
+    { "annotation": "destructive" }
+  ]
 }
