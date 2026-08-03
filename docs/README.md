@@ -1,7 +1,16 @@
 # Documentation
 
-Start with [Getting started](getting-started.md). The rest is organised by what
-you are trying to do. The [root README](../README.md) is the feature overview.
+Three ways in, depending on who you are:
+
+- **You want to try it** → [Getting started](getting-started.md).
+- **You have to approve it** on a fleet → [Deciding to deploy this](deployment-decision.md)
+  — threat model, non-goals, posture tiers, residual risk.
+- **You have a job to do** → a UI regression suite that isn't flaky
+  ([use case](use-case-ui-regression.md)), or a first-line support queue that
+  triages itself ([use case](use-case-first-line-support.md)).
+
+The [root README](../README.md) is the feature overview; the rest is organised by
+what you are trying to do.
 
 ## Setup and configuration
 
@@ -16,7 +25,15 @@ you are trying to do. The [root README](../README.md) is the feature overview.
 | [Remote signals](remote-signals.md) | Microsoft Graph compliance and an external may-run endpoint — the signals a local admin cannot spoof |
 | [Monitoring](monitoring.md) | The loopback status endpoint and the hash-chained audit log |
 | [Deployment](deployment.md) | Putting this on a managed machine: layout, ACLs, running at logon, pairing with WDAC |
+| [Deciding to deploy this](deployment-decision.md) | For the approver: what you are allowing, the threat model, non-goals, choosing a posture, and the residual risk to sign off |
 | [VM isolation](vm-isolation.md) | **Design/research note.** Why a disposable VM is stronger containment than in-process controls, comparing Windows Sandbox, Hyper-V VMMS and the HCS API |
+
+## By use case
+
+| Walk-through | For |
+|---|---|
+| [A UI regression suite that isn't flaky](use-case-ui-regression.md) | Driving an app's GUI by control label instead of coordinates, with evidence on every run — the `qa-test-engineer` persona |
+| [A first-line support queue that triages itself](use-case-first-line-support.md) | Gathering state and doing routine fixes, gated on device posture and recorded — the `first-line-support` persona |
 
 ## Design and reference
 
