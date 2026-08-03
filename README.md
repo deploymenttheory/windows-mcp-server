@@ -6,14 +6,28 @@
 A [Model Context Protocol](https://modelcontextprotocol.io) server that bridges
 AI agents to the **Windows desktop** — UI Automation, synthetic mouse/keyboard
 input, screenshots, window and application control, PowerShell, the registry,
-processes, the filesystem, and web scraping.
+processes, the filesystem, and web scraping. No computer-vision model is required:
+the agent perceives the UI through the Windows accessibility tree.
 
-It is a Go port of the Python [Windows-MCP](https://github.com/CursorTouch/Windows-MCP)
-project, built on the [`go-bindings-win32`](https://github.com/deploymenttheory/go-bindings-win32)
-and [`go-bindings-wmi`](https://github.com/deploymenttheory/go-bindings-wmi) SDKs
-and the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk). No
-computer-vision model is required: the agent perceives the UI through the
-Windows accessibility tree.
+What separates it from a plain automation bridge is that it is the only Windows
+MCP server that **gates every agent action on live device posture** and
+**constrains the agent's network egress**, and records both in a tamper-evident
+audit chain the agent cannot switch off. It turns an agent with system access into
+an agent whose actions are conditional, bounded, and reviewable.
+
+- **Device policy engine** — every tool call, resource read and prompt fetch is
+  evaluated against live device signals (MDM enrolment, Entra join, Secure Boot,
+  BitLocker, VBS/HVCI, TPM attestation) before it runs, and refused, warned or
+  contained per a policy document. Rules match by tool, toolset or annotation, so
+  a screenshot is not gated like a shell command. → [Policy configuration](docs/policy-config.md)
+- **Egress allowlist** — a loopback proxy admits only the domains you declare,
+  checking the allowlist before it resolves a name, optionally backed by firewall
+  rules so named applications — or the whole machine — cannot go around it.
+  → [Egress setup](docs/egress.md)
+- **Tamper-evident transparency** — a hash-chained audit log (optionally keyed
+  and anchored off-box), heartbeat, rug-pull detection, whole-session recording,
+  and an out-of-band tiered kill switch. None of it is agent-disableable.
+  → [Monitoring](docs/monitoring.md) · [Security architecture](docs/security-architecture.md)
 
 > **Several tools (PowerShell, Registry, FileSystem, Process, App) have full
 > system access with no sandboxing.** That is the design, not an oversight. Run
@@ -56,11 +70,8 @@ a machine you care about.
 |---|---|---|
 | **Desktop automation** | 28 tools across 10 toolsets: accessibility-tree perception, UI Automation pattern invocation, synthetic input, screenshots, apps, windows, PowerShell, registry, filesystem, processes, services, scraping | [Toolsets and personas](docs/toolsets-and-personas.md) |
 | **Personas** | Presets that select toolsets *and* inject workflow guidance, so the agent adopts a role rather than just getting a tool list | [Toolsets and personas](docs/toolsets-and-personas.md#personas) |
-| **Device policy engine** | Gate every call on live device posture — MDM enrolment, Entra join, Secure Boot, BitLocker, VBS/HVCI, TPM attestation. Rules match by tool, toolset or annotation, so a screenshot is not gated like a shell command | [Policy configuration](docs/policy-config.md) |
-| **Egress allowlist** | Declare the domains the device may reach. A loopback proxy enforces it, optionally backed by firewall rules so named applications — or the whole machine — cannot go around it | [Egress setup](docs/egress.md) |
 | **Credentials** | The agent signs in to apps and sites without ever being told the secret. The `Credentials` tool has no read mode and no engine method returns plaintext — but see the note below on toolset exposure | [Credentials](docs/credentials.md) |
 | **Session recording** | Once `transparency.recording_dir` is set, the whole session goes to one video file — automatically, under every persona — with timeline markers | [Session recording](docs/recording.md) |
-| **Transparency** | Hash-chained audit log, heartbeat, rug-pull detection, on-screen security banner. The agent cannot switch any of it off | [Monitoring](docs/monitoring.md) |
 | **Kill switch** | Out-of-band, tiered containment. A trip always audits, raises the banner and seals the log; the optional rungs — isolate, kill processes, lock, shut down — run in a fixed order, with the recording finalized before shutdown and the session aborted last | [Security architecture](docs/security-architecture.md) |
 | **MCP conformance** | Protocol revision `2026-07-28`, measured by the official suite in CI | [MCP compliance](docs/mcp-compliance.md) |
 
@@ -255,6 +266,22 @@ Conditional Access and **code signing**. The authoritative remote signals
 (Microsoft Graph, an external may-run endpoint) register only when their
 credentials are present — see [Remote signals](docs/remote-signals.md).
 
+### Threat model
+
+What each actor can do, what constrains them, and what is left over. The honest
+column is the last one: several controls raise cost and produce evidence rather
+than prevent, and this is the register a risk function should read it in. The
+[security architecture](docs/security-architecture.md#threat-model-mapping) maps
+these to mechanisms.
+
+| Actor | Capability | Control | Residual risk |
+|---|---|---|---|
+| **Prompt-injected agent** — the model, driven by hostile content | Issue any tool call the served surface allows | Policy engine gates every call on device posture; rate limits break exfil loops; the egress allowlist bounds network reach; the audit chain records every call with argument digests | Benign-annotated calls can still **compose** into a harmful outcome within the served surface. Plan-and-apply (roadmap) closes this by evaluating the whole plan; today, scope the surface with personas and gate destructive annotations |
+| **Malicious MCP client** — the host process on the other end of stdio | Swap the tool manifest after approval; probe methods | Manifest fingerprinted at startup; `tools/list` and discover intercepted; rug-pull monitor trips the kill switch on drift; `list_changed` suppressed | The stdio transport assumes a trusted host: a client that never drifts is trusted by construction. There is no network listener to attack |
+| **Local user** — non-admin, same session | Read what the agent reads; use the running server | Credentials never returned to the model; the `FileSystem` tool refuses the credentials file, the audit log and the policy document; `GuardrailStatus`/`Kill` cannot be removed | A user already holds their own privileges; the server does not raise them. The `Registry` tool is in the default `system` toolset and reads arbitrary keys — gate it with `tool: Registry` if that surface is unwanted |
+| **Local administrator** | Spoof device signals; edit the audit log; disable transparency | Local signals are defense-in-depth, not a boundary; the audit chain is tamper-evident, and keying + off-box anchoring raise the bar; pair with WDAC/AppLocker and Conditional Access | An admin can defeat any on-box control — the value is **evidence that survives**, not prevention. The audit HMAC key sits on the box unless anchored off it; path protection matches by cleaned path, not 8.3 names or hard links |
+| **Network attacker** | Reach the server; intercept egress | No inbound listener — the transport is stdio only; the egress proxy checks the allowlist before any DNS query and re-checks resolved addresses against loopback/RFC1918/link-local before dialling | Enforce HTTPS and the egress proxy do not intercept navigation **inside an already-open browser**; the `proxy-only` enforcement tier is advisory until backed by firewall rules |
+
 ---
 
 ## Egress: the domains the device may reach
@@ -432,3 +459,13 @@ and test only on Windows. See [CONTRIBUTING.md](CONTRIBUTING.md) and
 
 **[docs/](docs/README.md)** — setup and configuration guides, plus the security
 architecture and conformance report.
+
+---
+
+## Credits
+
+The tool surface began as a Go port of the Python
+[Windows-MCP](https://github.com/CursorTouch/Windows-MCP) project. It is built on
+the [`go-bindings-win32`](https://github.com/deploymenttheory/go-bindings-win32)
+and [`go-bindings-wmi`](https://github.com/deploymenttheory/go-bindings-wmi) SDKs
+and the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk).

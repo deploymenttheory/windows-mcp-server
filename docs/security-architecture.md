@@ -426,6 +426,11 @@ defence against a compromised host.
 
 ## Threat model mapping
 
+This table maps each threat to the mechanism that addresses it. For the same
+ground organised by **actor** — what a prompt-injected agent, a malicious client,
+a local user, a local admin or a network attacker can do, and the residual risk
+each leaves — see the [threat model in the README](../README.md#threat-model).
+
 | Threat | Mechanism |
 |---|---|
 | **Dynamic rug pull** — approved server mutates its tool set post-deploy | Manifest fingerprint pinned at startup + `tools/list` interception + monitor recheck; silent `list_changed` suppressed → audited always, and banner + isolate + abort when armed |

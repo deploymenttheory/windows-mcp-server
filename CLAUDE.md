@@ -375,8 +375,10 @@ Two traps to preserve:
   `urlSchemeIfURL` exists to spot that, and requires an explicit `://` so a bare
   `example.com` or a file path is not mistaken for a URL.
 
-When adding another URL entry point, gate it through `enforceHTTPSScheme` and add
-it to the coverage table in the README's Enforce HTTPS section.
+When adding another URL entry point, gate it through `enforceHTTPSScheme` and
+update the "Data exposure over plaintext HTTP" row of the threat-model table in
+`docs/security-architecture.md`, which is where the Enforce HTTPS coverage is
+recorded.
 
 ### Testing tool handlers: a nil engine is not a safety net
 
