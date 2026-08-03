@@ -121,11 +121,22 @@ Every decision, action and security event becomes an append-only entry that
 commits to the previous entry's hash. Sink and destination:
 
 ```jsonc
-"transparency": { "audit_sink": "stderr" }              // JSONL on stderr, prefixed AUDIT
-"transparency": { "audit_sink": "C:\\ProgramData\\windows-mcp\\audit.jsonl" }
+"transparency": { "audit_sink": "stderr" }               // JSONL on stderr, prefixed AUDIT
+"transparency": { "audit_sink": "C:\\ProgramData\\windows-mcp\\audit.jsonl" }  // one appended file
+"transparency": { "audit_sink": "C:\\ProgramData\\windows-mcp\\audit\\" }      // directory: one file per session
 ```
 
 `stderr` is the default. stdout is never used — it belongs to the MCP transport.
+
+A value naming a **directory** (an existing directory, or any path ending in a
+separator) switches on per-session mode: each run writes its own
+`session-<stamp>.audit.jsonl`, and a shared, hash-chained `audit-manifest.jsonl`
+links the session heads. This is the recommended form for a long-lived install.
+Because each run writes its own file, a restart no longer restarts the sequence
+inside a shared file — the old single-file behaviour appended two runs into one
+JSONL, so the second run's `seq` reset to 0 and looked like a break. The `<stamp>`
+matches the recording's, so `session-<stamp>.audit.jsonl` and
+`session-<stamp>.mp4` name the same session.
 
 ### Entry shape
 
@@ -146,7 +157,7 @@ so the log is safe to ship to a SIEM without leaking what was typed or read.
 
 | Event | When |
 |---|---|
-| `server.start` | Startup, carrying the server version |
+| `server.start` | Startup, carrying the server version and the session stamp |
 | `devicePolicy.startup` | The startup admission decision |
 | `devicePolicy.startup.deny` | Startup refused; the server exits |
 | `tools.baseline`, `prompts.baseline`, `resources.baseline`, `discover.baseline` | Rug-pull fingerprints pinned |
@@ -168,40 +179,31 @@ policy *could* have contained happened, and the policy chose not to.
 
 ### Verifying a chain
 
-There is no CLI verb for this yet — `VerifyChain` is a Go API, and because it
-lives under `internal/`, the checker has to live **inside this repository**. Drop
-this in as `cmd/verify-audit/main.go` and `go run ./cmd/verify-audit <file>`:
+Use the built-in verb. Given a single session file it verifies that one chain;
+given a directory (the directory-mode sink) it verifies the manifest chain, every
+session file, and that each sealed session's head matches its manifest record:
 
-```go
-package main
-
-import (
-	"bufio"; "encoding/json"; "fmt"; "os"
-
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
-)
-
-func main() {
-	f, _ := os.Open(os.Args[1])
-	defer f.Close()
-	var entries []audit.AuditEntry
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		var e audit.AuditEntry
-		if err := json.Unmarshal(s.Bytes(), &e); err == nil {
-			entries = append(entries, e)
-		}
-	}
-	if err := audit.VerifyChain(entries); err != nil {
-		fmt.Println("chain broken:", err)
-		os.Exit(1)
-	}
-	fmt.Printf("%d entries verified\n", len(entries))
-}
+```powershell
+windows-mcp-server audit verify C:\ProgramData\windows-mcp\audit\
+windows-mcp-server audit verify C:\ProgramData\windows-mcp\audit\session-20260803-120000.audit.jsonl
 ```
 
-When the sink is `stderr`, strip the `AUDIT ` prefix first — the rest of each
-line is the JSON object.
+It exits non-zero and reports every problem it found — a `seq` gap, a `prev_hash`
+that does not chain, an edited payload, a session on disk that the manifest never
+recorded, or a sealed session whose head no longer matches. When the sink is
+`stderr` there is nothing to verify against later; strip the `AUDIT ` prefix from
+each line if you want to feed captured stderr into the same check.
+
+**What the manifest does and does not guarantee.** The manifest makes a *restart*
+unable to silently drop history: every run writes an open record before its first
+entry, so a session that crashed or was killed still leaves a chained trace where
+its seal should be. What it cannot do on its own is defend against an on-box
+adversary who deletes the most recent session's trailing seal — that is
+indistinguishable from a session still running or just killed. Closing that gap
+needs the chain head anchored off the box; see the keyed-chain and anchoring
+options once configured. Until then, treat the audit chain as tamper-*evident*
+against accident and process death, not tamper-*proof* against a local admin —
+the same posture the [trust model](../README.md#trust-model--read-this) states.
 
 ### Rotation and retention
 

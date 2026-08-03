@@ -131,13 +131,18 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	cfg.EnforceHTTPS = devicePolicy.EnforceHTTPS
 
 	// --- Hash-chained audit log (built early so startup is recorded) ---
-	sink, err := audit.NewSink(devicePolicy.Transparency.AuditSink)
+	// One session stamp, minted here and shared with the recorder, so that in
+	// directory-sink mode the audit file (session-<stamp>.audit.jsonl) and the
+	// recording (session-<stamp>.mp4) correlate by name — the correlation an
+	// evidence bundle later relies on.
+	sessionStamp := time.Now().Format("20060102-150405")
+	sink, err := audit.OpenSink(devicePolicy.Transparency.AuditSink, sessionStamp)
 	if err != nil {
 		return fmt.Errorf("audit log: %w", err)
 	}
 	audit := audit.NewAuditLog(sink)
 	defer func() { _ = audit.Close() }()
-	_, _ = audit.Append("server.start", map[string]any{"version": cfg.Version})
+	_, _ = audit.Append("server.start", map[string]any{"version": cfg.Version, "session": sessionStamp})
 
 	// contextcheck reports the recorder's ffmpeg child here because it does not
 	// inherit this context. That is deliberate: the encoder must survive the
@@ -157,6 +162,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			Dir:   devicePolicy.Transparency.RecordingDir,
 			FPS:   cfg.RecordFPS,
 			Codec: cfg.RecordCodec,
+			Stamp: sessionStamp,
 		},
 	})
 	if err != nil {
