@@ -23,6 +23,7 @@ import (
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/evidence"
+	"github.com/deploymenttheory/windows-mcp-server/internal/journeys"
 	"github.com/deploymenttheory/windows-mcp-server/internal/mcpconf"
 	"github.com/deploymenttheory/windows-mcp-server/internal/winmcp"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
@@ -53,6 +54,7 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(policyCmd())
 	root.AddCommand(auditCmd())
 	root.AddCommand(evidenceCmd())
+	root.AddCommand(journeyCmd())
 	root.AddCommand(personasCmd())
 	root.AddCommand(conformanceReportCmd())
 	// Adds `conformance-serve` only under the `conformance` build tag. The
@@ -277,6 +279,106 @@ func evidenceKeygenCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&outDir, "out", ".", "Directory to write evidence.key and evidence.pub into.")
+	return cmd
+}
+
+// journeyCmd groups the journeys-as-code operations: validate a journey document
+// offline, or run one against the live desktop as a test.
+func journeyCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "journey",
+		Short: "Validate and run declarative UI journeys",
+		Long: "A journey is a named sequence of UI actions with assertions and evidence, authored as " +
+			"JSON. It compiles to a plan and runs through the same policy-evaluated, audited, " +
+			"fail-stopped executor as Apply — so a UI regression test is expressed as code and run " +
+			"deterministically.",
+	}
+	cmd.AddCommand(journeyValidateCmd(), journeyRunCmd())
+	return cmd
+}
+
+// journeyValidateCmd parses, validates and compiles a journey without touching the
+// desktop, so a file can be checked in CI on any machine.
+func journeyValidateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "validate <journey.json>",
+		Short: "Check a journey document parses, validates, and compiles to a plan",
+		Long: "validate reads a journey, rejects unknown fields and malformed assertions, and compiles " +
+			"it to a plan — proving the file is runnable — without starting a desktop engine. Exits 1 " +
+			"on any problem, so it belongs in CI next to the journey files.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			raw, err := os.ReadFile(args[0])
+			if err != nil {
+				return fmt.Errorf("read journey %s: %w", args[0], err)
+			}
+			j, err := journeys.Parse(raw)
+			if err != nil {
+				return err
+			}
+			if err := j.Validate(); err != nil {
+				return err
+			}
+			doc, err := journeys.Compile(j, "")
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "ok: %q — %d step(s) compile to %d plan step(s) (plan %s)\n",
+				j.Name, len(j.Steps), len(doc.Steps), doc.PlanID[:16]+"…")
+			return nil
+		},
+	}
+	return cmd
+}
+
+// journeyRunCmd runs a journey against the live desktop and reports pass/fail.
+func journeyRunCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "run <journey.json>",
+		Short: "Run a journey against the live desktop and report pass/fail",
+		Long: "run compiles the journey to a plan and executes it against the real UI through the " +
+			"policy-evaluated, audited, fail-stopped executor. A failed assertion stops the run. Exits " +
+			"1 if the journey does not pass, so CI can gate on it. Requires an interactive desktop.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			v := viperFor(cmd)
+			cfg := winmcp.Config{
+				Version:      version,
+				PolicyConfig: v.GetString("policy-config"),
+				LogFile:      v.GetString("log-file"),
+			}
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			rep, err := winmcp.RunJourney(ctx, cfg, args[0])
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if asJSON {
+				enc := json.NewEncoder(out)
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(rep); err != nil {
+					return fmt.Errorf("render report: %w", err)
+				}
+			} else {
+				verdict := "PASS"
+				if !rep.Passed {
+					verdict = "FAIL"
+				}
+				fmt.Fprintf(out, "%s  %s — %d completed, %d failed, %d skipped\n%s\n",
+					verdict, rep.Name, rep.Completed, rep.Failed, rep.Skipped, rep.Report)
+			}
+			if !rep.Passed {
+				os.Exit(1)
+			}
+			return nil
+		},
+	}
+	addPolicyConfigFlag(cmd.Flags())
+	cmd.Flags().String("log-file", "", "Write debug logs to this file (default: info logs to stderr).")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Emit the report as JSON, for CI.")
 	return cmd
 }
 

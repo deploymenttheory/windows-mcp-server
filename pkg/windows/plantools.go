@@ -37,6 +37,12 @@ type PlanProposal struct {
 type PlanApplication struct {
 	PlanID string
 	Report string
+	// Completed, Failed and Skipped count the steps by outcome. They let a caller —
+	// the journey runner — decide pass/fail without parsing Report. A plan passes
+	// cleanly when Failed and Skipped are both zero.
+	Completed int
+	Failed    int
+	Skipped   int
 }
 
 // PlannerProvider is the optional capability a ToolDependencies exposes when

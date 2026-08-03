@@ -64,6 +64,16 @@ jobs:
         shell: bash
         run: go run ./cmd/windows-mcp-server policy test policy/examples/tests/*.json
 
+      # The shipped journeys are validated (parse + compile to a plan) through the
+      # real CLI, so a broken example or a schema change is caught here. `run` needs
+      # an interactive desktop and is not exercised in CI.
+      - name: Journey examples validate
+        shell: bash
+        run: |
+          for j in journeys/examples/*.json; do
+            go run ./cmd/windows-mcp-server journey validate "$j"
+          done
+
       # The `(amd64 || arm64)` build tag is asserted everywhere and verified
       # nowhere; cross-compiling catches arm64-only breakage before release.
       - name: Build (arm64 cross-compile)
