@@ -136,6 +136,7 @@ var (
 	ErrInvalidAnchor      = errors.New("invalid anchor policy")
 	ErrInvalidCredentials = errors.New("invalid credentials policy")
 	ErrInvalidRequirePlan = errors.New("invalid require_plan selector")
+	ErrInvalidTelemetry   = errors.New("invalid telemetry policy")
 	// ErrNotLoopback covers every address this server is willing to bind. Both
 	// listeners it can stand up are loopback-only by design.
 	ErrNotLoopback = errors.New("address is not loopback")
@@ -245,6 +246,21 @@ type Policy struct {
 	// plan-and-apply: detective by default (a direct call is recorded), preventive
 	// where an operator names the tools that must go through review.
 	RequirePlan []Match `json:"require_plan,omitempty"`
+	// Telemetry exports activity to an OpenTelemetry collector. Empty endpoint (the
+	// default) disables it — nothing is exported and no exporter is constructed.
+	Telemetry TelemetryPolicy `json:"telemetry,omitempty"`
+}
+
+// TelemetryPolicy configures OTLP export. Off unless Endpoint is set.
+type TelemetryPolicy struct {
+	// Endpoint is the OTLP/HTTP collector: "host:4318" (plaintext) or a URL like
+	// "https://collector:4318". Auth headers come from WINDOWS_MCP_OTLP_HEADERS,
+	// not this document, because they are secrets.
+	Endpoint string `json:"endpoint,omitempty"`
+	// Protocol is "http" (the only one implemented); empty means http.
+	Protocol string `json:"protocol,omitempty"`
+	// SampleRatio is the trace sampling ratio in [0,1]; zero means sample all.
+	SampleRatio float64 `json:"sample_ratio,omitempty"`
 }
 
 // CredentialsPolicy governs how far installed credentials may be exposed to the
@@ -677,6 +693,17 @@ func (p *Policy) Validate(known []string) error {
 		}
 		if len(m.Tool) == 0 && len(m.Toolset) == 0 && len(m.Annotation) == 0 {
 			add("%v: require_plan[%d] selects nothing (name a tool, toolset or annotation)", ErrInvalidRequirePlan, i)
+		}
+	}
+
+	// Telemetry is off unless an endpoint is named; a named endpoint must use a
+	// protocol we implement and a sample ratio in range.
+	if p.Telemetry.Endpoint != "" {
+		if pr := strings.ToLower(p.Telemetry.Protocol); pr != "" && pr != "http" {
+			add("%v: telemetry.protocol %q is not supported (only \"http\")", ErrInvalidTelemetry, p.Telemetry.Protocol)
+		}
+		if p.Telemetry.SampleRatio < 0 || p.Telemetry.SampleRatio > 1 {
+			add("%v: telemetry.sample_ratio %v is out of range [0,1]", ErrInvalidTelemetry, p.Telemetry.SampleRatio)
 		}
 	}
 

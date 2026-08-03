@@ -260,6 +260,35 @@ the previous file if you need to prove the join.
 
 ---
 
+## Fleet telemetry (OTLP)
+
+The audit log answers "what did *this* session do." For the same questions across
+an estate — which policies are denying what, where journeys fail — the server can
+export to an OpenTelemetry collector. It is **off by default**: with no endpoint,
+no exporter is constructed and nothing is sent.
+
+```jsonc
+"telemetry": {
+  "endpoint": "otel-collector.internal:4318",  // OTLP/HTTP; or a full https:// URL
+  "sample_ratio": 1.0
+}
+```
+
+What it emits:
+
+- **A span per request** — `tools/call`, `resources/read`, `prompts/get` — with the
+  method, the tool name, the duration, and error status. As on the audit chain,
+  **arguments are never exported**, only the fact of the call.
+- **`policy_decisions_total`** — a counter of every verdict, tagged with `severity`
+  and `mode`, recorded at the enforcement point.
+
+Authentication headers come from **`WINDOWS_MCP_OTLP_HEADERS`** (`"k1=v1,k2=v2"`) in
+the environment, never the policy document — they are secrets. A collector that is
+down never blocks the server: export is buffered and best-effort, and a failure to
+start the exporter disables telemetry with a warning rather than refusing to run.
+
+---
+
 ## Related
 
 - [Policy configuration](policy-config.md) — the `transparency` block

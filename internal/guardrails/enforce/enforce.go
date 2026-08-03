@@ -28,8 +28,12 @@ type EnforcerDeps struct {
 	// policy's trigger settings, so a trigger the operator left off is
 	// report-only rather than absent — detection is never conditional on
 	// containment.
-	Kill   func(reason string)
-	Logger *slog.Logger
+	Kill func(reason string)
+	// RecordDecision, if set, is called for every verdict with the subject, the
+	// effective severity and the mode — the telemetry hook. Optional: nil when no
+	// collector is configured.
+	RecordDecision func(subject, severity, mode string)
+	Logger         *slog.Logger
 }
 
 // Methods the engine decides on. Everything else passes through untouched:
@@ -118,6 +122,9 @@ func record(deps EnforcerDeps, logger *slog.Logger, v policy.Verdict) {
 	}
 	if deps.Audit != nil {
 		_, _ = deps.Audit.Append("policy.decision", fields)
+	}
+	if deps.RecordDecision != nil {
+		deps.RecordDecision(v.Subject, v.Severity.String(), string(v.Mode))
 	}
 
 	switch {

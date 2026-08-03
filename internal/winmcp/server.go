@@ -26,6 +26,7 @@ import (
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/status"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/telemetry"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/watch"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
@@ -409,9 +410,40 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	heartbeat := watch.NewHeartbeat(audit)
 	rugpull := watch.NewRugPull(tripRugpull, audit)
 
+	// OTLP export, off unless a collector endpoint is configured. It is
+	// observability, not a control, so a construction failure warns and disables it
+	// rather than gating startup. Auth headers come from the environment, never the
+	// policy document.
+	var (
+		recordDecision      func(subject, severity, mode string)
+		telemetryMiddleware mcp.Middleware
+	)
+	if devicePolicy.Telemetry.Endpoint != "" {
+		tele, terr := telemetry.New(ctx, telemetry.Config{
+			Endpoint:    devicePolicy.Telemetry.Endpoint,
+			SampleRatio: devicePolicy.Telemetry.SampleRatio,
+			Headers:     telemetry.ParseHeaders(os.Getenv("WINDOWS_MCP_OTLP_HEADERS")),
+			ServiceName: "windows-mcp-server",
+			Version:     cfg.Version,
+		})
+		if terr != nil {
+			logger.Warn("telemetry disabled: could not start the OTLP exporter", "error", terr)
+		} else {
+			defer tele.Shutdown(context.WithoutCancel(ctx))
+			telemetryMiddleware = tele.Middleware()
+			recordDecision = tele.RecordDecision
+			logger.Info("telemetry enabled", "endpoint", devicePolicy.Telemetry.Endpoint)
+		}
+	}
+
 	// Receiving middleware (outermost first). newMCPSurface already installed
-	// inject-deps and cache hints; these nest inside them.
+	// inject-deps and cache hints; these nest inside them. Telemetry sits between
+	// audit and rug-pull: audit must see every request first, and a span should
+	// cover the rug-pull and policy work that follows.
 	server.AddReceivingMiddleware(audit.Middleware())
+	if telemetryMiddleware != nil {
+		server.AddReceivingMiddleware(telemetryMiddleware)
+	}
 	server.AddReceivingMiddleware(rugpull.Middleware())
 	server.AddReceivingMiddleware(rugpull.PromptMiddleware())
 	server.AddReceivingMiddleware(rugpull.ResourceMiddleware())
@@ -420,9 +452,10 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// The policy engine, innermost so nothing can route around it and so the audit
 	// and rug-pull layers still observe the requests it refuses.
 	server.AddReceivingMiddleware(enforce.Middleware(engine, enforce.EnforcerDeps{
-		Audit:  audit,
-		Kill:   tripPolicy,
-		Logger: logger,
+		Audit:          audit,
+		Kill:           tripPolicy,
+		RecordDecision: recordDecision,
+		Logger:         logger,
 	}))
 
 	// RegisterAll rather than RegisterTools: resources and prompts are part of the
