@@ -373,6 +373,12 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	kill := contain.NewKillSwitch(executor.OnTrip)
 	defer func() { _ = executor.Restore() }() // undo firewall isolation on exit
 
+	// Plan-and-apply. Wired after the kill switch so an apply can abandon its
+	// remaining steps when containment trips; deps is a pointer the surface's
+	// middleware already captured, so setting the planner now reaches the handlers.
+	deps.WithPlanner(newPlanner(engine, audit, inventoryRegistry{inv: inv, deps: deps},
+		func() bool { tripped, _ := kill.Tripped(); return tripped }))
+
 	// Kill triggers come from the policy's kill.triggers block. A trigger left off
 	// is report-only: still detected and audited, but it contains nothing and the
 	// server keeps serving. Transparency is never conditional on containment.

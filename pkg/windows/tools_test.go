@@ -52,7 +52,7 @@ func TestAllToolsValid(t *testing.T) {
 
 // TestExpectedToolCount guards against accidental tool loss/addition.
 func TestExpectedToolCount(t *testing.T) {
-	const want = 28
+	const want = 30
 	if got := len(AllTools()); got != want {
 		t.Errorf("tool count = %d, want %d (update this test intentionally)", got, want)
 	}
@@ -101,6 +101,7 @@ func TestReadOnlyToolsAreSafe(t *testing.T) {
 		"Snapshot": true, "Screenshot": true, "DisplayInventory": true,
 		"Wait": true, "WaitFor": true, "Scrape": true, "GetText": true,
 		"Assert": true, "CaptureEvidence": true, "SystemInfo": true,
+		"Plan": true,
 	}
 	for _, st := range AllTools() {
 		if readOnly[st.Tool.Name] && !st.IsReadOnly() {
@@ -113,7 +114,7 @@ func TestReadOnlyToolsAreSafe(t *testing.T) {
 func TestDestructiveToolsAreWrite(t *testing.T) {
 	for _, st := range AllTools() {
 		switch st.Tool.Name {
-		case "PowerShell", "Registry", "FileSystem", "Process", "Credentials":
+		case "PowerShell", "Registry", "FileSystem", "Process", "Credentials", "Apply":
 			if st.IsReadOnly() {
 				t.Errorf("%s must not be read-only", st.Tool.Name)
 			}

@@ -60,6 +60,10 @@ func AllTools() []inventory.ServerTool {
 		// testing toolset (QA)
 		Assert(),
 		CaptureEvidence(),
+
+		// planning toolset (propose a plan, apply it)
+		Plan(),
+		Apply(),
 	}
 }
 

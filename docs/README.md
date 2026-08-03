@@ -21,6 +21,7 @@ what you are trying to do.
 | [Policy configuration](policy-config.md) | The device-policy document: full schema reference, signals, rules, verdicts, rate limits, kill switch |
 | [Egress setup](egress.md) | Restricting which domains the device may reach — proxy, scoped firewall rules, machine-wide default-deny, and how to verify each tier |
 | [Credentials](credentials.md) | Letting the agent sign in without ever seeing a secret |
+| [Plan and apply](plan-and-apply.md) | Proposing a whole sequence of tool calls, adjudicated up front and executed verbatim — the opt-in `planning` toolset |
 | [Session recording](recording.md) | Recording sessions for audit and playback; codecs, ffmpeg, markers, retention |
 | [Remote signals](remote-signals.md) | Microsoft Graph compliance and an external may-run endpoint — the signals a local admin cannot spoof |
 | [Monitoring](monitoring.md) | The loopback status endpoint and the hash-chained audit log |
