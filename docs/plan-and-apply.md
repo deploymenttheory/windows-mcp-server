@@ -77,12 +77,28 @@ the per-call middleware to run steps directly, a step produces a `plan.step` and
 made outside a plan** distinguishable after the fact: it is a `tool.call` with no
 owning `plan.step`.
 
-Today plan-and-apply is **detective**: direct out-of-plan calls are allowed but
-recorded, so you can prove whether the agent honoured a plan. A **preventive**
-mode — a policy setting that refuses a direct call to a named or destructive tool
-unless it is inside an approved apply — is on the [roadmap](../roadmap.md). The
-full approved plan document is captured into the signed evidence bundle, which is
-the artifact a reviewer opens to compare intent against what ran.
+Plan-and-apply has two strictness tiers, chosen per tool by policy:
+
+- **Detective** (the default): direct out-of-plan calls are allowed but recorded,
+  so you can prove after the fact whether the agent honoured a plan. Use this to
+  watch how the model actually behaves before deciding what to clamp down.
+- **Preventive**: a `require_plan` policy selector names the tools that may only
+  run inside an approved plan. A **direct** call to a matching tool is refused
+  (`plan.required`) and the model is told to submit it via Plan; the same tool
+  runs normally as a *step* of a plan, because plan steps are executed by the
+  planner and never pass through the enforcement gate.
+
+```jsonc
+"require_plan": [
+  { "annotation": "destructive" },   // anything destructive must be planned
+  { "toolset": "shell" }             // and all shell use
+]
+```
+
+The selector uses the same `tool` / `toolset` / `annotation` match a rule does.
+The planning tools themselves are always exempt — you cannot require a plan to
+make a plan. The full approved plan document is captured into the signed evidence
+bundle, which is the artifact a reviewer opens to compare intent against what ran.
 
 ## What Apply guarantees
 

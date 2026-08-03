@@ -135,6 +135,7 @@ var (
 	ErrInvalidEgress      = errors.New("invalid egress policy")
 	ErrInvalidAnchor      = errors.New("invalid anchor policy")
 	ErrInvalidCredentials = errors.New("invalid credentials policy")
+	ErrInvalidRequirePlan = errors.New("invalid require_plan selector")
 	// ErrNotLoopback covers every address this server is willing to bind. Both
 	// listeners it can stand up are loopback-only by design.
 	ErrNotLoopback = errors.New("address is not loopback")
@@ -237,6 +238,13 @@ type Policy struct {
 	// of the tool surface. Absent, the safe default applies (refuse the risky
 	// exposures).
 	Credentials CredentialsPolicy `json:"credentials,omitempty"`
+	// RequirePlan lists selectors for tools that may only run inside an approved
+	// plan. A direct call to a matching tool is refused; the same tool runs
+	// normally as a step of a plan, because plan steps are executed by the planner
+	// and do not pass through the enforcement gate. This is the preventive tier of
+	// plan-and-apply: detective by default (a direct call is recorded), preventive
+	// where an operator names the tools that must go through review.
+	RequirePlan []Match `json:"require_plan,omitempty"`
 }
 
 // CredentialsPolicy governs how far installed credentials may be exposed to the
@@ -640,6 +648,17 @@ func (p *Policy) Validate(known []string) error {
 		if ts != "shell" && ts != "filesystem" {
 			add("%v: credentials.acknowledge_toolset_exposure %q is not a toolset that exposes "+
 				"credentials (want \"shell\" or \"filesystem\")", ErrInvalidCredentials, ts)
+		}
+	}
+
+	// Each require_plan selector must be call-scoped and actually select something,
+	// or it is a control that gates nothing.
+	for i, m := range p.RequirePlan {
+		if m.Scope != "" && strings.ToLower(m.Scope) != ScopeCall {
+			add("%v: require_plan[%d] must be call-scoped", ErrInvalidRequirePlan, i)
+		}
+		if len(m.Tool) == 0 && len(m.Toolset) == 0 && len(m.Annotation) == 0 {
+			add("%v: require_plan[%d] selects nothing (name a tool, toolset or annotation)", ErrInvalidRequirePlan, i)
 		}
 	}
 

@@ -58,6 +58,18 @@ func Middleware(engine *policy.Engine, deps EnforcerDeps) mcp.Middleware {
 				return next(ctx, method, req)
 			}
 
+			// A tool gated by require_plan may only run inside an approved plan. Plan
+			// steps are executed by the planner and never reach this middleware, so a
+			// matching call here is by definition a direct call — refuse it before it
+			// runs, and record that the plan requirement fired.
+			if method == methodCallTool && engine.RequiresPlan(subj) {
+				if deps.Audit != nil {
+					_, _ = deps.Audit.Append("plan.required", map[string]any{"subject": subj.String()})
+				}
+				logger.Warn("plan.required", "subject", subj.String())
+				return refusePlanRequired(subj)
+			}
+
 			v := engine.Evaluate(ctx, subj)
 			record(deps, logger, v)
 
@@ -141,6 +153,18 @@ func refuse(method string, v policy.Verdict) (mcp.Result, error) {
 	// 2026-07-28 reserves -32020..-32099 for the specification, so a
 	// server-policy refusal has no business minting a code in that range.
 	return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidRequest, Message: msg}
+}
+
+// refusePlanRequired denies a direct call to a plan-gated tool. It is a tools/call
+// refusal only — require_plan selects tools — so it always takes the IsError
+// shape, letting the model read the reason and re-submit the call through a plan.
+func refusePlanRequired(subj policy.Subject) (mcp.Result, error) {
+	msg := "policy requires this tool to run inside an approved plan (" + subj.String() +
+		"): submit it with Plan, then Apply the returned plan_id"
+	return &mcp.CallToolResult{
+		IsError: true,
+		Content: []mcp.Content{&mcp.TextContent{Text: msg}},
+	}, nil
 }
 
 // attachWarning surfaces an amber verdict to the caller.

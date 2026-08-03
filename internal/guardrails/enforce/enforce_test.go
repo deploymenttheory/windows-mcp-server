@@ -8,6 +8,7 @@ import (
 
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -83,6 +84,46 @@ func TestDenyOnToolCallIsAnIsErrorResult(t *testing.T) {
 	text := ctr.Content[0].(*mcp.TextContent).Text
 	if !strings.Contains(text, "bitlocker") {
 		t.Errorf("the refusal must name the failing signal, got %q", text)
+	}
+}
+
+// TestRequirePlanRefusesDirectCall pins the preventive tier: a direct call to a
+// plan-gated tool is refused (an IsError result, since it is tools/call) and
+// audited plan.required, while an ungated tool passes. A plan step never reaches
+// this middleware, so gating here does not touch execution via Apply.
+func TestRequirePlanRefusesDirectCall(t *testing.T) {
+	const gated = `{
+	  "version": 1, "mode": "enforce", "signals": {},
+	  "require_plan": [ { "annotation": "destructive" } ]
+	}`
+	h := newEnforceHarness(t, gated, map[string]signals.Status{})
+
+	// PowerShell is destructive → gated → refused before the handler.
+	res, err := h.call("tools/call", &mcp.CallToolParamsRaw{Name: "PowerShell"})
+	if err != nil {
+		t.Fatalf("a plan-required refusal must not be a Go error: %v", err)
+	}
+	ctr, ok := res.(*mcp.CallToolResult)
+	if !ok || !ctr.IsError {
+		t.Fatalf("a gated direct call should be an IsError result, got %T %+v", res, res)
+	}
+	if text := ctr.Content[0].(*mcp.TextContent).Text; !strings.Contains(text, "approved plan") {
+		t.Errorf("the refusal should tell the model to use a plan, got %q", text)
+	}
+	if h.reached.Load() != 0 {
+		t.Error("a gated call must not reach the handler")
+	}
+	if !slices.Contains(h.events(), "plan.required") {
+		t.Errorf("a gated call should be audited plan.required, got %v", h.events())
+	}
+
+	// Snapshot is read-only → not gated → passes through to the handler.
+	res2, _ := h.call("tools/call", &mcp.CallToolParamsRaw{Name: "Snapshot"})
+	if ctr2, ok := res2.(*mcp.CallToolResult); !ok || ctr2.IsError {
+		t.Errorf("an ungated tool should pass, got %T %+v", res2, res2)
+	}
+	if h.reached.Load() != 1 {
+		t.Error("the ungated call should reach the handler")
 	}
 }
 
