@@ -40,6 +40,7 @@ func AllTools() []inventory.ServerTool {
 		Process(),
 		Registry(),
 		Notification(),
+		ScheduledTask(),
 
 		// shell toolset
 		PowerShell(),

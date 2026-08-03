@@ -30,8 +30,34 @@ func DeriveTargets(s Step) (targets []Target, undeclarable bool) {
 		return []Target{{Kind: KindShell, Name: "PowerShell command", Verb: VerbExecute}}, true
 	case "Network":
 		return networkTargets(s.Args, mode), false
+	case "ScheduledTask":
+		return scheduledTaskTargets(s.Args, mode), false
 	default:
 		return nil, false
+	}
+}
+
+// scheduledTaskTargets derives the reach of a ScheduledTask step: a task named by
+// the step, at a verb matching the mode. list has no single named task, so it
+// derives nothing.
+func scheduledTaskTargets(args map[string]any, mode string) []Target {
+	name := strArg(args, "name")
+	if name == "" {
+		return nil
+	}
+	switch mode {
+	case "create":
+		return []Target{{KindTask, name, VerbCreate}}
+	case "delete":
+		return []Target{{KindTask, name, VerbDelete}}
+	case "run":
+		return []Target{{KindTask, name, VerbExecute}}
+	case "enable", "disable":
+		return []Target{{KindTask, name, VerbWrite}}
+	case "get":
+		return []Target{{KindTask, name, VerbRead}}
+	default: // list
+		return nil
 	}
 }
 
