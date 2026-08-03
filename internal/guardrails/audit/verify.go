@@ -92,13 +92,20 @@ func readManifest(dir string) ([]ManifestRecord, error) {
 }
 
 // VerifyFile verifies a single session (or legacy single-file) audit chain rooted
-// at seq 0, returning the entries it read.
-func VerifyFile(path string) ([]AuditEntry, error) {
+// at seq 0, returning the entries it read. When key is non-nil it also checks that
+// every entry carries a valid HMAC under key.
+func VerifyFile(path string, key []byte) ([]AuditEntry, error) {
 	entries, err := readEntries(path)
 	if err != nil {
 		return nil, err
 	}
-	return entries, VerifyChain(entries)
+	if err := VerifyChain(entries); err != nil {
+		return entries, err
+	}
+	if key != nil {
+		return entries, VerifyMAC(entries, key)
+	}
+	return entries, nil
 }
 
 // VerifyDir verifies a directory of per-session audit files: the manifest chain,
@@ -110,8 +117,9 @@ func VerifyFile(path string) ([]AuditEntry, error) {
 // been killed, and the record's presence is the point.
 //
 // The returned error is for I/O failures only; integrity failures are collected
-// in DirReport.Problems so a report names every issue at once.
-func VerifyDir(dir string) (DirReport, error) {
+// in DirReport.Problems so a report names every issue at once. When key is
+// non-nil, each session file's entries are also MAC-verified under key.
+func VerifyDir(dir string, key []byte) (DirReport, error) {
 	rep := DirReport{Dir: dir}
 
 	records, err := readManifest(dir)
@@ -152,6 +160,9 @@ func VerifyDir(dir string) (DirReport, error) {
 		}
 		sr.Entries = len(entries)
 		sr.Err = VerifyChain(entries)
+		if sr.Err == nil && key != nil {
+			sr.Err = VerifyMAC(entries, key)
+		}
 		if sr.Err != nil {
 			rep.Problems = append(rep.Problems, fmt.Sprintf("%s: %v", base, sr.Err))
 		}

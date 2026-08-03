@@ -32,7 +32,7 @@ func TestDirModeVerifiesAcrossRestarts(t *testing.T) {
 	runSession(t, dir, "20260803-120000", 3)
 	runSession(t, dir, "20260803-120100", 4)
 
-	rep, err := VerifyDir(dir)
+	rep, err := VerifyDir(dir, nil)
 	if err != nil {
 		t.Fatalf("VerifyDir: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestDirModeSessionFilesEachRootAtZero(t *testing.T) {
 		t.Fatalf("want 2 session files, got %d", len(files))
 	}
 	for _, f := range files {
-		entries, err := VerifyFile(f)
+		entries, err := VerifyFile(f, nil)
 		if err != nil {
 			t.Errorf("%s: %v", filepath.Base(f), err)
 		}
@@ -94,7 +94,7 @@ func TestDirModeDetectsManifestTamper(t *testing.T) {
 	b, _ := json.Marshal(rec)
 	edit[len(edit)-1] = string(b)
 	writeLines(t, manifestPath, edit)
-	if rep, _ := VerifyDir(dir); rep.OK() {
+	if rep, _ := VerifyDir(dir, nil); rep.OK() {
 		t.Error("edited manifest head should be caught")
 	}
 
@@ -103,7 +103,7 @@ func TestDirModeDetectsManifestTamper(t *testing.T) {
 	// indistinguishable from a still-open or killed session, which VerifyDir
 	// tolerates by design — off-box anchoring, not the manifest, closes that gap.)
 	writeLines(t, manifestPath, append(append([]string(nil), lines[0]), lines[2:]...))
-	if rep, _ := VerifyDir(dir); rep.OK() {
+	if rep, _ := VerifyDir(dir, nil); rep.OK() {
 		t.Error("deleted middle manifest record should be caught")
 	}
 
@@ -111,7 +111,7 @@ func TestDirModeDetectsManifestTamper(t *testing.T) {
 	rev := append([]string(nil), lines...)
 	rev[0], rev[1] = rev[1], rev[0]
 	writeLines(t, manifestPath, rev)
-	if rep, _ := VerifyDir(dir); rep.OK() {
+	if rep, _ := VerifyDir(dir, nil); rep.OK() {
 		t.Error("reordered manifest records should be caught")
 	}
 }
@@ -133,7 +133,7 @@ func TestDirModeDetectsRewrittenSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rep, err := VerifyDir(dir)
+	rep, err := VerifyDir(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestDirModeDetectsDroppedSession(t *testing.T) {
 	if err := os.Remove(files[0]); err != nil {
 		t.Fatal(err)
 	}
-	rep, _ := VerifyDir(dir)
+	rep, _ := VerifyDir(dir, nil)
 	if rep.OK() {
 		t.Error("a session named in the manifest but missing from disk must be caught")
 	}
@@ -200,7 +200,7 @@ func TestNewSinkFileAndStderrModesUnchanged(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ManifestName)); !os.IsNotExist(err) {
 		t.Error("file mode must not create a manifest")
 	}
-	if entries, err := VerifyFile(path); err != nil || len(entries) != 1 {
+	if entries, err := VerifyFile(path, nil); err != nil || len(entries) != 1 {
 		t.Errorf("file mode chain: entries=%d err=%v", len(entries), err)
 	}
 

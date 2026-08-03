@@ -116,13 +116,16 @@ func auditCmd() *cobra.Command {
 
 // auditVerifyCmd verifies a session file or a directory of them.
 func auditVerifyCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "verify <file|dir>",
 		Short: "Verify a session audit file, or a directory of them linked by a manifest",
 		Long: "verify checks a hash chain end to end. Given a single session-*.audit.jsonl file it " +
 			"verifies that one chain. Given a directory (the audit_sink target in directory mode) it " +
 			"verifies the manifest chain, each session file, and that every sealed session's head " +
 			"matches its manifest record — so a dropped or rewritten session is caught.\n\n" +
+			"With --key-env naming an environment variable that holds the same key the server ran " +
+			"with (WINDOWS_MCP_AUDIT_KEY), it also checks every entry's HMAC, proving the chain was " +
+			"written by a key holder and not just internally consistent.\n\n" +
 			"Exits 1 on any integrity problem, reporting all of them.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -133,8 +136,17 @@ func auditVerifyCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 
+			var key []byte
+			if env, _ := cmd.Flags().GetString("key-env"); env != "" {
+				v := os.Getenv(env)
+				if v == "" {
+					return fmt.Errorf("audit verify: %s is empty; nothing to verify the MAC against", env)
+				}
+				key = []byte(v)
+			}
+
 			if info.IsDir() {
-				rep, err := audit.VerifyDir(path)
+				rep, err := audit.VerifyDir(path, key)
 				if err != nil {
 					return fmt.Errorf("audit verify: %w", err)
 				}
@@ -145,7 +157,7 @@ func auditVerifyCmd() *cobra.Command {
 				return nil
 			}
 
-			entries, err := audit.VerifyFile(path)
+			entries, err := audit.VerifyFile(path, key)
 			if err != nil {
 				fmt.Fprintf(out, "BROKEN  %s: %v\n", path, err)
 				os.Exit(1)
@@ -154,6 +166,9 @@ func auditVerifyCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().String("key-env", "", "Name of an environment variable holding the audit HMAC key; "+
+		"when set, entry MACs are verified in addition to the hash chain.")
+	return cmd
 }
 
 // policyValidateCmd checks a document without touching the device, so it runs in

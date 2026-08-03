@@ -210,6 +210,49 @@ func TestStatusEndpointMustBeLoopbackAndAuthenticated(t *testing.T) {
 	}
 }
 
+// TestAnchorValidation pins that a named anchor destination must be one the build
+// implements and must carry a cadence, so a control that would silently do nothing
+// is rejected rather than accepted.
+func TestAnchorValidation(t *testing.T) {
+	doc := func(transparency string) *Policy {
+		t.Helper()
+		raw := `{"version":1,"mode":"audit","signals":{"run-context":{"ttl":"0s"}},
+		  "rules":[{"name":"baseline","match":{"toolset":"*"},"require":["run-context"],"on_fail":"warn"}],
+		  "transparency":` + transparency + `}`
+		p, err := Parse([]byte(raw))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return p
+	}
+
+	for _, tc := range []struct{ name, transparency, want string }{
+		{"unknown destination", `{"anchor":{"destination":"syslog","cadence":"60s"}}`, "not a known destination"},
+		{"missing cadence", `{"anchor":{"destination":"eventlog"}}`, "positive cadence"},
+		{"zero cadence", `{"anchor":{"destination":"eventlog","cadence":"0s"}}`, "positive cadence"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := doc(tc.transparency).Validate(knownSignals)
+			if err == nil {
+				t.Fatalf("%s should be rejected", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error should explain %q, got: %v", tc.want, err)
+			}
+		})
+	}
+
+	// Off (no destination) and a well-formed anchor must both validate.
+	for _, transparency := range []string{
+		`{}`,
+		`{"anchor":{"destination":"eventlog","cadence":"5m"}}`,
+	} {
+		if err := doc(transparency).Validate(knownSignals); err != nil {
+			t.Errorf("%s should validate: %v", transparency, err)
+		}
+	}
+}
+
 // TestEgressValidationReportsEveryProblemAtOnce matches the rest of the package:
 // an operator fixing a document one error per run gives up before it is right.
 func TestEgressValidationReportsEveryProblemAtOnce(t *testing.T) {
