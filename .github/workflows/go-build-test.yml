@@ -57,6 +57,13 @@ jobs:
       - name: Test
         run: go test ./... -count=1 -v
 
+      # The shipped policy fixtures are executable: run them through the real CLI
+      # so a rule change that drops a requirement fails here. bash so the glob
+      # expands (pwsh would pass it literally).
+      - name: Policy fixtures
+        shell: bash
+        run: go run ./cmd/windows-mcp-server policy test policy/examples/tests/*.json
+
       # The `(amd64 || arm64)` build tag is asserted everywhere and verified
       # nowhere; cross-compiling catches arm64-only breakage before release.
       - name: Build (arm64 cross-compile)

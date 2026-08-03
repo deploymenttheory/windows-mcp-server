@@ -84,20 +84,86 @@ func addGuardrailFlags(f *pflag.FlagSet) {
 		"Validate one with `policy validate`; see which rules cover a tool with `policy explain`.")
 }
 
-// policyCmd groups the three questions an operator asks about device policy:
-// is this document valid, what does this device look like right now, and why was
-// that call refused.
+// policyCmd groups the questions an operator asks about device policy: is this
+// document valid, what does this device look like right now, why was that call
+// refused, and does this policy still decide fixtures the way I expect.
 func policyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "policy",
-		Short: "Inspect the device policy: validate a document, check this device, explain a tool",
+		Short: "Inspect the device policy: validate a document, check this device, explain a tool, test fixtures",
 		Long: "The policy engine decides every tool call against live device signals. These " +
-			"subcommands answer the three questions that come up around it, without starting a server.\n\n" +
-			"With no --policy-config they operate on the built-in default: the engine present, every " +
-			"declared signal evaluated and every verdict recorded, nothing refused.",
+			"subcommands answer the questions that come up around it, without starting a server.\n\n" +
+			"With no --policy-config the first three operate on the built-in default: the engine " +
+			"present, every declared signal evaluated and every verdict recorded, nothing refused. " +
+			"`test` takes its policy from each fixture instead.",
 	}
-	cmd.AddCommand(policyValidateCmd(), policyCheckCmd(), policyExplainCmd())
+	cmd.AddCommand(policyValidateCmd(), policyCheckCmd(), policyExplainCmd(), policyTestCmd())
 	return cmd
+}
+
+// policyTestCmd runs fixture files: a policy, a fixture device state, and tool
+// calls with asserted verdicts. It turns a policy into something CI can exercise.
+func policyTestCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "test <fixture.json>...",
+		Short: "Run policy fixtures, asserting verdicts against fixture device states",
+		Long: "test evaluates one or more fixture files — each a policy, a fixture device state, and " +
+			"a list of tool calls with asserted verdicts — and reports whether the policy decides them " +
+			"as written.\n\n" +
+			"It reads no live device state, so it runs anywhere, including CI. Exits 1 if any case " +
+			"fails, so a rule change that drops a requirement fails a test here rather than a call in " +
+			"the field.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reports, err := winmcp.TestPolicy(winmcp.Config{Version: version}, args)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if asJSON {
+				enc := json.NewEncoder(out)
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(reports); err != nil {
+					return fmt.Errorf("render report: %w", err)
+				}
+			} else {
+				printPolicyTestReports(out, reports)
+			}
+			if !allPolicyTestsPassed(reports) {
+				os.Exit(1)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Emit the results as JSON, for CI.")
+	return cmd
+}
+
+func printPolicyTestReports(out io.Writer, reports []winmcp.PolicyTestReport) {
+	total, failed := 0, 0
+	for _, r := range reports {
+		fmt.Fprintln(out, r.Fixture)
+		for _, c := range r.Cases {
+			total++
+			if c.OK {
+				fmt.Fprintf(out, "  ok    %s\n", c.Name)
+				continue
+			}
+			failed++
+			fmt.Fprintf(out, "  FAIL  %s: %s\n", c.Name, c.Detail)
+		}
+	}
+	fmt.Fprintf(out, "\n%d case(s), %d failed\n", total, failed)
+}
+
+func allPolicyTestsPassed(reports []winmcp.PolicyTestReport) bool {
+	for _, r := range reports {
+		if !r.Passed() {
+			return false
+		}
+	}
+	return true
 }
 
 // auditCmd groups operations on the tamper-evident audit chain. Today there is

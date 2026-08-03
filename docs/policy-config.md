@@ -260,6 +260,7 @@ WINDOWS_MCP_GRAPH_CLIENT_SECRET, WINDOWS_MCP_REMOTE_POLICY_TOKEN
 windows-mcp-server policy validate --policy-config policy.json   # document + signal ids
 windows-mcp-server policy check    --policy-config policy.json   # this device, right now
 windows-mcp-server policy explain  --policy-config policy.json --tool PowerShell
+windows-mcp-server policy test     fixtures/*.json               # asserted verdicts, no device
 ```
 
 `validate` reads no device state, so it runs in CI on a machine with no TPM and
@@ -275,6 +276,37 @@ error: policy policy.json: invalid policy:
 `check` reads every declared signal live, cache bypassed, and exits 2 when the
 device is not admitted — so CI and health probes can gate on posture. It is
 deliberately slow; that is what a diagnostic is for.
+
+### Testing a policy
+
+`policy test` turns a policy into something CI can exercise. A fixture is a
+policy, a made-up device state, and a list of tool calls with the verdict each
+should get:
+
+```jsonc
+{
+  "policy": "../enterprise.json",          // relative to this fixture file; omit for the built-in default
+  "device": { "mdm-enrolled": "fail" },    // signal -> pass | fail | error; unlisted signals default to pass
+  "cases": [
+    {
+      "name": "an unmanaged device is denied PowerShell",
+      "call": { "tool": "PowerShell", "toolset": "shell", "annotations": { "destructive": true } },
+      "expect": {
+        "severity": "deny",                // required: the verdict after the policy's mode is applied
+        "failed_signals": ["mdm-enrolled"], // optional: the exact set that failed
+        "rules": ["managed-device"]         // optional: rules that must have matched
+      }
+    }
+  ]
+}
+```
+
+It reads no live device state, so it runs anywhere and exits 1 on any mismatch —
+a rule change that drops a requirement fails a test here rather than a call in the
+field. Because `severity` is the verdict *after* the mode is applied, a fixture
+against an `audit`-mode policy asserts the capped verdict (never above `warn`),
+which is the truth of what that policy does; assert `deny`/`kill` against an
+`enforce`-mode policy. See `policy/examples/tests/` for worked fixtures.
 
 ## Credentials exposure
 
