@@ -75,5 +75,8 @@
   "inflight": {
     "interval": "60s"
   },
-  "enforce_https": true
+  "enforce_https": true,
+  "credentials": {
+    "acknowledge_toolset_exposure": ["shell"]
+  }
 }

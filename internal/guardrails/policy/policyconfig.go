@@ -132,8 +132,9 @@ var (
 	ErrUndeclaredSignal = errors.New("rule requires a signal that is not declared")
 	ErrEmptyMatch       = errors.New("rule matches nothing")
 	ErrInvalidRateLimit = errors.New("invalid rate limit")
-	ErrInvalidEgress    = errors.New("invalid egress policy")
-	ErrInvalidAnchor    = errors.New("invalid anchor policy")
+	ErrInvalidEgress      = errors.New("invalid egress policy")
+	ErrInvalidAnchor      = errors.New("invalid anchor policy")
+	ErrInvalidCredentials = errors.New("invalid credentials policy")
 	// ErrNotLoopback covers every address this server is willing to bind. Both
 	// listeners it can stand up are loopback-only by design.
 	ErrNotLoopback = errors.New("address is not loopback")
@@ -232,6 +233,24 @@ type Policy struct {
 	// Egress declares the domains the device may reach, served by a loopback
 	// proxy. Absent or disabled, the device's networking is untouched.
 	Egress EgressPolicy `json:"egress,omitempty"`
+	// Credentials governs how far installed credentials may be exposed to the rest
+	// of the tool surface. Absent, the safe default applies (refuse the risky
+	// exposures).
+	Credentials CredentialsPolicy `json:"credentials,omitempty"`
+}
+
+// CredentialsPolicy governs how far installed credentials may be exposed to the
+// tool surface.
+type CredentialsPolicy struct {
+	// AcknowledgeToolsetExposure lists risky toolsets the operator accepts serving
+	// alongside a --credentials-file. Installed generic credentials live in the
+	// calling user's Credential Manager, so a toolset that can read that back —
+	// "shell" (CredRead via PowerShell) or "filesystem" (a Credential Manager
+	// backup is a file) — defeats the never-read guarantee. Naming one here lets a
+	// server start with the exposure, recorded in the audit chain; leaving it out
+	// makes that exposure refuse at startup. The only accepted values are
+	// "shell" and "filesystem".
+	AcknowledgeToolsetExposure StringSet `json:"acknowledge_toolset_exposure,omitempty"`
 }
 
 // SignalConfig is how one device signal is read.
@@ -610,6 +629,17 @@ func (p *Policy) Validate(known []string) error {
 		if p.Transparency.Anchor.Cadence.Std() <= 0 {
 			add("%v: transparency.anchor.destination is set without a positive cadence",
 				ErrInvalidAnchor)
+		}
+	}
+
+	// Only "shell" and "filesystem" expose installed credentials, so only those may
+	// be acknowledged. The canonical toolset list lives in pkg/windows; these two
+	// IDs are stable and duplicated here rather than importing the tool layer into
+	// the platform-agnostic policy engine.
+	for _, ts := range p.Credentials.AcknowledgeToolsetExposure {
+		if ts != "shell" && ts != "filesystem" {
+			add("%v: credentials.acknowledge_toolset_exposure %q is not a toolset that exposes "+
+				"credentials (want \"shell\" or \"filesystem\")", ErrInvalidCredentials, ts)
 		}
 	}
 

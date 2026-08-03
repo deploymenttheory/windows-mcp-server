@@ -58,7 +58,7 @@ a machine you care about.
 | **Personas** | Presets that select toolsets *and* inject workflow guidance, so the agent adopts a role rather than just getting a tool list | [Toolsets and personas](docs/toolsets-and-personas.md#personas) |
 | **Device policy engine** | Gate every call on live device posture — MDM enrolment, Entra join, Secure Boot, BitLocker, VBS/HVCI, TPM attestation. Rules match by tool, toolset or annotation, so a screenshot is not gated like a shell command | [Policy configuration](docs/policy-config.md) |
 | **Egress allowlist** | Declare the domains the device may reach. A loopback proxy enforces it, optionally backed by firewall rules so named applications — or the whole machine — cannot go around it | [Egress setup](docs/egress.md) |
-| **Credentials** | The agent signs in to apps and sites without ever being told the secret. The `Credentials` tool has no read mode and no engine method returns plaintext — but see the note below on toolset composition | [Credentials](docs/credentials.md) |
+| **Credentials** | The agent signs in to apps and sites without ever being told the secret. The `Credentials` tool has no read mode and no engine method returns plaintext — but see the note below on toolset exposure | [Credentials](docs/credentials.md) |
 | **Session recording** | Once `transparency.recording_dir` is set, the whole session goes to one video file — automatically, under every persona — with timeline markers | [Session recording](docs/recording.md) |
 | **Transparency** | Hash-chained audit log, heartbeat, rug-pull detection, on-screen security banner. The agent cannot switch any of it off | [Monitoring](docs/monitoring.md) |
 | **Kill switch** | Out-of-band, tiered containment. A trip always audits, raises the banner and seals the log; the optional rungs — isolate, kill processes, lock, shut down — run in a fixed order, with the recording finalized before shutdown and the session aborted last | [Security architecture](docs/security-architecture.md) |
@@ -66,13 +66,15 @@ a machine you care about.
 
 > **On the credentials claim:** the guarantee holds at the tool boundary — the
 > `Credentials` tool cannot read a secret back and no engine method returns one.
-> It does *not* yet hold across toolset composition: installed generic
-> credentials live in the calling user's Credential Manager, so a persona that
-> also carries `shell` (which can `CredRead`) or `filesystem` (which can read a
-> Credential Manager backup) can retrieve them by another route. Treat
-> `--credentials-file` as safe only alongside a toolset selection that excludes
-> both — see the [trust model](#trust-model--read-this). A startup refusal for
-> this composition is in progress.
+> Another toolset could once route around it: installed generic credentials
+> live in the calling user's Credential Manager, so a persona that also carries
+> `shell` (which can `CredRead`) or `filesystem` (which can read a Credential
+> Manager backup) could retrieve them another way. The server now **refuses to
+> start** when `--credentials-file` is combined with either toolset, unless the
+> policy document acknowledges the exposure
+> (`credentials.acknowledge_toolset_exposure`), and audits the decision — so the
+> exposure is a deliberate, recorded choice rather than a silent hole. See the
+> [trust model](#trust-model--read-this).
 
 ---
 

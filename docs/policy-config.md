@@ -112,6 +112,10 @@ the point of audit mode, and why it does not simply skip evaluation.
 
   "enforce_https": true,           // refuse plaintext http:// targets
 
+  "credentials": {                 // governs how --credentials-file composes with the tool surface
+    "acknowledge_toolset_exposure": []  // accept serving credentials next to "shell"/"filesystem"
+  },
+
   "egress": {                      // device egress proxy; omit or disable to leave networking untouched
     "enabled": true,
     "allow": ["*.contoso.com", "login.microsoftonline.com"],
@@ -253,6 +257,32 @@ error: policy policy.json: invalid policy:
 `check` reads every declared signal live, cache bypassed, and exits 2 when the
 device is not admitted — so CI and health probes can gate on posture. It is
 deliberately slow; that is what a diagnostic is for.
+
+## Credentials exposure
+
+`--credentials-file` installs secrets into the calling user's Windows Credential
+Manager for the agent to *use* — the `Credentials` tool injects them as keystrokes
+and never reads them back. But a credential in the Credential Manager can be read
+by anything running as that user, so two toolsets defeat the guarantee from the
+side: `shell` (PowerShell can `CredRead`) and `filesystem` (a Credential Manager
+backup is just a file).
+
+So the server **refuses to start** when `--credentials-file` is combined with
+either toolset — whether selected directly, via `--toolsets`, or by a persona
+(`first-line-support` carries `shell`; `qa-test-engineer` carries `filesystem`).
+This matches the firewall tiers' stance: refuse rather than serve a weaker posture
+than the document describes. The refusal is a configuration error, printed and
+audited (`credentials.exposure.denied`) before anything is installed.
+
+To accept the exposure deliberately, acknowledge it in the policy:
+
+```jsonc
+"credentials": { "acknowledge_toolset_exposure": ["shell"] }
+```
+
+Startup then proceeds, logs a warning, and records
+`credentials.exposure.acknowledged` — so the residual risk is a recorded choice
+rather than a silent hole. Only `"shell"` and `"filesystem"` are accepted values.
 
 ## Egress: the domains the device may reach
 
