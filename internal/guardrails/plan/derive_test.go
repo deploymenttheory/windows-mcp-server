@@ -68,6 +68,21 @@ func TestDeriveTargets(t *testing.T) {
 			nil, false,
 		},
 		{
+			"scheduled task create names the task",
+			Step{Tool: "ScheduledTask", Args: map[string]any{"mode": "create", "name": "Nightly"}},
+			[]Target{{KindTask, "Nightly", VerbCreate}}, false,
+		},
+		{
+			"scheduled task delete is a delete",
+			Step{Tool: "ScheduledTask", Args: map[string]any{"mode": "delete", "name": "Nightly"}},
+			[]Target{{KindTask, "Nightly", VerbDelete}}, false,
+		},
+		{
+			"scheduled task list derives nothing",
+			Step{Tool: "ScheduledTask", Args: map[string]any{"mode": "list"}},
+			nil, false,
+		},
+		{
 			"an unknown tool derives nothing",
 			Step{Tool: "Snapshot"},
 			nil, false,
