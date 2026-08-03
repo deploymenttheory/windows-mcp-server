@@ -16,7 +16,7 @@ These are the findings that pull the current score down. All three sit in the gu
 
 ### 0.1 Audit chain does not resume across restarts (bug)
 
-**Problem.** `audit.NewAuditLog` starts at `seq = 0` with an empty `prevHash`. `NewSink` opens the target with `O_CREATE|O_WRONLY|O_APPEND` and never reads existing content. Two sessions pointed at the same file produce a single JSONL where the second session restarts the sequence, and `VerifyChain` fails at the first entry of session two with a sequence gap.
+**Problem.** `audit.NewAuditLog` starts at `seq = 0` with an empty `prevHash`. `NewDestination` opens the target with `O_CREATE|O_WRONLY|O_APPEND` and never reads existing content. Two sessions pointed at the same file produce a single JSONL where the second session restarts the sequence, and `VerifyChain` fails at the first entry of session two with a sequence gap.
 
 **Options.**
 - Seed `seq` and `prevHash` from the tail of the existing file on open, or

@@ -110,7 +110,7 @@ the model sees and what your monitoring sees cannot drift apart.
 | `killed: true` | Containment has run. `kill_reason` says why |
 | `admit: false` | The device stopped meeting policy mid-session |
 | `tool_manifest_hash` changing | Rug pull, or a legitimate restart with different toolsets |
-| `audit_seq` not advancing while calls happen | The audit sink is failing |
+| `audit_seq` not advancing while calls happen | The audit destination is failing |
 | `server.egress.enforcement` unexpectedly `proxy-only` | Enforcement was requested but the tier in force is advisory |
 
 ---
@@ -118,12 +118,12 @@ the model sees and what your monitoring sees cannot drift apart.
 ## The audit log
 
 Every decision, action and security event becomes an append-only entry that
-commits to the previous entry's hash. Sink and destination:
+commits to the previous entry's hash. Destination:
 
 ```jsonc
-"transparency": { "audit_sink": "stderr" }               // JSONL on stderr, prefixed AUDIT
-"transparency": { "audit_sink": "C:\\ProgramData\\windows-mcp\\audit.jsonl" }  // one appended file
-"transparency": { "audit_sink": "C:\\ProgramData\\windows-mcp\\audit\\" }      // directory: one file per session
+"transparency": { "audit_destination": "stderr" }               // JSONL on stderr, prefixed AUDIT
+"transparency": { "audit_destination": "C:\\ProgramData\\windows-mcp\\audit.jsonl" }  // one appended file
+"transparency": { "audit_destination": "C:\\ProgramData\\windows-mcp\\audit\\" }      // directory: one file per session
 ```
 
 `stderr` is the default. stdout is never used — it belongs to the MCP transport.
@@ -221,7 +221,7 @@ policy *could* have contained happened, and the policy chose not to.
 ### Verifying a chain
 
 Use the built-in verb. Given a single session file it verifies that one chain;
-given a directory (the directory-mode sink) it verifies the manifest chain, every
+given a directory (the directory-mode destination) it verifies the manifest chain, every
 session file, and that each sealed session's head matches its manifest record:
 
 ```powershell
@@ -231,7 +231,7 @@ windows-mcp-server audit verify C:\ProgramData\windows-mcp\audit\session-2026080
 
 It exits non-zero and reports every problem it found — a `seq` gap, a `prev_hash`
 that does not chain, an edited payload, a session on disk that the manifest never
-recorded, or a sealed session whose head no longer matches. When the sink is
+recorded, or a sealed session whose head no longer matches. When the destination is
 `stderr` there is nothing to verify against later; strip the `AUDIT ` prefix from
 each line if you want to feed captured stderr into the same check.
 

@@ -44,20 +44,20 @@ type AuditEntry struct {
 	Mac string `json:"mac,omitempty"`
 }
 
-// Sink persists audit entries. Flush must durably commit (fsync) so the chain
+// Destination persists audit entries. Flush must durably commit (fsync) so the chain
 // survives an abrupt shutdown triggered by the kill switch.
-type Sink interface {
+type Destination interface {
 	Write(AuditEntry) error
 	Flush() error
 	Close() error
 }
 
-// NewSink resolves an audit_sink target to a Sink without a session id. Prefer
-// OpenSink from a server that has a session id to name a per-session file after;
-// this exists for callers that only ever use stderr or a single-file sink.
-func NewSink(target string) (Sink, error) { return OpenSink(target, "") }
+// NewDestination resolves an audit_sink target to a Destination without a session id. Prefer
+// OpenDestination from a server that has a session id to name a per-session file after;
+// this exists for callers that only ever use stderr or a single-file destination.
+func NewDestination(target string) (Destination, error) { return OpenDestination(target, "") }
 
-// OpenSink resolves an audit_sink target plus a session id into a Sink. The id is
+// OpenDestination resolves an audit_sink target plus a session id into a Destination. The id is
 // a timestamp stamp such as "20260803-120000", shared with the recorder so the
 // audit file and the recording correlate by name.
 //
@@ -72,18 +72,18 @@ func NewSink(target string) (Sink, error) { return OpenSink(target, "") }
 //     still leaves a chained trace, so a restart cannot silently drop history.
 //   - any other value: a single append-only JSONL file, fsync-ed on Flush — the
 //     legacy behaviour, preserved so existing configurations keep working.
-func OpenSink(target, sessionID string) (Sink, error) {
+func OpenDestination(target, sessionID string) (Destination, error) {
 	switch {
 	case target == "" || target == "stderr":
-		return &stderrSink{}, nil
+		return &stderrDestination{}, nil
 	case isDirTarget(target):
-		return newSessionSink(target, sessionID)
+		return newSessionDestination(target, sessionID)
 	default:
 		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
-			return nil, fmt.Errorf("audit sink %q: %w", target, err)
+			return nil, fmt.Errorf("audit destination %q: %w", target, err)
 		}
-		return &jsonlSink{f: f}, nil
+		return &jsonlDestination{f: f}, nil
 	}
 }
 
@@ -98,9 +98,9 @@ func isDirTarget(target string) bool {
 	return err == nil && info.IsDir()
 }
 
-type stderrSink struct{ mu sync.Mutex }
+type stderrDestination struct{ mu sync.Mutex }
 
-func (s *stderrSink) Write(e AuditEntry) error {
+func (s *stderrDestination) Write(e AuditEntry) error {
 	b, err := json.Marshal(e)
 	if err != nil {
 		return err
@@ -110,15 +110,15 @@ func (s *stderrSink) Write(e AuditEntry) error {
 	_, err = fmt.Fprintln(os.Stderr, "AUDIT "+string(b))
 	return err
 }
-func (s *stderrSink) Flush() error { return nil }
-func (s *stderrSink) Close() error { return nil }
+func (s *stderrDestination) Flush() error { return nil }
+func (s *stderrDestination) Close() error { return nil }
 
-type jsonlSink struct {
+type jsonlDestination struct {
 	mu sync.Mutex
 	f  *os.File
 }
 
-func (s *jsonlSink) Write(e AuditEntry) error {
+func (s *jsonlDestination) Write(e AuditEntry) error {
 	b, err := json.Marshal(e)
 	if err != nil {
 		return err
@@ -128,14 +128,29 @@ func (s *jsonlSink) Write(e AuditEntry) error {
 	_, err = s.f.Write(append(b, '\n'))
 	return err
 }
-func (s *jsonlSink) Flush() error { s.mu.Lock(); defer s.mu.Unlock(); return s.f.Sync() }
-func (s *jsonlSink) Close() error { s.mu.Lock(); defer s.mu.Unlock(); return s.f.Close() }
+func (s *jsonlDestination) Flush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.f.Sync(); err != nil {
+		return fmt.Errorf("audit destination: sync: %w", err)
+	}
+	return nil
+}
+
+func (s *jsonlDestination) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.f.Close(); err != nil {
+		return fmt.Errorf("audit destination: close: %w", err)
+	}
+	return nil
+}
 
 // AuditLog is an append-only, hash-chained log. It is safe for concurrent use
 // and is one of the always-on transparency services the agent cannot disable.
 type AuditLog struct {
 	mu       sync.Mutex
-	sink     Sink
+	dest     Destination
 	seq      uint64
 	prevHash string
 	clock    func() time.Time
@@ -156,10 +171,10 @@ func WithHMACKey(key []byte) Option {
 	}
 }
 
-// NewAuditLog builds a log over the given sink. With no options it is unkeyed,
+// NewAuditLog builds a log over the given destination. With no options it is unkeyed,
 // which is the default posture; pass WithHMACKey to bind each entry with an HMAC.
-func NewAuditLog(sink Sink, opts ...Option) *AuditLog {
-	a := &AuditLog{sink: sink, clock: time.Now}
+func NewAuditLog(dest Destination, opts ...Option) *AuditLog {
+	a := &AuditLog{dest: dest, clock: time.Now}
 	for _, o := range opts {
 		o(a)
 	}
@@ -168,7 +183,7 @@ func NewAuditLog(sink Sink, opts ...Option) *AuditLog {
 
 // Append writes one entry linking to the prior entry's hash. payload is
 // JSON-marshaled (falling back to its %v form if it cannot be marshaled). The
-// chain advances only after the sink accepts the entry, so a write failure does
+// chain advances only after the destination accepts the entry, so a write failure does
 // not leave a gap.
 func (a *AuditLog) Append(event string, payload any) (AuditEntry, error) {
 	a.mu.Lock()
@@ -193,8 +208,8 @@ func (a *AuditLog) Append(event string, payload any) (AuditEntry, error) {
 	if a.key != nil {
 		e.Mac = macOf(a.key, e.EntryHash)
 	}
-	if a.sink != nil {
-		if err := a.sink.Write(e); err != nil {
+	if a.dest != nil {
+		if err := a.dest.Write(e); err != nil {
 			return e, err
 		}
 	}
@@ -203,25 +218,31 @@ func (a *AuditLog) Append(event string, payload any) (AuditEntry, error) {
 	return e, nil
 }
 
-// Flush durably commits the sink.
+// Flush durably commits the destination.
 func (a *AuditLog) Flush() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.sink == nil {
+	if a.dest == nil {
 		return nil
 	}
-	return a.sink.Flush()
+	if err := a.dest.Flush(); err != nil {
+		return fmt.Errorf("audit flush: %w", err)
+	}
+	return nil
 }
 
-// Close flushes and closes the sink.
+// Close flushes and closes the destination.
 func (a *AuditLog) Close() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.sink == nil {
+	if a.dest == nil {
 		return nil
 	}
-	_ = a.sink.Flush()
-	return a.sink.Close()
+	_ = a.dest.Flush()
+	if err := a.dest.Close(); err != nil {
+		return fmt.Errorf("audit close: %w", err)
+	}
+	return nil
 }
 
 // Head returns the current sequence length and the hash of the last entry (the

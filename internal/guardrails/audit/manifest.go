@@ -35,7 +35,7 @@ var (
 type ManifestRecord struct {
 	// SessionFile is the basename of the session's entry file, in this directory.
 	SessionFile string `json:"session_file"`
-	// OpenedAt is when the session sink was created (RFC3339Nano, UTC).
+	// OpenedAt is when the session destination was created (RFC3339Nano, UTC).
 	OpenedAt string `json:"opened_at"`
 	// SealedAt is when it was closed cleanly; empty on an open record.
 	SealedAt string `json:"sealed_at,omitempty"`
@@ -82,11 +82,11 @@ func VerifyManifest(records []ManifestRecord) error {
 	return nil
 }
 
-// sessionSink is the directory-mode Sink: one session-<id>.audit.jsonl for the
+// sessionDestination is the directory-mode Destination: one session-<id>.audit.jsonl for the
 // entries plus the shared, hash-chained audit-manifest.jsonl. It writes an open
 // manifest record on creation and a seal record on Close, and tracks the running
 // head so the seal record can name it without a second pass over the file.
-type sessionSink struct {
+type sessionDestination struct {
 	mu           sync.Mutex
 	entries      *os.File
 	manifest     *os.File
@@ -98,7 +98,7 @@ type sessionSink struct {
 	sealed       bool
 }
 
-func newSessionSink(dir, sessionID string) (Sink, error) {
+func newSessionDestination(dir, sessionID string) (Destination, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("audit dir %q: %w", dir, err)
 	}
@@ -124,7 +124,7 @@ func newSessionSink(dir, sessionID string) (Sink, error) {
 		return nil, err
 	}
 
-	s := &sessionSink{
+	s := &sessionDestination{
 		entries:      entries,
 		manifest:     mf,
 		sessionFile:  name,
@@ -192,8 +192,8 @@ func lastManifestHash(path string) (string, error) {
 
 // writeManifest appends one record (open when seal is false, seal when true),
 // fsyncs the manifest and advances the running manifest head. The caller holds
-// s.mu when seal is true; at open time the sink is not yet shared.
-func (s *sessionSink) writeManifest(seal bool) error {
+// s.mu when seal is true; at open time the destination is not yet shared.
+func (s *sessionDestination) writeManifest(seal bool) error {
 	r := ManifestRecord{
 		SessionFile:      s.sessionFile,
 		OpenedAt:         s.openedAt,
@@ -220,7 +220,7 @@ func (s *sessionSink) writeManifest(seal bool) error {
 	return nil
 }
 
-func (s *sessionSink) Write(e AuditEntry) error {
+func (s *sessionDestination) Write(e AuditEntry) error {
 	b, err := json.Marshal(e)
 	if err != nil {
 		return fmt.Errorf("audit entry: marshal: %w", err)
@@ -235,7 +235,7 @@ func (s *sessionSink) Write(e AuditEntry) error {
 	return nil
 }
 
-func (s *sessionSink) Flush() error {
+func (s *sessionDestination) Flush() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.entries.Sync(); err != nil {
@@ -247,7 +247,7 @@ func (s *sessionSink) Flush() error {
 // Close writes the seal manifest record, then closes both files. It is
 // idempotent: a second Close (the kill path and the normal-exit defer can both
 // fire) writes nothing more.
-func (s *sessionSink) Close() error {
+func (s *sessionDestination) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sealed {

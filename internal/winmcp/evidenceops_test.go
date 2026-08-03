@@ -21,11 +21,11 @@ func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Disca
 
 func writeSession(t *testing.T, dir, session string) {
 	t.Helper()
-	sink, err := audit.OpenSink(dir, session)
+	dest, err := audit.OpenDestination(dir, session)
 	if err != nil {
 		t.Fatal(err)
 	}
-	log := audit.NewAuditLog(sink)
+	log := audit.NewAuditLog(dest)
 	log.Append("server.start", map[string]any{"session": session})
 	log.Append("policy.decision", map[string]any{"verdict": "deny"})
 	if err := log.Close(); err != nil {
@@ -57,7 +57,7 @@ func TestAutoSealEvidenceBundlesPlansAndPosture(t *testing.T) {
 	doc, _ := plan.Document{Version: plan.SchemaVersion, Steps: []plan.Step{{Tool: "Snapshot"}}}.WithID()
 	posture := []byte(`{"admit":true,"killed":false}`)
 
-	tp := policy.TransparencyPolicy{AuditSink: auditDir, EvidenceDir: evDir}
+	tp := policy.TransparencyPolicy{AuditDestination: auditDir, EvidenceDir: evDir}
 	autoSealEvidence(tp, "20260803-120000", []plan.Document{doc}, posture, discardLogger())
 
 	bundle := filepath.Join(evDir, "session-20260803-120000.evidence.zip")
@@ -79,10 +79,10 @@ func TestAutoSealEvidenceBundlesPlansAndPosture(t *testing.T) {
 
 func TestAutoSealSkipsWhenAuditSinkNotDirectory(t *testing.T) {
 	evDir := t.TempDir()
-	tp := policy.TransparencyPolicy{AuditSink: "stderr", EvidenceDir: evDir}
+	tp := policy.TransparencyPolicy{AuditDestination: "stderr", EvidenceDir: evDir}
 	autoSealEvidence(tp, "x", nil, nil, discardLogger())
 
 	if entries, _ := os.ReadDir(evDir); len(entries) != 0 {
-		t.Error("no bundle should be written when the audit sink is not a directory")
+		t.Error("no bundle should be written when the audit dest is not a directory")
 	}
 }

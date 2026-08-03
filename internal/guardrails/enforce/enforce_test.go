@@ -17,11 +17,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// enforceHarness wires an engine, an audit sink and a kill counter around the
+// enforceHarness wires an engine, an audit dest and a kill counter around the
 // middleware, and records whether the handler was reached.
 type enforceHarness struct {
 	engine  *policy.Engine
-	sink    *memSink
+	dest    *memDest
 	kills   atomic.Int32
 	reached atomic.Int32
 	handler mcp.MethodHandler
@@ -30,13 +30,13 @@ type enforceHarness struct {
 func newEnforceHarness(t *testing.T, policyJSON string, outcomes map[string]signals.Status) *enforceHarness {
 	t.Helper()
 	e := newTestEngine(t, policyJSON, outcomes)
-	h := &enforceHarness{engine: e, sink: &memSink{}}
+	h := &enforceHarness{engine: e, dest: &memDest{}}
 	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
 		h.reached.Add(1)
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
 	}
 	h.handler = Middleware(e, EnforcerDeps{
-		Audit: audit.NewAuditLog(h.sink),
+		Audit: audit.NewAuditLog(h.dest),
 		Kill:  func(string) { h.kills.Add(1) },
 	})(next)
 	return h
@@ -48,8 +48,8 @@ func (h *enforceHarness) call(method string, params mcp.Params) (mcp.Result, err
 }
 
 func (h *enforceHarness) events() []string {
-	out := make([]string, 0, len(h.sink.entries))
-	for _, e := range h.sink.entries {
+	out := make([]string, 0, len(h.dest.entries))
+	for _, e := range h.dest.entries {
 		out = append(out, e.Event)
 	}
 	return out
@@ -239,7 +239,7 @@ func TestAuditRecordsEveryDecisionIncludingAllows(t *testing.T) {
 	if events := h.events(); len(events) != 1 || events[0] != "policy.decision" {
 		t.Errorf("an allowed call must still be audited, got %v", events)
 	}
-	if err := audit.VerifyChain(h.sink.entries); err != nil {
+	if err := audit.VerifyChain(h.dest.entries); err != nil {
 		t.Errorf("audit chain must stay verifiable: %v", err)
 	}
 }
@@ -264,7 +264,7 @@ func TestAuditModeRecordsWhatEnforcingWouldHaveDone(t *testing.T) {
 	if h.kills.Load() != 0 {
 		t.Error("audit mode must never contain")
 	}
-	payload := string(h.sink.entries[0].Payload)
+	payload := string(h.dest.entries[0].Payload)
 	if !strings.Contains(payload, `"intended":"kill"`) {
 		t.Errorf("the audit record must say what enforcing would have done: %s", payload)
 	}
@@ -286,7 +286,7 @@ func TestUndecidableMethodsPassThrough(t *testing.T) {
 	if got := h.reached.Load(); got != 4 {
 		t.Errorf("all four discovery calls should reach the handler, got %d", got)
 	}
-	if len(h.sink.entries) != 0 {
+	if len(h.dest.entries) != 0 {
 		t.Errorf("undecidable methods should not produce policy decisions, got %v", h.events())
 	}
 }

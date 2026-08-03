@@ -11,7 +11,7 @@ edited since.*
 `session-<stamp>.evidence.zip` contains:
 
 - `audit/session-<stamp>.audit.jsonl` — the session's audit chain.
-- `audit/audit-manifest.jsonl` — the cross-session manifest, when the sink is in
+- `audit/audit-manifest.jsonl` — the cross-session manifest, when the destination is in
   directory mode.
 - `verdicts.json` — the decision-shaped entries (policy decisions, plan
   proposals/steps/applies, approvals, containment, startup admission) lifted out
@@ -69,13 +69,13 @@ Bundles are sealed either way:
 
 ```jsonc
 "transparency": {
-  "audit_sink": "C:\\ProgramData\\windows-mcp\\audit\\",   // must be a directory
+  "audit_destination": "C:\\ProgramData\\windows-mcp\\audit\\",   // must be a directory
   "recording_dir": "C:\\ProgramData\\windows-mcp\\recordings",
   "evidence_dir": "C:\\ProgramData\\windows-mcp\\evidence"
 }
 ```
 
-Auto-sealing requires a **directory-mode `audit_sink`** — there is otherwise no
+Auto-sealing requires a **directory-mode `audit_destination`** — there is otherwise no
 per-session file to bundle — and it never crashes shutdown: a seal failure is
 logged and the session still exits cleanly. Point
 `WINDOWS_MCP_EVIDENCE_KEY_FILE` at a signing key to sign the automatic bundles too.

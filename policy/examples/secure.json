@@ -56,7 +56,7 @@
     }
   },
   "transparency": {
-    "audit_sink": "stderr",
+    "audit_destination": "stderr",
     "heartbeat": "30s",
     "banner": true
   },

@@ -49,19 +49,19 @@ func protectedPaths(cfg Config, p *policy.Policy) []windows.ProtectedPath {
 	if cfg.PolicyConfig != "" {
 		out = append(out, windows.NewProtectedPath(cfg.PolicyConfig, "the policy document", false, false, true))
 	}
-	if sink := p.Transparency.AuditSink; sink != "" && sink != "stderr" {
-		out = append(out, windows.NewProtectedPath(sink, "the audit log", auditSinkIsDir(sink), false, true))
+	if dest := p.Transparency.AuditDestination; dest != "" && dest != "stderr" {
+		out = append(out, windows.NewProtectedPath(dest, "the audit log", auditDestinationIsDir(dest), false, true))
 	}
 	return out
 }
 
-// auditSinkIsDir mirrors the audit package's directory detection: an explicit
-// trailing separator, or an existing directory. A directory sink protects every
+// auditDestinationIsDir mirrors the audit package's directory detection: an explicit
+// trailing separator, or an existing directory. A directory destination protects every
 // session file and the manifest under it.
-func auditSinkIsDir(sink string) bool {
-	if strings.HasSuffix(sink, "/") || strings.HasSuffix(sink, `\`) {
+func auditDestinationIsDir(dest string) bool {
+	if strings.HasSuffix(dest, "/") || strings.HasSuffix(dest, `\`) {
 		return true
 	}
-	info, err := os.Stat(sink)
+	info, err := os.Stat(dest)
 	return err == nil && info.IsDir()
 }

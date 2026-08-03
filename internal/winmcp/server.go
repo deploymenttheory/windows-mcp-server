@@ -134,7 +134,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	defer cleanup()
 
 	// The policy is loaded before anything else it configures. It names the audit
-	// sink, the heartbeat cadence, whether the session is recorded and where — so
+	// destination, the heartbeat cadence, whether the session is recorded and where — so
 	// a bad document must fail before any of that is stood up, and certainly
 	// before a desktop engine exists.
 	reg := newGuardrailRegistry(cfg, logger)
@@ -148,11 +148,11 @@ func RunStdio(ctx context.Context, cfg Config) error {
 
 	// --- Hash-chained audit log (built early so startup is recorded) ---
 	// One session stamp, minted here and shared with the recorder, so that in
-	// directory-sink mode the audit file (session-<stamp>.audit.jsonl) and the
+	// directory-destination mode the audit file (session-<stamp>.audit.jsonl) and the
 	// recording (session-<stamp>.mp4) correlate by name — the correlation an
 	// evidence bundle later relies on.
 	sessionStamp := time.Now().Format("20060102-150405")
-	sink, err := audit.OpenSink(devicePolicy.Transparency.AuditSink, sessionStamp)
+	dest, err := audit.OpenDestination(devicePolicy.Transparency.AuditDestination, sessionStamp)
 	if err != nil {
 		return fmt.Errorf("audit log: %w", err)
 	}
@@ -161,7 +161,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// unkeyed — the default — so a device that worked yesterday still starts. (The
 	// local name shadows the package; on the right-hand side it is still the
 	// package, since a := binding is not in scope until after the statement.)
-	audit := audit.NewAuditLog(sink, audit.WithHMACKey([]byte(os.Getenv("WINDOWS_MCP_AUDIT_KEY"))))
+	audit := audit.NewAuditLog(dest, audit.WithHMACKey([]byte(os.Getenv("WINDOWS_MCP_AUDIT_KEY"))))
 	// sealAtExit is populated later, once the planner exists and the closing posture
 	// is captured. It runs from inside the audit-close defer, so it fires after the
 	// chain is sealed and (defers being LIFO) after the recorder is finalized — both

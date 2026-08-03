@@ -385,8 +385,12 @@ type KillActions struct {
 
 // TransparencyPolicy configures the always-on services.
 type TransparencyPolicy struct {
-	// AuditSink is "stderr" (or empty) for JSONL on stderr, a directory for
+	// AuditDestination is "stderr" (or empty) for JSONL on stderr, a directory for
 	// per-session files plus a chained manifest, otherwise a single file path.
+	AuditDestination string `json:"audit_destination,omitempty"`
+	// AuditSink is the pre-rename name of AuditDestination, accepted as a
+	// deprecated alias so a policy written before the rename still loads. Parse
+	// folds it into AuditDestination and clears it; nothing else reads it.
 	AuditSink string   `json:"audit_sink,omitempty"`
 	Heartbeat Duration `json:"heartbeat,omitempty"`
 	// RecordingDir enables session video recording when set.
@@ -394,7 +398,7 @@ type TransparencyPolicy struct {
 	// EvidenceDir enables automatic evidence-bundle sealing at session end: a
 	// signed archive of the session's audit chain, verdicts, plan documents and
 	// recording is written here. Empty disables it (the default). Requires a
-	// directory-mode audit_sink, since there is otherwise no per-session file.
+	// directory-mode audit_destination, since there is otherwise no per-session file.
 	EvidenceDir string `json:"evidence_dir,omitempty"`
 	// Banner shows the on-screen security banner on a kill.
 	Banner bool `json:"banner"`
@@ -415,7 +419,7 @@ type TransparencyPolicy struct {
 // policy document are both readable — but *where and how often* to anchor is a
 // reviewable operational choice, so it lives here.
 type AnchorPolicy struct {
-	// Destination names the off-box sink. "eventlog" writes the head to the
+	// Destination names the off-box destination. "eventlog" writes the head to the
 	// Windows Application event log. Empty disables anchoring.
 	Destination string `json:"destination,omitempty"`
 	// Cadence is how often to anchor. Required when Destination is set.
@@ -549,6 +553,15 @@ func Parse(raw []byte) (*Policy, error) {
 	}
 	if p.Mode == "" {
 		p.Mode = ModeAuditOnly
+	}
+	// Fold the deprecated audit_sink alias into audit_destination, so a policy
+	// written before the rename still loads. Clearing it keeps the canonical form
+	// (and the marshal/parse round-trip) on the new name.
+	if p.Transparency.AuditSink != "" {
+		if p.Transparency.AuditDestination == "" {
+			p.Transparency.AuditDestination = p.Transparency.AuditSink
+		}
+		p.Transparency.AuditSink = ""
 	}
 	// Defaults are applied only to an enabled egress block, so a disabled one
 	// stays the zero value and Validate can tell "written but not in force" from

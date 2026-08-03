@@ -102,7 +102,7 @@ func autoSealEvidence(
 		}
 	}()
 
-	if !auditSinkIsDir(tp.AuditSink) {
+	if !auditDestinationIsDir(tp.AuditDestination) {
 		logger.Warn("evidence_dir is set but audit_sink is not a directory; skipping auto-seal",
 			"hint", "point audit_sink at a directory so each session has its own file to bundle")
 		return
@@ -125,7 +125,7 @@ func autoSealEvidence(
 	}
 
 	outPath := filepath.Join(tp.EvidenceDir, "session-"+session+".evidence.zip")
-	man, err := BundleEvidence(tp.AuditSink, session, tp.RecordingDir, outPath,
+	man, err := BundleEvidence(tp.AuditDestination, session, tp.RecordingDir, outPath,
 		os.Getenv("WINDOWS_MCP_EVIDENCE_KEY_FILE"), extra...)
 	if err != nil {
 		logger.Error("evidence auto-seal failed", "error", err)
