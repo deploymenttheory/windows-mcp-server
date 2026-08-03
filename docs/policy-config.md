@@ -93,12 +93,16 @@ the point of audit mode, and why it does not simply skip evaluation.
   },
 
   "transparency": {
-    "audit_sink": "stderr",        // "stderr" or a file path for append-only JSONL
+    "audit_sink": "stderr",        // "stderr", a file path, or a directory for one file per session
     "heartbeat": "30s",
     "recording_dir": "",           // non-empty records the session to video
     "banner": true,                // on-screen banner on a kill
     "status_addr": "",             // loopback status endpoint, e.g. 127.0.0.1:8177
-    "status_token": ""
+    "status_token": "",
+    "anchor": {                    // off-box publication of the audit chain head (default: off)
+      "destination": "",           // "eventlog" writes the head to the Windows Application log
+      "cadence": ""                // required when destination is set, e.g. "5m"
+    }
   },
 
   "inflight": {

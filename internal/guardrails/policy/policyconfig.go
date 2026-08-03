@@ -133,6 +133,7 @@ var (
 	ErrEmptyMatch       = errors.New("rule matches nothing")
 	ErrInvalidRateLimit = errors.New("invalid rate limit")
 	ErrInvalidEgress    = errors.New("invalid egress policy")
+	ErrInvalidAnchor    = errors.New("invalid anchor policy")
 	// ErrNotLoopback covers every address this server is willing to bind. Both
 	// listeners it can stand up are loopback-only by design.
 	ErrNotLoopback = errors.New("address is not loopback")
@@ -357,7 +358,8 @@ type KillActions struct {
 
 // TransparencyPolicy configures the always-on services.
 type TransparencyPolicy struct {
-	// AuditSink is "stderr" (or empty) for JSONL on stderr, otherwise a file path.
+	// AuditSink is "stderr" (or empty) for JSONL on stderr, a directory for
+	// per-session files plus a chained manifest, otherwise a single file path.
 	AuditSink string   `json:"audit_sink,omitempty"`
 	Heartbeat Duration `json:"heartbeat,omitempty"`
 	// RecordingDir enables session video recording when set.
@@ -367,7 +369,30 @@ type TransparencyPolicy struct {
 	// StatusAddr is a loopback address for the status endpoint; empty disables.
 	StatusAddr  string `json:"status_addr,omitempty"`
 	StatusToken string `json:"status_token,omitempty"`
+	// Anchor periodically publishes the audit chain head off the box. Empty
+	// destination disables it (the default).
+	Anchor AnchorPolicy `json:"anchor,omitempty"`
 }
+
+// AnchorPolicy configures periodic off-box anchoring of the audit chain head.
+//
+// Keying the chain (WINDOWS_MCP_AUDIT_KEY) makes it unforgeable without the key,
+// but the key sits on the same box; anchoring is what buys resistance to an
+// on-box adversary, by putting the head somewhere the session cannot reach back
+// into. The key is an environment secret, never a policy field — argv and the
+// policy document are both readable — but *where and how often* to anchor is a
+// reviewable operational choice, so it lives here.
+type AnchorPolicy struct {
+	// Destination names the off-box sink. "eventlog" writes the head to the
+	// Windows Application event log. Empty disables anchoring.
+	Destination string `json:"destination,omitempty"`
+	// Cadence is how often to anchor. Required when Destination is set.
+	Cadence Duration `json:"cadence,omitempty"`
+}
+
+// AnchorEventLog is the only anchor destination implemented today. "otlp" is
+// reserved for the telemetry exporter.
+const AnchorEventLog = "eventlog"
 
 // EgressPolicy configures the device egress proxy: a loopback CONNECT/HTTP
 // proxy that admits only the declared domains.
@@ -571,6 +596,20 @@ func (p *Policy) Validate(known []string) error {
 		} else if p.Transparency.StatusToken == "" {
 			add("transparency.status_addr is set without a status_token: any local " +
 				"process could read the device posture and trip the kill switch")
+		}
+	}
+
+	// Anchoring is off unless a destination is named; a named destination must be
+	// one we implement and must carry a cadence, or the operator has written a
+	// control that would silently do nothing.
+	if d := p.Transparency.Anchor.Destination; d != "" {
+		if d != AnchorEventLog {
+			add("%v: transparency.anchor.destination %q is not a known destination (want %q)",
+				ErrInvalidAnchor, d, AnchorEventLog)
+		}
+		if p.Transparency.Anchor.Cadence.Std() <= 0 {
+			add("%v: transparency.anchor.destination is set without a positive cadence",
+				ErrInvalidAnchor)
 		}
 	}
 

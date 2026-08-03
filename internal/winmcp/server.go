@@ -140,9 +140,20 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("audit log: %w", err)
 	}
-	audit := audit.NewAuditLog(sink)
+	// The HMAC key is an environment secret, never a flag or policy field: argv is
+	// world-readable and the policy is meant to be checked in. Absent, the chain is
+	// unkeyed — the default — so a device that worked yesterday still starts. (The
+	// local name shadows the package; on the right-hand side it is still the
+	// package, since a := binding is not in scope until after the statement.)
+	audit := audit.NewAuditLog(sink, audit.WithHMACKey([]byte(os.Getenv("WINDOWS_MCP_AUDIT_KEY"))))
 	defer func() { _ = audit.Close() }()
 	_, _ = audit.Append("server.start", map[string]any{"version": cfg.Version, "session": sessionStamp})
+
+	// Off-box anchoring of the chain head, if the policy asks for it. It is
+	// defence-in-depth beyond keying — the key lives on this box, the anchor does
+	// not — and never gates startup.
+	stopAnchor := startAnchor(ctx, devicePolicy.Transparency.Anchor, audit, logger)
+	defer stopAnchor()
 
 	// contextcheck reports the recorder's ffmpeg child here because it does not
 	// inherit this context. That is deliberate: the encoder must survive the

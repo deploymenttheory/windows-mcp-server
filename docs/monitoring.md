@@ -153,11 +153,44 @@ entry's `entry_hash`; the first entry's is empty. A gap in `seq`, or a
 Tool calls record the tool name and an **argument digest**, never raw arguments —
 so the log is safe to ship to a SIEM without leaking what was typed or read.
 
+### Keying the chain
+
+Set `WINDOWS_MCP_AUDIT_KEY` in the server's environment and every entry gains a
+`mac` field — an HMAC-SHA256 over its `entry_hash` under that key. The hash chain
+proves the log is internally consistent; the MAC proves it was written by a holder
+of the key, so an attacker who can write the file cannot forge a valid-looking
+chain without also holding the key. The key is an **environment secret, never a
+flag or a policy field**: argv is world-readable and the policy is meant to be
+reviewed and checked in. With no key set the chain is unkeyed — the default — and
+carries no `mac`. Verify a keyed chain by naming the same variable:
+
+```powershell
+windows-mcp-server audit verify --key-env WINDOWS_MCP_AUDIT_KEY C:\ProgramData\windows-mcp\audit\
+```
+
+### Anchoring the head off-box
+
+Keying still leaves the key on the same machine as the log. Anchoring puts the
+chain **head** somewhere the session cannot reach back into, so an on-box adversary
+who rewrites the log cannot also rewrite what was already published:
+
+```jsonc
+"transparency": { "anchor": { "destination": "eventlog", "cadence": "5m" } }
+```
+
+`eventlog` writes the current head (seq + hash) to the Windows Application event
+log on each cadence, and also records an `audit.anchor` entry in the chain itself.
+It only anchors when the chain advanced, so an idle server does not grow the log.
+Anchoring is defence-in-depth and never gates startup: if the event-log source
+cannot be opened (it needs elevation to register), it degrades to chain-only
+anchoring with a warning. Anchoring is **off by default**.
+
 ### Event vocabulary
 
 | Event | When |
 |---|---|
 | `server.start` | Startup, carrying the server version and the session stamp |
+| `audit.anchor` | The chain head was published off-box (when `transparency.anchor` is set) |
 | `devicePolicy.startup` | The startup admission decision |
 | `devicePolicy.startup.deny` | Startup refused; the server exits |
 | `tools.baseline`, `prompts.baseline`, `resources.baseline`, `discover.baseline` | Rug-pull fingerprints pinned |
@@ -199,11 +232,15 @@ unable to silently drop history: every run writes an open record before its firs
 entry, so a session that crashed or was killed still leaves a chained trace where
 its seal should be. What it cannot do on its own is defend against an on-box
 adversary who deletes the most recent session's trailing seal — that is
-indistinguishable from a session still running or just killed. Closing that gap
-needs the chain head anchored off the box; see the keyed-chain and anchoring
-options once configured. Until then, treat the audit chain as tamper-*evident*
-against accident and process death, not tamper-*proof* against a local admin —
-the same posture the [trust model](../README.md#trust-model--read-this) states.
+indistinguishable from a session still running or just killed. Closing that gap is
+what [keying the chain](#keying-the-chain) and [anchoring the
+head](#anchoring-the-head-off-box) are for: the MAC stops an attacker forging a
+replacement chain without the key, and anchoring stops one quietly rewriting what
+was already published. Unkeyed and un-anchored — the default — the chain is
+tamper-*evident* against accident and process death, not tamper-*proof* against a
+local admin, the same posture the [trust
+model](../README.md#trust-model--read-this) states. Keying plus anchoring is what
+raises it toward the latter.
 
 ### Rotation and retention
 

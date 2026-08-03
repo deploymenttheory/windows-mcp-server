@@ -65,7 +65,11 @@
     "audit_sink": "C:\\ProgramData\\windows-mcp\\audit\\",
     "heartbeat": "15s",
     "recording_dir": "C:\\ProgramData\\windows-mcp\\recordings",
-    "banner": true
+    "banner": true,
+    "anchor": {
+      "destination": "eventlog",
+      "cadence": "5m"
+    }
   },
   "inflight": {
     "interval": "30s",

@@ -37,6 +37,11 @@ type AuditEntry struct {
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	PrevHash  string          `json:"prev_hash"`
 	EntryHash string          `json:"entry_hash"`
+	// Mac is an HMAC-SHA256 over EntryHash under a key the session holds but does
+	// not write down. It is present only when the log was keyed
+	// (WINDOWS_MCP_AUDIT_KEY set); an unkeyed chain omits it. Because EntryHash
+	// already commits to every other field, MACing it binds the whole entry.
+	Mac string `json:"mac,omitempty"`
 }
 
 // Sink persists audit entries. Flush must durably commit (fsync) so the chain
@@ -134,11 +139,31 @@ type AuditLog struct {
 	seq      uint64
 	prevHash string
 	clock    func() time.Time
+	key      []byte
 }
 
-// NewAuditLog builds a log over the given sink.
-func NewAuditLog(sink Sink) *AuditLog {
-	return &AuditLog{sink: sink, clock: time.Now}
+// Option configures an AuditLog at construction.
+type Option func(*AuditLog)
+
+// WithHMACKey keys the log: every entry gets an HMAC over its EntryHash under key.
+// An empty key is ignored, so an absent WINDOWS_MCP_AUDIT_KEY leaves the log
+// unkeyed — the default — rather than keyed with nothing.
+func WithHMACKey(key []byte) Option {
+	return func(a *AuditLog) {
+		if len(key) > 0 {
+			a.key = key
+		}
+	}
+}
+
+// NewAuditLog builds a log over the given sink. With no options it is unkeyed,
+// which is the default posture; pass WithHMACKey to bind each entry with an HMAC.
+func NewAuditLog(sink Sink, opts ...Option) *AuditLog {
+	a := &AuditLog{sink: sink, clock: time.Now}
+	for _, o := range opts {
+		o(a)
+	}
+	return a
 }
 
 // Append writes one entry linking to the prior entry's hash. payload is
@@ -165,6 +190,9 @@ func (a *AuditLog) Append(event string, payload any) (AuditEntry, error) {
 		PrevHash:  a.prevHash,
 	}
 	e.EntryHash = hashEntry(e)
+	if a.key != nil {
+		e.Mac = macOf(a.key, e.EntryHash)
+	}
 	if a.sink != nil {
 		if err := a.sink.Write(e); err != nil {
 			return e, err
