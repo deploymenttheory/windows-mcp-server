@@ -1,0 +1,232 @@
+package audit
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// runSession opens a directory sink for sessionID, appends n events through a
+// fresh AuditLog (as a real run does — each run starts its own chain at seq 0),
+// and seals it via Close.
+func runSession(t *testing.T, dir, sessionID string, n int) {
+	t.Helper()
+	sink, err := OpenSink(dir, sessionID)
+	if err != nil {
+		t.Fatalf("OpenSink(%q): %v", sessionID, err)
+	}
+	log := NewAuditLog(sink)
+	log.Append("server.start", map[string]any{"session": sessionID})
+	for i := 1; i < n; i++ {
+		log.Append("tool.call", map[string]any{"i": i})
+	}
+	if err := log.Close(); err != nil {
+		t.Fatalf("Close(%q): %v", sessionID, err)
+	}
+}
+
+func TestDirModeVerifiesAcrossRestarts(t *testing.T) {
+	dir := t.TempDir()
+	runSession(t, dir, "20260803-120000", 3)
+	runSession(t, dir, "20260803-120100", 4)
+
+	rep, err := VerifyDir(dir)
+	if err != nil {
+		t.Fatalf("VerifyDir: %v", err)
+	}
+	if !rep.OK() {
+		t.Fatalf("two clean sessions should verify, problems:\n%s", rep)
+	}
+	if len(rep.Sessions) != 2 {
+		t.Fatalf("want 2 sessions, got %d", len(rep.Sessions))
+	}
+	for _, s := range rep.Sessions {
+		if !s.Sealed {
+			t.Errorf("session %s should be sealed", s.File)
+		}
+	}
+}
+
+// TestDirModeSessionFilesEachRootAtZero is the regression guard for 0.1: two runs
+// against one target must not share a sequence. Each session file is its own
+// chain rooted at seq 0, and the manifest is what links them.
+func TestDirModeSessionFilesEachRootAtZero(t *testing.T) {
+	dir := t.TempDir()
+	runSession(t, dir, "20260803-130000", 2)
+	runSession(t, dir, "20260803-130100", 2)
+
+	files, _ := filepath.Glob(filepath.Join(dir, "session-*.audit.jsonl"))
+	if len(files) != 2 {
+		t.Fatalf("want 2 session files, got %d", len(files))
+	}
+	for _, f := range files {
+		entries, err := VerifyFile(f)
+		if err != nil {
+			t.Errorf("%s: %v", filepath.Base(f), err)
+		}
+		if entries[0].Seq != 0 {
+			t.Errorf("%s: first entry seq = %d, want 0", filepath.Base(f), entries[0].Seq)
+		}
+	}
+}
+
+func TestDirModeDetectsManifestTamper(t *testing.T) {
+	dir := t.TempDir()
+	runSession(t, dir, "20260803-140000", 3)
+	runSession(t, dir, "20260803-140100", 3)
+
+	manifestPath := filepath.Join(dir, ManifestName)
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+
+	// Edit a manifest record's head hash without recomputing → chain breaks.
+	edit := append([]string(nil), lines...)
+	var rec ManifestRecord
+	if err := json.Unmarshal([]byte(edit[len(edit)-1]), &rec); err != nil {
+		t.Fatal(err)
+	}
+	rec.HeadHash = "deadbeef"
+	b, _ := json.Marshal(rec)
+	edit[len(edit)-1] = string(b)
+	writeLines(t, manifestPath, edit)
+	if rep, _ := VerifyDir(dir); rep.OK() {
+		t.Error("edited manifest head should be caught")
+	}
+
+	// Delete a manifest record from the middle → the following record's
+	// prev_manifest_hash no longer chains. (Deleting the trailing seal is instead
+	// indistinguishable from a still-open or killed session, which VerifyDir
+	// tolerates by design — off-box anchoring, not the manifest, closes that gap.)
+	writeLines(t, manifestPath, append(append([]string(nil), lines[0]), lines[2:]...))
+	if rep, _ := VerifyDir(dir); rep.OK() {
+		t.Error("deleted middle manifest record should be caught")
+	}
+
+	// Reorder → chain breaks.
+	rev := append([]string(nil), lines...)
+	rev[0], rev[1] = rev[1], rev[0]
+	writeLines(t, manifestPath, rev)
+	if rep, _ := VerifyDir(dir); rep.OK() {
+		t.Error("reordered manifest records should be caught")
+	}
+}
+
+// TestDirModeDetectsRewrittenSession catches a session file edited after sealing:
+// the manifest seal still names the original head, so the cross-check fails even
+// though the (rewritten) file verifies as a chain on its own.
+func TestDirModeDetectsRewrittenSession(t *testing.T) {
+	dir := t.TempDir()
+	runSession(t, dir, "20260803-150000", 4)
+
+	files, _ := filepath.Glob(filepath.Join(dir, "session-*.audit.jsonl"))
+	// Rewrite the session as a shorter but internally valid chain.
+	sink := &memSink{}
+	log := NewAuditLog(sink)
+	log.Append("server.start", map[string]any{"session": "forged"})
+	rewritten := marshalEntries(t, sink.entries)
+	if err := os.WriteFile(files[0], rewritten, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := VerifyDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.OK() {
+		t.Error("a session whose head no longer matches its manifest seal must be caught")
+	}
+}
+
+func TestDirModeDetectsDroppedSession(t *testing.T) {
+	dir := t.TempDir()
+	runSession(t, dir, "20260803-160000", 3)
+	runSession(t, dir, "20260803-160100", 3)
+
+	files, _ := filepath.Glob(filepath.Join(dir, "session-*.audit.jsonl"))
+	if err := os.Remove(files[0]); err != nil {
+		t.Fatal(err)
+	}
+	rep, _ := VerifyDir(dir)
+	if rep.OK() {
+		t.Error("a session named in the manifest but missing from disk must be caught")
+	}
+}
+
+func TestVerifyChainSegment(t *testing.T) {
+	sink := &memSink{}
+	log := NewAuditLog(sink)
+	for i := 0; i < 5; i++ {
+		log.Append("e", map[string]any{"i": i})
+	}
+	all := sink.entries
+
+	// A tail slice verifies against the correct start seq and preceding hash.
+	seg := all[2:]
+	if err := VerifyChainSegment(seg, 2, all[1].EntryHash); err != nil {
+		t.Errorf("valid segment should verify: %v", err)
+	}
+	// Wrong start seq is rejected.
+	if err := VerifyChainSegment(seg, 0, all[1].EntryHash); err == nil {
+		t.Error("segment with wrong start seq should fail")
+	}
+	// Wrong preceding hash is rejected.
+	if err := VerifyChainSegment(seg, 2, "nope"); err == nil {
+		t.Error("segment with wrong prev hash should fail")
+	}
+	// VerifyChain is the (0,"") case.
+	if err := VerifyChain(all); err != nil {
+		t.Errorf("full chain should verify: %v", err)
+	}
+}
+
+func TestNewSinkFileAndStderrModesUnchanged(t *testing.T) {
+	// A plain file path stays single-file append-only (no session/manifest files).
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+	sink, err := OpenSink(path, "20260803-170000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := NewAuditLog(sink)
+	log.Append("server.start", nil)
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ManifestName)); !os.IsNotExist(err) {
+		t.Error("file mode must not create a manifest")
+	}
+	if entries, err := VerifyFile(path); err != nil || len(entries) != 1 {
+		t.Errorf("file mode chain: entries=%d err=%v", len(entries), err)
+	}
+
+	// stderr mode still yields a working, non-nil sink.
+	if s, err := OpenSink("stderr", "x"); err != nil || s == nil {
+		t.Errorf("stderr sink: %v", err)
+	}
+}
+
+func writeLines(t *testing.T, path string, lines []string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func marshalEntries(t *testing.T, entries []AuditEntry) []byte {
+	t.Helper()
+	var b strings.Builder
+	for _, e := range entries {
+		raw, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Write(raw)
+		b.WriteByte('\n')
+	}
+	return []byte(b.String())
+}

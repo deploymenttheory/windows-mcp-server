@@ -16,9 +16,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,13 +47,32 @@ type Sink interface {
 	Close() error
 }
 
-// NewSink resolves a --with-logging target to a Sink: "" or "stderr" writes JSON
-// lines to stderr (stdout is reserved for the MCP stdio transport); any other
-// value is treated as a file path, appended to as JSONL and fsync-ed on Flush.
-func NewSink(target string) (Sink, error) {
-	switch target {
-	case "", "stderr":
+// NewSink resolves an audit_sink target to a Sink without a session id. Prefer
+// OpenSink from a server that has a session id to name a per-session file after;
+// this exists for callers that only ever use stderr or a single-file sink.
+func NewSink(target string) (Sink, error) { return OpenSink(target, "") }
+
+// OpenSink resolves an audit_sink target plus a session id into a Sink. The id is
+// a timestamp stamp such as "20260803-120000", shared with the recorder so the
+// audit file and the recording correlate by name.
+//
+// Three modes:
+//   - "" or "stderr": JSON lines to stderr (stdout is reserved for the MCP stdio
+//     transport). The id is ignored.
+//   - a directory (an existing directory, or any path ending in a separator): one
+//     session-<id>.audit.jsonl per run plus a shared, hash-chained
+//     audit-manifest.jsonl that links session heads. Because each run writes its
+//     own file, restarting no longer restarts the sequence inside a shared file;
+//     the manifest is what carries continuity across runs, and an unsealed session
+//     still leaves a chained trace, so a restart cannot silently drop history.
+//   - any other value: a single append-only JSONL file, fsync-ed on Flush — the
+//     legacy behaviour, preserved so existing configurations keep working.
+func OpenSink(target, sessionID string) (Sink, error) {
+	switch {
+	case target == "" || target == "stderr":
 		return &stderrSink{}, nil
+	case isDirTarget(target):
+		return newSessionSink(target, sessionID)
 	default:
 		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
@@ -59,6 +80,17 @@ func NewSink(target string) (Sink, error) {
 		}
 		return &jsonlSink{f: f}, nil
 	}
+}
+
+// isDirTarget reports whether an audit_sink value names a directory: an explicit
+// trailing separator (so a not-yet-created directory still resolves to directory
+// mode) or an existing directory on disk.
+func isDirTarget(target string) bool {
+	if strings.HasSuffix(target, "/") || strings.HasSuffix(target, `\`) {
+		return true
+	}
+	info, err := os.Stat(target)
+	return err == nil && info.IsDir()
 }
 
 type stderrSink struct{ mu sync.Mutex }
@@ -184,21 +216,35 @@ func hashEntry(e AuditEntry) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// VerifyChain checks that entries form an unbroken hash chain: contiguous
-// sequence from 0, each PrevHash equal to the prior EntryHash, and each
-// EntryHash matching a recomputation. Any tamper (edit/insert/delete/reorder)
-// returns an error naming the first broken entry.
+// ErrChainBroken is returned by VerifyChain and VerifyChainSegment when entries
+// do not form an unbroken hash chain; the wrapped message names the first break.
+var ErrChainBroken = errors.New("audit chain broken")
+
+// VerifyChain checks that entries form an unbroken hash chain rooted at seq 0:
+// contiguous sequence from 0, each PrevHash equal to the prior EntryHash, and
+// each EntryHash matching a recomputation. Any tamper (edit/insert/delete/reorder)
+// returns an error naming the first broken entry. It is VerifyChainSegment with a
+// zero start and an empty preceding hash.
 func VerifyChain(entries []AuditEntry) error {
-	prev := ""
+	return VerifyChainSegment(entries, 0, "")
+}
+
+// VerifyChainSegment checks that entries form an unbroken hash chain beginning at
+// startSeq with prevHash as the hash preceding the first entry. It is what lets a
+// slice of a chain be verified on its own — a session file that does not begin at
+// 0, or a range lifted into an evidence bundle — without the whole chain in hand.
+// A full chain rooted at 0 is the (0, "") case that VerifyChain calls.
+func VerifyChainSegment(entries []AuditEntry, startSeq uint64, prevHash string) error {
+	prev := prevHash
 	for i, e := range entries {
-		if e.Seq != uint64(i) {
-			return fmt.Errorf("entry %d: sequence gap (seq=%d)", i, e.Seq)
+		if want := startSeq + uint64(i); e.Seq != want {
+			return fmt.Errorf("%w: entry %d: sequence gap (seq=%d, want %d)", ErrChainBroken, i, e.Seq, want)
 		}
 		if e.PrevHash != prev {
-			return fmt.Errorf("entry %d: prev_hash does not chain to prior entry", i)
+			return fmt.Errorf("%w: entry %d: prev_hash does not chain to prior entry", ErrChainBroken, i)
 		}
 		if got := hashEntry(e); got != e.EntryHash {
-			return fmt.Errorf("entry %d: entry_hash mismatch (content tampered)", i)
+			return fmt.Errorf("%w: entry %d: entry_hash mismatch (content tampered)", ErrChainBroken, i)
 		}
 		prev = e.EntryHash
 	}

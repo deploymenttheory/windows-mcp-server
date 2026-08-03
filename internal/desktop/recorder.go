@@ -28,6 +28,11 @@ type RecorderOptions struct {
 	// available (small files) and fall back to pure-Go MJPEG-AVI when not;
 	// "mjpeg" forces the pure-Go writer. Default "h264".
 	Codec string
+	// Stamp is the shared session stamp used to name the output. Empty means the
+	// recorder mints its own from the clock. When set, the recording file
+	// (session-<stamp>.*) correlates by name with the audit file the same stamp
+	// named, which is what lets an evidence bundle pair them.
+	Stamp string
 }
 
 func (o RecorderOptions) withDefaults() RecorderOptions {
@@ -82,7 +87,10 @@ func startRecorder(opt RecorderOptions, logger *slog.Logger) (*recorder, error) 
 	if err := os.MkdirAll(opt.Dir, 0o755); err != nil {
 		return nil, fmt.Errorf("recorder: create dir: %w", err)
 	}
-	stamp := time.Now().Format("20060102-150405")
+	stamp := opt.Stamp
+	if stamp == "" {
+		stamp = time.Now().Format("20060102-150405")
+	}
 	base := filepath.Join(opt.Dir, "session-"+stamp)
 
 	markers, err := os.Create(base + ".jsonl")

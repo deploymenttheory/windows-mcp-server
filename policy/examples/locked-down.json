@@ -62,7 +62,7 @@
     }
   },
   "transparency": {
-    "audit_sink": "C:\\ProgramData\\windows-mcp\\audit.jsonl",
+    "audit_sink": "C:\\ProgramData\\windows-mcp\\audit\\",
     "heartbeat": "15s",
     "recording_dir": "C:\\ProgramData\\windows-mcp\\recordings",
     "banner": true

@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
 	"github.com/deploymenttheory/windows-mcp-server/internal/mcpconf"
 	"github.com/deploymenttheory/windows-mcp-server/internal/winmcp"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
@@ -48,6 +49,7 @@ func rootCmd() *cobra.Command {
 
 	root.AddCommand(stdioCmd())
 	root.AddCommand(policyCmd())
+	root.AddCommand(auditCmd())
 	root.AddCommand(personasCmd())
 	root.AddCommand(conformanceReportCmd())
 	// Adds `conformance-serve` only under the `conformance` build tag. The
@@ -96,6 +98,62 @@ func policyCmd() *cobra.Command {
 	}
 	cmd.AddCommand(policyValidateCmd(), policyCheckCmd(), policyExplainCmd())
 	return cmd
+}
+
+// auditCmd groups operations on the tamper-evident audit chain. Today there is
+// one: verify. It exists because the chain is only worth as much as the ability
+// to check it, and until now that check lived only as a Go API under internal/.
+func auditCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "audit",
+		Short: "Inspect the tamper-evident audit chain",
+		Long: "The audit chain records what a session did, each entry committing to the previous " +
+			"entry's hash. These subcommands check that record without starting a server.",
+	}
+	cmd.AddCommand(auditVerifyCmd())
+	return cmd
+}
+
+// auditVerifyCmd verifies a session file or a directory of them.
+func auditVerifyCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "verify <file|dir>",
+		Short: "Verify a session audit file, or a directory of them linked by a manifest",
+		Long: "verify checks a hash chain end to end. Given a single session-*.audit.jsonl file it " +
+			"verifies that one chain. Given a directory (the audit_sink target in directory mode) it " +
+			"verifies the manifest chain, each session file, and that every sealed session's head " +
+			"matches its manifest record — so a dropped or rewritten session is caught.\n\n" +
+			"Exits 1 on any integrity problem, reporting all of them.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := args[0]
+			info, err := os.Stat(path)
+			if err != nil {
+				return fmt.Errorf("audit verify: %w", err)
+			}
+			out := cmd.OutOrStdout()
+
+			if info.IsDir() {
+				rep, err := audit.VerifyDir(path)
+				if err != nil {
+					return fmt.Errorf("audit verify: %w", err)
+				}
+				fmt.Fprint(out, rep.String())
+				if !rep.OK() {
+					os.Exit(1)
+				}
+				return nil
+			}
+
+			entries, err := audit.VerifyFile(path)
+			if err != nil {
+				fmt.Fprintf(out, "BROKEN  %s: %v\n", path, err)
+				os.Exit(1)
+			}
+			fmt.Fprintf(out, "ok  %s: %d entries, chain intact\n", path, len(entries))
+			return nil
+		},
+	}
 }
 
 // policyValidateCmd checks a document without touching the device, so it runs in
