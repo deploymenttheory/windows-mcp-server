@@ -9,6 +9,8 @@ import (
 	"time"
 	"unsafe"
 
+	"golang.org/x/sys/windows/registry"
+
 	win32 "github.com/deploymenttheory/go-bindings-win32/bindings/runtime/win32"
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/networkmanagement/windowsfirewall"
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/system/com"
@@ -35,6 +37,62 @@ var isolationProfiles = []windowsfirewall.NET_FW_PROFILE_TYPE2{
 type savedProfile struct {
 	profile windowsfirewall.NET_FW_PROFILE_TYPE2
 	in, out windowsfirewall.NET_FW_ACTION
+	// inUnset/outUnset record that the profile had *no configured value* before
+	// isolation, which INetFwPolicy2 cannot express.
+	//
+	// Get_DefaultOutboundAction returns ALLOW for a profile whose value is absent
+	// -- Windows' "NotConfigured" state -- so saving and restoring through that
+	// API alone turns "nothing configured" into an explicit Allow, permanently,
+	// on every profile, the first time containment runs. Lab testing caught this:
+	// three profiles went NotConfigured -> explicit Allow and stayed there. The
+	// registry is the only place the distinction survives, so it is read before
+	// the change and the absent case is restored by deleting the value again.
+	inUnset, outUnset bool
+}
+
+// firewallProfileKeys maps each profile to its local policy store key. The COM
+// API has no notion of an unset action; these values do, by being absent.
+var firewallProfileKeys = map[windowsfirewall.NET_FW_PROFILE_TYPE2]string{
+	windowsfirewall.NET_FW_PROFILE2_DOMAIN:  `SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\DomainProfile`,
+	windowsfirewall.NET_FW_PROFILE2_PRIVATE: `SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\StandardProfile`,
+	windowsfirewall.NET_FW_PROFILE2_PUBLIC:  `SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\PublicProfile`,
+}
+
+// actionIsUnset reports whether a profile's default action has no configured
+// value. Errors are reported as "configured" so a registry problem can only ever
+// cost fidelity on restore, never cause a value to be deleted that was really set.
+func actionIsUnset(profile windowsfirewall.NET_FW_PROFILE_TYPE2, valueName string) bool {
+	path, ok := firewallProfileKeys[profile]
+	if !ok {
+		return false
+	}
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = k.Close() }()
+	if _, _, err := k.GetIntegerValue(valueName); err != nil {
+		return errors.Is(err, registry.ErrNotExist)
+	}
+	return false
+}
+
+// clearAction deletes a profile's default-action value, returning it to
+// NotConfigured. Used only where actionIsUnset said it was absent to begin with.
+func clearAction(profile windowsfirewall.NET_FW_PROFILE_TYPE2, valueName string) error {
+	path, ok := firewallProfileKeys[profile]
+	if !ok {
+		return nil
+	}
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = k.Close() }()
+	if err := k.DeleteValue(valueName); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // firewallIsolate flips every profile's default inbound and outbound actions to
@@ -54,7 +112,13 @@ func firewallIsolate() (func() error, error) {
 			if e1 != nil || e2 != nil {
 				return fmt.Errorf("read firewall defaults (profile %d): %w", p, errors.Join(e1, e2))
 			}
-			saved = append(saved, savedProfile{p, in, out})
+			saved = append(saved, savedProfile{
+				profile:  p,
+				in:       in,
+				out:      out,
+				inUnset:  actionIsUnset(p, "DefaultInboundAction"),
+				outUnset: actionIsUnset(p, "DefaultOutboundAction"),
+			})
 			if e := policy.Put_DefaultInboundAction(p, windowsfirewall.NET_FW_ACTION_BLOCK); e != nil {
 				return fmt.Errorf("block inbound (profile %d): %w", p, e)
 			}
@@ -81,6 +145,19 @@ func firewallIsolate() (func() error, error) {
 				}
 				if e := policy.Put_DefaultOutboundAction(s.profile, s.out); e != nil && firstErr == nil {
 					firstErr = e
+				}
+				// Then undo the value entirely where there was none before, so a
+				// machine that inherited its firewall defaults still does. Done after
+				// the Puts because the COM write is what recreates the value.
+				if s.inUnset {
+					if e := clearAction(s.profile, "DefaultInboundAction"); e != nil && firstErr == nil {
+						firstErr = e
+					}
+				}
+				if s.outUnset {
+					if e := clearAction(s.profile, "DefaultOutboundAction"); e != nil && firstErr == nil {
+						firstErr = e
+					}
 				}
 			}
 			return firstErr

@@ -61,6 +61,79 @@ Options, roughly in order of cost:
 
 *Files:* `internal/guardrails/audit/{audit,manifest,verify}.go`.
 
+**Confirmed in the lab (2026-08-04), and worse than the description above.** With
+the server hard-killed, `audit verify` reported `ok  open  5 entries` and exited 0
+after three of eight entries were removed. PR #76 made that loud — the marker is
+now `UNSEALED`, a warning explains what a missing seal does not prove, and
+`--strict` fails on it. That is reporting, not detection: the first option above
+is still the real fix, and nothing yet detects truncation *within* an open
+session. Tracked as S12.
+
+### S12. Detect truncation of an unsealed session
+
+The tail of an open session can still be removed undetectably. Once sealed, the
+manifest head cross-check catches it (demonstrated in the lab); before that there
+is nothing to compare against.
+
+The cheapest real fix is a periodically checkpointed head: on each flush, update
+the session's manifest record with the current seq and entry hash, so an open
+session has a moving high-water mark that truncation falls below. The manifest is
+already MAC'd, so a checkpoint inherits that protection. Cost is one manifest
+write per flush, which the fsync already dominates.
+
+This matters because the kill ladder's `Shutdown` rung leaves the session
+unsealed by construction — the sessions worth tampering with are exactly the ones
+with no seal.
+
+*Files:* `internal/guardrails/audit/{manifest,verify}.go`.
+
+### S13. `isolate` was never observed blocking outbound traffic
+
+The kill ladder audits `killaction.done{"action":"isolate"}`, and calling
+`Put_DefaultOutboundAction(BLOCK)` directly through `contain.NewFwPolicy` does
+take effect and persist — both verified in the lab. But a 2,789-sample registry
+poll at ~3 ms resolution spanning a real trip never observed the outbound default
+leaving `Allow`, and the flip from `NotConfigured` to an explicit `Allow` happened
+at server *startup*, before the trip.
+
+So the mechanism works when driven directly, and the ladder reports success, but
+the state change was not observable during an actual containment event. Something
+between those two facts is wrong and sampling cannot resolve it.
+
+Next step is instrumentation rather than another poll: log the read-back value
+immediately after each `Put` inside `firewallIsolate`, and establish what touches
+the firewall at startup (the egress `Recover()` path runs on every start by
+design, including when egress is off, and is the obvious candidate).
+
+Until this is settled, treat `isolate` as unproven. `docs/security-architecture.md`
+claims network isolation cuts the exfil channel; that claim currently rests on a
+unit test and an audit line, not on observed behaviour.
+
+*Files:* `internal/guardrails/contain/{firewall_windows,killaction}.go`,
+`internal/guardrails/egress/enforcer_windows.go`.
+
+### S14. Non-tool methods cannot be selected by policy
+
+`resources/read`, `prompts/get`, `completion/complete` and `subscriptions/listen`
+are decided as read-only subjects carrying no toolset, so only `toolset: "*"` or
+`annotation: "read-only"` reaches them. A rule written as `{"tool": "Credentials"}`
+does not.
+
+The lab showed the consequence: under a policy gating `annotation: destructive`,
+every `Credentials` mode was refused while `completion/complete` still returned
+the credential *name* `lab-sso`. Names are identifiers rather than secrets — the
+audit chain records them, and `Credentials list` returns them — so this is an
+asymmetry, not a disclosure, and all six shipped examples carry a `toolset: "*"`
+rule that closes it. But a hand-written policy that gates by tool name leaves an
+enumeration path open, and nothing said so until now (`docs/policy-config.md`).
+
+The fix is schema work: let a match select a method or a named resource/prompt,
+so "this completion specifically" is expressible. `enforce.dataEgressSubject`
+already notes the gap.
+
+*Files:* `internal/guardrails/policy/policyconfig.go`,
+`internal/guardrails/enforce/enforce.go`.
+
 ### S3. An existing egress state directory keeps whatever DACL it has
 
 `ensureStateDir` now creates `%ProgramData%\WindowsMCP` with an explicit protected

@@ -49,6 +49,63 @@ func TestDirModeVerifiesAcrossRestarts(t *testing.T) {
 	}
 }
 
+// TestUnsealedSessionIsNotReportedAsOK pins the distinction lab testing showed was
+// invisible.
+//
+// A session with no seal has nothing to cross-check its head against, so any
+// prefix of its chain verifies -- removing the tail is undetectable. That was
+// true before and is still true; what was wrong was the reporting. The line read
+// "ok  open  N entries" and the summary said "manifest chain intact", which is
+// exactly what a clean directory looks like. Since the kill ladder's Shutdown
+// rung and any crash leave a session unsealed, the sessions most worth tampering
+// with were the ones displayed most reassuringly.
+func TestUnsealedSessionIsNotReportedAsOK(t *testing.T) {
+	dir := t.TempDir()
+	runSession(t, dir, "20260803-140000", 4) // sealed
+
+	// A session left open: written, never closed.
+	dest, err := OpenDestination(dir, "20260803-140100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := NewAuditLog(dest)
+	log.Append("server.started", map[string]any{"session": "20260803-140100"})
+	log.Append("tool.call", map[string]any{"i": 1})
+	if err := dest.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	// Registered after t.TempDir's own cleanup, so it runs first: the file has to
+	// be closed before Windows will let the temp directory be removed. The session
+	// stays unsealed for the assertions below, which is the point of the test.
+	t.Cleanup(func() { _ = dest.Close() })
+
+	rep, err := VerifyDir(dir, nil)
+	if err != nil {
+		t.Fatalf("VerifyDir: %v", err)
+	}
+
+	// Nothing is provably wrong, so OK stays true -- a live server always has one
+	// open session and a health check must not scream about it.
+	if !rep.OK() {
+		t.Errorf("an unsealed session is not itself an integrity failure:\n%s", rep)
+	}
+	// But it is not "everything is provably right" either.
+	if rep.Unsealed() != 1 {
+		t.Errorf("Unsealed() = %d, want 1", rep.Unsealed())
+	}
+	if rep.StrictOK() {
+		t.Error("StrictOK must be false while a session carries no seal")
+	}
+
+	out := rep.String()
+	if !strings.Contains(out, "UNSEALED") {
+		t.Errorf("the report must mark the unsealed session, got:\n%s", out)
+	}
+	if !strings.Contains(out, "warning:") {
+		t.Errorf("the report must explain what an unsealed session does not prove, got:\n%s", out)
+	}
+}
+
 // TestDirModeSessionFilesEachRootAtZero is the regression guard for 0.1: two runs
 // against one target must not share a sequence. Each session file is its own
 // chain rooted at seq 0, and the manifest is what links them.

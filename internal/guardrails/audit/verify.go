@@ -31,6 +31,27 @@ type DirReport struct {
 // OK reports whether the directory verified end to end.
 func (r DirReport) OK() bool { return len(r.Problems) == 0 }
 
+// Unsealed counts sessions with no sealed manifest record.
+func (r DirReport) Unsealed() int {
+	n := 0
+	for _, s := range r.Sessions {
+		if !s.Sealed {
+			n++
+		}
+	}
+	return n
+}
+
+// StrictOK is OK plus "and every session is sealed".
+//
+// Separate from OK because the two answer different questions. OK asks whether
+// anything is provably wrong; StrictOK asks whether everything is provably right,
+// which an unsealed session cannot be — its tail could have been removed and the
+// chain would still verify. An operator collecting evidence wants the second; a
+// health check on a live server, which always has one session open, wants the
+// first.
+func (r DirReport) StrictOK() bool { return r.OK() && r.Unsealed() == 0 }
+
 // readEntries loads a session file as a slice of entries.
 func readEntries(path string) ([]AuditEntry, error) {
 	f, err := os.Open(path)
@@ -115,6 +136,19 @@ func VerifyFile(path string, key []byte) ([]AuditEntry, error) {
 // or rewritten session is caught. An unsealed session (open record, no seal) is
 // reported but not itself a failure: the process may still be running, or have
 // been killed, and the record's presence is the point.
+//
+// Read that last sentence with care, because it is the weakest part of this
+// package and lab testing showed the old rendering hid it. There is no seal to
+// cross-check an open session against, so **any prefix of its chain verifies**:
+// dropping the tail of an unsealed session is undetectable here. The chain's own
+// integrity is intact either way — that is exactly why it cannot help.
+//
+// It matters more than it sounds. The kill ladder's Shutdown rung, and any crash
+// or hard kill, leave a session unsealed as a matter of course — so the sessions
+// most likely to be worth tampering with are precisely the ones with no seal.
+// String() therefore marks them UNSEALED rather than ok, and Strict() lets a
+// caller treat them as failures. Detecting truncation *within* an open session
+// needs a periodically checkpointed head in the manifest; see roadmap S12.
 //
 // The returned error is for I/O failures only; integrity failures are collected
 // in DirReport.Problems so a report names every issue at once. When key is
@@ -207,19 +241,33 @@ func short(h string) string {
 func (r DirReport) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n", r.Dir)
+	unsealed := 0
 	for _, s := range r.Sessions {
 		state := "sealed"
 		if !s.Sealed {
 			state = "open"
+			unsealed++
 		}
+		// An unsealed session is not "ok". Its chain is intact, but there is no
+		// seal to cross-check the head against, so a truncated tail verifies just
+		// as cleanly -- and printing "ok" beside it read as a clean bill of health.
 		mark := "ok"
-		if s.Err != nil {
+		switch {
+		case s.Err != nil:
 			mark = "BROKEN"
+		case !s.Sealed:
+			mark = "UNSEALED"
 		}
-		fmt.Fprintf(&b, "  %-6s %-7s %4d entries  %s\n", mark, state, s.Entries, s.File)
+		fmt.Fprintf(&b, "  %-8s %-7s %4d entries  %s\n", mark, state, s.Entries, s.File)
 	}
 	if len(r.Problems) == 0 {
 		fmt.Fprintf(&b, "verified: %d session(s), manifest chain intact\n", len(r.Sessions))
+		if unsealed > 0 {
+			fmt.Fprintf(&b, "warning: %d session(s) carry no seal. Their chains are internally "+
+				"consistent, but with no sealed head to compare against, a removed tail cannot be "+
+				"detected. A session is unsealed when the process was killed or is still running. "+
+				"Use --strict to treat this as a failure.\n", unsealed)
+		}
 	} else {
 		fmt.Fprintf(&b, "%d problem(s):\n", len(r.Problems))
 		for _, p := range r.Problems {

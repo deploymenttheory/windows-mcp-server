@@ -197,6 +197,32 @@ func TestValidateRejectsARuleThatMatchesNothing(t *testing.T) {
 	}
 }
 
+// TestParseToleratesAUTF8BOM: PowerShell 5.1's `Set-Content -Encoding utf8` and
+// Notepad both write a byte-order mark, which makes it the ordinary result of an
+// operator writing a policy on the platform this server targets. encoding/json
+// rejects it with `invalid character 'ï' looking for beginning of value`, which
+// names neither the file nor the real problem. Found by hitting it in the lab.
+func TestParseToleratesAUTF8BOM(t *testing.T) {
+	doc := `{"version":1,"mode":"audit","signals":{"run-context":{"ttl":"0s"}},` +
+		`"rules":[{"name":"r","match":{"toolset":"*"},"require":["run-context"],"on_fail":"deny"}]}`
+
+	if _, err := Parse([]byte(doc)); err != nil {
+		t.Fatalf("plain document should parse: %v", err)
+	}
+	withBOM := append([]byte{0xEF, 0xBB, 0xBF}, doc...)
+	p, err := Parse(withBOM)
+	if err != nil {
+		t.Fatalf("a BOM-prefixed document must parse: %v", err)
+	}
+	if len(p.Rules) != 1 {
+		t.Errorf("parsed document lost content: %d rules", len(p.Rules))
+	}
+	// A BOM in the middle is still corruption, not tolerated encoding.
+	if _, err := Parse([]byte(`{"version":1` + string(rune(0xFEFF)) + `}`)); err == nil {
+		t.Error("a BOM inside the document should still be a parse error")
+	}
+}
+
 // TestPostureDriftNeedsSomethingToReEvaluate pins a trigger that could be armed
 // and still never fire.
 //

@@ -227,9 +227,35 @@ audit log or the policy document. Those are guardrail paths; letting the agent
 read a secret back or edit its own audit trail through a general file tool would
 undo the controls around them.
 
-Note what that list does *not* include: the policy document is protected against
-being **written**, not against being **read**, because a policy is meant to be
-reviewable. Keep secrets out of it — use `status_token_env` rather than
+### Rules that name a tool do not reach the other methods
+
+`resources/read`, `prompts/get`, `completion/complete` and `subscriptions/listen`
+are decided as read-only subjects that carry **no toolset and no tool name**. Only
+`{"toolset": "*"}` or `{"annotation": "read-only"}` selects them.
+
+This bites in a specific way worth knowing. A policy that gates credentials with
+`{"tool": "Credentials"}`, or with `{"annotation": "destructive"}`, refuses every
+mode of the tool — and still lets `completion/complete` return the *names* of the
+installed credentials, because that request is a different method and matches
+neither selector. Names are identifiers rather than secrets (the audit chain
+records them, and `list` returns them), so this is an asymmetry rather than a
+disclosure, and it is audited as `completion.complete` either way. But if you
+intend "the agent may not enumerate credentials", a tool-name rule does not say
+it.
+
+Every policy in `policy/examples/` carries a `{"toolset": "*"}` rule, so none of
+them has this gap. Add one to any policy you write:
+
+```jsonc
+{ "name": "baseline", "match": { "toolset": "*" }, "require": ["run-context"], "on_fail": "deny" }
+```
+
+Expressing "this resource specifically" is not something the schema supports yet;
+see roadmap S14.
+
+Note what the protected-path list does *not* include: the policy document is
+protected against being **written**, not against being **read**, because a policy
+is meant to be reviewable. Keep secrets out of it — use `status_token_env` rather than
 `status_token`, and `egress.auth_token_env` rather than any inline value. The
 `shell` toolset reaches every one of these paths with no protected-path check at
 all, which is why serving it alongside `--credentials-file` requires an explicit
