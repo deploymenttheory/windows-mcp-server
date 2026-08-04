@@ -77,6 +77,41 @@ type webhookReply struct {
 	// answer. Absent, we re-POST the original request to the webhook instead.
 	PollURL string `json:"poll_url,omitempty"`
 	Detail  string `json:"detail,omitempty"`
+	// RequestID must echo the request being answered, so a reply cannot be
+	// replayed against a different call.
+	RequestID string `json:"request_id,omitempty"`
+	// Signature is the hex HMAC-SHA256 of "request_id|decision" under the same key
+	// that signs the request. Without it the reply is unauthenticated: anyone able
+	// to answer the endpoint -- or sit on the path of a plaintext one -- could
+	// approve any held call, and the audit chain would record a legitimate-looking
+	// approval.decided.
+	Signature string `json:"signature,omitempty"`
+}
+
+// verifyReply authenticates a webhook reply against the request it answers.
+//
+// Fails closed on every branch: an unsigned reply, a wrong signature, or one
+// echoing a different request id is not a decision. A pending reply is exempt --
+// it carries no authority, and requiring a signature on it would break polling
+// against approvers that only sign the final answer -- but its poll_url is not
+// trusted to redirect polling, which is checked by the caller.
+func verifyReply(key []byte, requestID string, reply webhookReply) error {
+	if reply.Decision == "pending" {
+		return nil
+	}
+	if len(key) == 0 {
+		return fmt.Errorf("%w: no WINDOWS_MCP_APPROVAL_KEY is set, so the reply cannot be "+
+			"authenticated and an approval cannot be trusted", errWebhookUnintelligible)
+	}
+	if reply.RequestID != requestID {
+		return fmt.Errorf("%w: reply is for request %q, not %q", errWebhookUnintelligible,
+			reply.RequestID, requestID)
+	}
+	want := signBody(key, []byte(requestID+"|"+reply.Decision))
+	if !hmac.Equal([]byte(reply.Signature), []byte(want)) {
+		return fmt.Errorf("%w: reply signature does not verify", errWebhookUnintelligible)
+	}
+	return nil
 }
 
 // ApprovalClient asks a webhook to authorise a call and, while the answer is
@@ -109,6 +144,11 @@ type ApprovalConfig struct {
 
 // SignatureHeader carries the hex HMAC-SHA256 of the request body.
 const SignatureHeader = "X-WindowsMCP-Signature"
+
+// errWebhookUnintelligible reports a reply this server will not read as a
+// decision: unsigned, wrongly signed, or answering a different request. It is a
+// refusal, not a transport failure — dual control fails closed.
+var errWebhookUnintelligible = errors.New("approval reply could not be authenticated")
 
 // errWebhookStatus is the base for a non-2xx webhook response, wrapped with the
 // actual code so the failure is a static sentinel with dynamic detail.
@@ -159,6 +199,9 @@ func (c *ApprovalClient) Await(ctx context.Context, req ApprovalRequest) Decisio
 	if err != nil {
 		return c.failClosed(ctx, req, err)
 	}
+	if err := verifyReply(c.hmacKey, req.RequestID, reply); err != nil {
+		return c.failClosed(ctx, req, err)
+	}
 
 	for {
 		switch reply.Decision {
@@ -184,6 +227,9 @@ func (c *ApprovalClient) Await(ctx context.Context, req ApprovalRequest) Decisio
 		target := reply.PollURL
 		next, err := c.poll(ctx, target, req)
 		if err != nil {
+			return c.failClosed(ctx, req, err)
+		}
+		if err := verifyReply(c.hmacKey, req.RequestID, next); err != nil {
 			return c.failClosed(ctx, req, err)
 		}
 		reply = next

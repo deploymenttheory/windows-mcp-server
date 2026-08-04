@@ -812,10 +812,20 @@ func (p *Policy) validateApprovals(add func(string, ...any)) {
 	switch {
 	case err != nil:
 		add("%v: approvals.webhook_url %q is not a URL: %v", ErrInvalidApprovals, a.WebhookURL, err)
-	case u.Scheme != "http" && u.Scheme != "https":
+	case !strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https"):
 		add("%v: approvals.webhook_url %q must be http or https", ErrInvalidApprovals, a.WebhookURL)
 	case u.Host == "":
 		add("%v: approvals.webhook_url %q has no host", ErrInvalidApprovals, a.WebhookURL)
+	case strings.EqualFold(u.Scheme, "http") && !isLoopbackHost(u.Hostname()):
+		// Dual control is the control gating the riskiest calls, so its channel
+		// cannot be one an on-path attacker can read and rewrite. Over plaintext,
+		// answering "approve" for every held call is trivial, and the audit chain
+		// would record a legitimate-looking approval.decided.
+		//
+		// Loopback stays permitted: an approver on the same machine is reachable
+		// without TLS, and that is how the flow is usually exercised in testing.
+		add("%v: approvals.webhook_url %q is plaintext http; use https, or a loopback "+
+			"address for local testing", ErrInvalidApprovals, a.WebhookURL)
 	}
 	if a.Timeout.Std() <= 0 {
 		add("%v: approvals.timeout must be positive", ErrInvalidApprovals)
@@ -931,4 +941,18 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// isLoopbackHost reports whether host is a loopback name or address.
+//
+// It is used to allow a plaintext approvals webhook only when it cannot leave the
+// machine. "localhost" is accepted by name: it is the conventional spelling, and
+// an operator who has repointed it in the hosts file has already taken control of
+// their own name resolution.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
 }

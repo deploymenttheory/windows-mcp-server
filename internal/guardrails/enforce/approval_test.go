@@ -22,11 +22,31 @@ import (
 )
 
 // reply is a small helper to answer a webhook call with a decision.
+// testApprovalKey is the shared secret these tests sign replies with. A reply is
+// only a decision if it authenticates, so the fake webhook has to hold a key just
+// as a real one does.
+var testApprovalKey = []byte("test-approval-key")
+
+// reply writes a signed webhook reply for request id "r", which is what every
+// test in this file uses.
 func reply(w http.ResponseWriter, decision, approver string) {
-	_ = json.NewEncoder(w).Encode(webhookReply{Decision: decision, Approver: approver})
+	replyFor(w, "r", decision, approver)
+}
+
+// replyFor writes a reply signed for a specific request id, so a test can forge a
+// mismatch deliberately.
+func replyFor(w http.ResponseWriter, requestID, decision, approver string) {
+	r := webhookReply{Decision: decision, Approver: approver, RequestID: requestID}
+	if decision != "pending" {
+		r.Signature = signBody(testApprovalKey, []byte(requestID+"|"+decision))
+	}
+	_ = json.NewEncoder(w).Encode(r)
 }
 
 func testClient(url string, key []byte) *ApprovalClient {
+	if key == nil {
+		key = testApprovalKey
+	}
 	return NewApprovalClient(ApprovalConfig{
 		WebhookURL:   url,
 		Timeout:      2 * time.Second,
@@ -124,7 +144,8 @@ func TestApprovalClientDecisions(t *testing.T) {
 // TestApprovalRequestIsSignedAndDigested checks the webhook can authenticate the
 // request via the HMAC header and that only a digest of the arguments travels.
 func TestApprovalRequestIsSignedAndDigested(t *testing.T) {
-	key := []byte("shared-secret")
+	// The same key signs the request and the reply, as a real deployment does.
+	key := testApprovalKey
 	var sawSecret, verified atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -301,5 +322,66 @@ func TestHoldWithNoApproverFailsClosed(t *testing.T) {
 	}
 	if h.reached.Load() != 0 {
 		t.Error("a call with no approver must not reach the handler")
+	}
+}
+
+// TestUnauthenticatedRepliesAreRefused is a regression test for the control that
+// gates the riskiest calls. The request was HMAC-signed, but the reply was not
+// authenticated at all: any 2xx body saying {"decision":"approve"} was obeyed. An
+// attacker who could answer the endpoint -- or sit on the path of a plaintext
+// one -- could approve any held call, and the audit chain would record a
+// legitimate-looking approval.decided.
+func TestUnauthenticatedRepliesAreRefused(t *testing.T) {
+	cases := []struct {
+		name  string
+		write func(w http.ResponseWriter)
+	}{
+		{"unsigned approval", func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode(webhookReply{Decision: "approve", Approver: "mallory", RequestID: "r"})
+		}},
+		{"wrong signature", func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode(webhookReply{
+				Decision: "approve", RequestID: "r", Signature: "00deadbeef",
+			})
+		}},
+		{"signed for a different request", func(w http.ResponseWriter) {
+			replyFor(w, "some-other-request", "approve", "mallory")
+		}},
+		{"signature over the wrong decision", func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode(webhookReply{
+				Decision:  "approve",
+				RequestID: "r",
+				Signature: signBody(testApprovalKey, []byte("r|deny")),
+			})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				tc.write(w)
+			}))
+			defer srv.Close()
+			d := testClient(srv.URL, nil).Await(context.Background(), ApprovalRequest{RequestID: "r"})
+			if d.Outcome == OutcomeApprove {
+				t.Fatalf("an unauthenticated reply must never approve; got %+v", d)
+			}
+		})
+	}
+}
+
+// TestApprovalWithoutAKeyCannotApprove pins the fail-closed default. With no
+// WINDOWS_MCP_APPROVAL_KEY there is nothing to verify a reply against, so a hold
+// must refuse rather than trust whatever answered.
+func TestApprovalWithoutAKeyCannotApprove(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(webhookReply{Decision: "approve", RequestID: "r"})
+	}))
+	defer srv.Close()
+
+	c := NewApprovalClient(ApprovalConfig{
+		WebhookURL: srv.URL, Timeout: time.Second, PollInterval: 10 * time.Millisecond,
+	})
+	if d := c.Await(context.Background(), ApprovalRequest{RequestID: "r"}); d.Outcome == OutcomeApprove {
+		t.Fatalf("an unkeyed client must not approve; got %+v", d)
 	}
 }

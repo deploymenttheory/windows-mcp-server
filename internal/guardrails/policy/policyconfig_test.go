@@ -230,3 +230,43 @@ func TestRuleSpecificityOrdering(t *testing.T) {
 		}
 	}
 }
+
+// TestPlaintextApprovalWebhookIsRejected pins that dual control cannot run over a
+// channel an on-path attacker can rewrite. Over plaintext http, answering
+// "approve" for every held call is trivial, and the chain records a
+// legitimate-looking approval.decided.
+func TestPlaintextApprovalWebhookIsRejected(t *testing.T) {
+	rejected := []string{
+		"http://approvals.corp.local/decide",
+		"HTTP://approvals.corp.local/decide", // scheme comparison must be case-insensitive
+		"http://10.1.2.3/decide",
+	}
+	for _, raw := range rejected {
+		doc := []byte(`{"version":1,"approvals":{"webhook_url":"` + raw + `"}}`)
+		pol, err := Parse(doc)
+		if err != nil {
+			t.Errorf("%s: parse failed unexpectedly: %v", raw, err)
+			continue
+		}
+		if err := pol.Validate(nil); err == nil {
+			t.Errorf("%s: a plaintext approvals webhook must be refused at load", raw)
+		}
+	}
+
+	accepted := []string{
+		"https://approvals.corp.local/decide",
+		"http://127.0.0.1:9000/decide", // loopback: cannot leave the machine
+		"http://localhost:9000/decide",
+	}
+	for _, raw := range accepted {
+		doc := []byte(`{"version":1,"approvals":{"webhook_url":"` + raw + `"}}`)
+		pol, err := Parse(doc)
+		if err != nil {
+			t.Errorf("%s: parse failed: %v", raw, err)
+			continue
+		}
+		if err := pol.Validate(nil); err != nil {
+			t.Errorf("%s should be accepted, got %v", raw, err)
+		}
+	}
+}
