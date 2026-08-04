@@ -194,9 +194,12 @@ func credentialsInject(
 		}
 	}
 
-	// The character count is safe to report and confirms the injection happened;
-	// the value itself is never returned.
-	msg := fmt.Sprintf("Injected credential %q (%d characters) for target %q.", cred.Name, typed, cred.Target)
+	// Confirming the injection happened does not require the exact length. A
+	// precise count, alongside the target and username that list already reports,
+	// narrows an offline search and confirms a guessed password instantly. A
+	// coarse band tells the model what it needs -- that keystrokes were delivered
+	// -- and tells an attacker much less.
+	msg := fmt.Sprintf("Injected credential %q (%s) for target %q.", cred.Name, describeTyped(typed), cred.Target)
 	if pressEnter {
 		msg += " Pressed Enter."
 	}
@@ -247,4 +250,18 @@ func lookupCredential(registry []desktop.CredentialInfo, args map[string]any) (d
 		available = append(available, c.Name)
 	}
 	return desktop.CredentialInfo{}, fmt.Errorf("no credential named %q; configured credentials: %v", name, available)
+}
+
+// describeTyped renders how much was typed as a band rather than a count.
+func describeTyped(n int) string {
+	switch {
+	case n == 0:
+		return "nothing was typed"
+	case n < 8:
+		return "a short secret"
+	case n < 16:
+		return "a medium-length secret"
+	default:
+		return "a long secret"
+	}
 }
