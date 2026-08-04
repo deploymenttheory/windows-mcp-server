@@ -3,6 +3,8 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -234,5 +236,37 @@ func TestPromptArgsDigestIsDeterministic(t *testing.T) {
 	b := promptArgsBytes(map[string]string{"m": "3", "z": "1", "a": "2"})
 	if string(a) != string(b) {
 		t.Errorf("digest input depends on map order:\n%q\n%q", a, b)
+	}
+}
+
+// TestClientSuppliedFieldsAreBounded is a regression test for unbounded audit
+// growth. clientInfo.name and the resource-subscription list are the only places
+// a client decides how many bytes an entry costs, and both were recorded in full.
+// server/discover is deliberately outside the rate limits and is not decidable by
+// the policy engine, so a client could loop it with a huge name and fill the audit
+// volume -- taking the session recording with it, since they usually share a disk.
+func TestClientSuppliedFieldsAreBounded(t *testing.T) {
+	huge := strings.Repeat("A", 10<<20) // 10 MiB
+	fields := clientIdentity(mcp.Meta{
+		mcp.MetaKeyClientInfo: map[string]any{"name": huge, "version": huge},
+	})
+	for _, k := range []string{"client_name", "client_version"} {
+		got, _ := fields[k].(string)
+		if len(got) > maxRecordedString+32 {
+			t.Errorf("%s recorded %d bytes; a client must not choose the entry size", k, len(got))
+		}
+	}
+
+	many := make([]string, maxRecordedSubscriptions*3)
+	for i := range many {
+		many[i] = "windows://resource/" + strconv.Itoa(i)
+	}
+	subs := subscriptionFields(&mcp.NotificationSubscriptions{ResourceSubscriptions: many})
+	recorded, _ := subs["resource_subscriptions"].([]string)
+	if len(recorded) > maxRecordedSubscriptions {
+		t.Errorf("recorded %d subscriptions, limit is %d", len(recorded), maxRecordedSubscriptions)
+	}
+	if subs["resource_subscriptions_dropped"] == nil {
+		t.Error("a truncated list must say so; a silent truncation reads as a complete record")
 	}
 }
