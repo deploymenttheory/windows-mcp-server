@@ -17,7 +17,7 @@ import (
 func Registry() inventory.ServerTool {
 	destructive := true
 	return NewToolFromHandler(
-		ToolsetSystem,
+		ToolsetSystemAdmin,
 		mcp.Tool{
 			Name: "Registry",
 			Description: "Read and write the Windows registry. Paths use PowerShell drive syntax, e.g. \"HKCU:\\Software\\MyApp\". " +

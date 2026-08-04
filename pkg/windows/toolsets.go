@@ -31,9 +31,22 @@ var (
 	// ToolsetSystem: local system state and objects.
 	ToolsetSystem = inventory.ToolsetMetadata{
 		ID:          "system",
-		Description: "Local system operations: process list/kill, clipboard, registry, and notifications.",
+		Description: "Local system operations: process list/kill, clipboard, and notifications.",
 		Default:     true,
 		Icon:        "gear",
+	}
+	// ToolsetSystemAdmin: persistence and machine-configuration tools.
+	//
+	// Separate from ToolsetSystem, and non-default, because these outlive the
+	// session. ScheduledTask create/run registers a program on logon or startup and
+	// Registry set writes Run keys, so either survives the session, the kill switch
+	// and a reboot — a different class of risk from listing processes or reading the
+	// clipboard, and not something a persona should carry implicitly.
+	ToolsetSystemAdmin = inventory.ToolsetMetadata{
+		ID: "system-admin",
+		Description: "Registry read/write and scheduled-task management. These change machine " +
+			"configuration and can persist across reboots; disabled by default.",
+		Icon: "gear",
 	}
 	// ToolsetShell: arbitrary PowerShell execution (powerful; non-default).
 	ToolsetShell = inventory.ToolsetMetadata{
@@ -128,8 +141,11 @@ var Personas = map[string]Persona{
 	"first-line-support": {
 		ID:          "first-line-support",
 		Description: "1st-line support engineer: perceive and drive the desktop, manage apps and system state, run diagnostics, and control services.",
-		Toolsets:    []string{"screen", "interaction", "apps", "system", "shell", "diagnostics"},
-		ReadOnly:    false,
+		// system-admin is explicit here: this persona's own instructions name
+		// editing the registry as part of the job, so the split must not silently
+		// take that away. The QA and business-user personas do not get it.
+		Toolsets: []string{"screen", "interaction", "apps", "system", "system-admin", "shell", "diagnostics"},
+		ReadOnly: false,
 		Instructions: "You are assisting a 1st-line support engineer troubleshooting a Windows machine. " +
 			"Diagnose before you act: take a Snapshot to see the desktop, and use SystemInfo, Process, and Service " +
 			"to gather state before making changes. Use PowerShell for deeper diagnostics. Before any destructive or " +

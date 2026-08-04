@@ -23,7 +23,7 @@ import (
 func ScheduledTask() inventory.ServerTool {
 	destructive := true
 	return NewToolFromHandler(
-		ToolsetSystem,
+		ToolsetSystemAdmin,
 		mcp.Tool{
 			Name: "ScheduledTask",
 			Description: "List, inspect, and manage Windows scheduled tasks. mode=list shows tasks (optionally " +
