@@ -456,30 +456,32 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		}
 	}
 
-	// Receiving middleware (outermost first). newMCPSurface already installed
-	// inject-deps and cache hints; these nest inside them. Telemetry sits between
-	// audit and rug-pull: audit must see every request first, and a span should
-	// cover the rug-pull and policy work that follows.
-	server.AddReceivingMiddleware(audit.Middleware())
+	// Receiving middleware, outermost first, installed in one call so the order
+	// below is the order that actually runs (see installReceiving). Telemetry sits
+	// between audit and rug-pull: audit must see every request first, and a span
+	// should cover the rug-pull and policy work that follows. The policy engine is
+	// innermost, so nothing can route around it and the audit and rug-pull layers
+	// still observe the requests it refuses.
+	chain := []mcp.Middleware{audit.Middleware()}
 	if telemetryMiddleware != nil {
-		server.AddReceivingMiddleware(telemetryMiddleware)
+		chain = append(chain, telemetryMiddleware)
 	}
-	server.AddReceivingMiddleware(rugpull.Middleware())
-	server.AddReceivingMiddleware(rugpull.PromptMiddleware())
-	server.AddReceivingMiddleware(rugpull.ResourceMiddleware())
-	server.AddReceivingMiddleware(rugpull.DiscoverMiddleware())
-
-	// The policy engine, innermost so nothing can route around it and so the audit
-	// and rug-pull layers still observe the requests it refuses.
-	server.AddReceivingMiddleware(enforce.Middleware(engine, enforce.EnforcerDeps{
-		Audit:           audit,
-		Kill:            tripPolicy,
-		RecordDecision:  recordDecision,
-		Approver:        approver,
-		SessionID:       sessionStamp,
-		ApprovalTimeout: devicePolicy.Approvals.Timeout.Std(),
-		Logger:          logger,
-	}))
+	chain = append(chain,
+		rugpull.Middleware(),
+		rugpull.PromptMiddleware(),
+		rugpull.ResourceMiddleware(),
+		rugpull.DiscoverMiddleware(),
+		enforce.Middleware(engine, enforce.EnforcerDeps{
+			Audit:           audit,
+			Kill:            tripPolicy,
+			RecordDecision:  recordDecision,
+			Approver:        approver,
+			SessionID:       sessionStamp,
+			ApprovalTimeout: devicePolicy.Approvals.Timeout.Std(),
+			Logger:          logger,
+		}),
+	)
+	surface.installReceiving(chain...)
 
 	// RegisterAll rather than RegisterTools: resources and prompts are part of the
 	// served surface too. Note RegisterResources (fixed URIs) and

@@ -171,15 +171,6 @@ func buildConformanceServer(
 	surface := newMCPSurface(cfg, inv, personaInstructions, deps)
 	server := surface.Server
 
-	// Outermost, so nothing a handler does can take the process down.
-	//
-	// This is not defensive padding. Without it, one handler dereferencing a nil
-	// engine killed the host mid-suite, and every scenario after that point
-	// reported "fetch failed" — indistinguishable, in the results, from a server
-	// that answered wrongly. A conformance run whose failures might mean "the
-	// server is not there" is not evidence of anything.
-	server.AddReceivingMiddleware(recoverMiddleware(logger))
-
 	// The transparency services, as RunStdio wires them. A trip here logs and
 	// records rather than actuating containment: the conformance host has no
 	// desktop to contain, and a kill mid-suite would destroy the evidence.
@@ -188,12 +179,6 @@ func buildConformanceServer(
 		logger.Error("guardrail.rugpull", "reason", reason)
 	}, audit)
 
-	server.AddReceivingMiddleware(audit.Middleware())
-	server.AddReceivingMiddleware(rugpull.Middleware())
-	server.AddReceivingMiddleware(rugpull.PromptMiddleware())
-	server.AddReceivingMiddleware(rugpull.ResourceMiddleware())
-	server.AddReceivingMiddleware(rugpull.DiscoverMiddleware())
-
 	// The policy engine under the built-in default: present, evaluating and
 	// recording, refusing nothing. The suite must meet the same middleware chain a
 	// real session does — otherwise the conformance evidence describes a server
@@ -201,10 +186,28 @@ func buildConformanceServer(
 	// protocol failures.
 	engine := policy.NewEngine(policy.Default(), newGuardrailRegistry(cfg, logger), nil,
 		func() *signals.Env { return &signals.Env{Sys: &conformanceProbe{}, Logger: logger} })
-	server.AddReceivingMiddleware(enforce.Middleware(engine, enforce.EnforcerDeps{
-		Audit:  audit,
-		Logger: logger,
-	}))
+
+	// One call, outermost first — see installReceiving for why it cannot be
+	// several. recoverMiddleware is the first layer inside the unconditional two,
+	// so nothing a handler does can take the process down.
+	//
+	// That recover is not defensive padding. Without it, one handler dereferencing
+	// a nil engine killed the host mid-suite, and every scenario after that point
+	// reported "fetch failed" — indistinguishable, in the results, from a server
+	// that answered wrongly. A conformance run whose failures might mean "the
+	// server is not there" is not evidence of anything.
+	surface.installReceiving(
+		recoverMiddleware(logger),
+		audit.Middleware(),
+		rugpull.Middleware(),
+		rugpull.PromptMiddleware(),
+		rugpull.ResourceMiddleware(),
+		rugpull.DiscoverMiddleware(),
+		enforce.Middleware(engine, enforce.EnforcerDeps{
+			Audit:  audit,
+			Logger: logger,
+		}),
+	)
 
 	inv.RegisterAll(ctx, server, deps)
 	engine.SetIndex(newToolIndex(ctx, inv))
