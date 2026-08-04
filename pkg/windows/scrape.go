@@ -21,6 +21,9 @@ import (
 
 const scrapeMaxBytes = 4 << 20 // 4 MiB response cap
 
+// maxScrapeChars bounds what one call returns to the model.
+const maxScrapeChars = 50000
+
 // Scrape fetches a web page and extracts its readable text.
 func Scrape() inventory.ServerTool {
 	openWorld := true
@@ -56,9 +59,9 @@ func Scrape() inventory.ServerTool {
 			if err != nil {
 				return NewToolResultError(err.Error()), nil
 			}
-			if maxChars < 100 {
-				maxChars = 100
-			}
+			// Floor and ceiling. Without an upper bound a single call could put the
+			// whole 4 MiB body cap into the model's context.
+			maxChars = clampInt(maxChars, 100, maxScrapeChars)
 
 			if err := validateScrapeURL(rawURL, deps.EnforceHTTPS()); err != nil {
 				return NewToolResultErrorFromErr("invalid URL", err), nil

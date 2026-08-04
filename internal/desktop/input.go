@@ -167,6 +167,9 @@ func (d *Desktop) ClickMany(points [][2]int, holdCtrl bool) error {
 	if len(points) == 0 {
 		return nil
 	}
+	if len(points) > MaxBatchItems {
+		return fmt.Errorf("%w: %d points (limit %d)", ErrInputTooLarge, len(points), MaxBatchItems)
+	}
 	if d.overlay != nil {
 		for _, p := range points {
 			d.overlay.flashClick(p[0], p[1])
@@ -212,6 +215,9 @@ func (d *Desktop) MoveCursor(x, y int) error {
 // as Enter and Tab virtual keys; all other characters are sent as Unicode
 // keystrokes so no keyboard-layout mapping is needed.
 func (d *Desktop) TypeText(text string) error {
+	if len(text) > MaxTypeChars {
+		return fmt.Errorf("%w: %d characters (limit %d)", ErrInputTooLarge, len(text), MaxTypeChars)
+	}
 	return d.Do(func() error {
 		for _, r := range text {
 			switch r {
@@ -403,3 +409,26 @@ func keyNameToVK(name string) (km.VIRTUAL_KEY, bool) {
 	}
 	return 0, false
 }
+
+// Limits on a single synthetic-input call.
+//
+// The engine serializes every COM, UIA and input operation onto one thread, so a
+// call that runs for minutes stops the whole desktop surface -- snapshots, the
+// overlay, every other tool -- for that long. TypeText sends one SendInput pair
+// per rune and ClickMany sleeps between points, so neither had an upper bound on
+// how long it could hold the thread; a single Type of a few megabytes was an
+// effective denial of service on the session, and it audited as one tool call.
+//
+// The limits are set well above real usage rather than tightly: a UI test that
+// pastes a long description should not be refused. They exist to bound a runaway
+// or hostile call, not to shape ordinary ones.
+const (
+	// MaxTypeChars bounds one Type call.
+	MaxTypeChars = 10000
+	// MaxBatchItems bounds the point and edit counts of the batch tools.
+	MaxBatchItems = 100
+)
+
+// ErrInputTooLarge reports a synthetic-input call above its limit. It is a
+// refusal the model can act on by splitting the work, not an engine failure.
+var ErrInputTooLarge = errors.New("input exceeds the per-call limit")

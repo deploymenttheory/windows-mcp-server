@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -19,6 +20,13 @@ import (
 
 // maxFileReadBytes caps how much a single read returns.
 const maxFileReadBytes = 1 << 20 // 1 MiB
+
+// Bounds on a recursive search, which is otherwise a whole-volume walk feeding an
+// unbounded result string.
+const (
+	maxSearchMatches  = 5000
+	maxSearchDuration = 20 * time.Second
+)
 
 // protectedPathChecker is the optional capability the FileSystem tool uses to
 // refuse touching a guardrail path (the audit log, the credentials file, the
@@ -276,10 +284,20 @@ func fsCopyMove(src, dest string, move bool) (*mcp.CallToolResult, error) {
 }
 
 func fsSearch(root, pattern string, recursive bool) (*mcp.CallToolResult, error) {
+	// A recursive search from a drive root walks the whole volume and accumulates
+	// every match into one result string: minutes of I/O, and a reply large enough
+	// to exhaust the model's context. Both are bounded, and what was dropped is
+	// reported rather than silently omitted.
 	var matches []string
+	var truncated bool
+	deadline := time.Now().Add(maxSearchDuration)
 	walk := func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable entries
+		}
+		if len(matches) >= maxSearchMatches || time.Now().After(deadline) {
+			truncated = true
+			return filepath.SkipAll
 		}
 		if d.IsDir() {
 			if !recursive && p != root {
@@ -298,5 +316,11 @@ func fsSearch(root, pattern string, recursive bool) (*mcp.CallToolResult, error)
 	if len(matches) == 0 {
 		return NewToolResultTextf("No files matching %q under %s.", pattern, root), nil
 	}
-	return NewToolResultTextf("%d match(es) for %q:\n%s", len(matches), pattern, strings.Join(matches, "\n")), nil
+	note := ""
+	if truncated {
+		note = fmt.Sprintf(" (stopped at %d matches or %s — narrow the path or pattern)",
+			maxSearchMatches, maxSearchDuration)
+	}
+	return NewToolResultTextf("%d match(es) for %q%s:\n%s",
+		len(matches), pattern, note, strings.Join(matches, "\n")), nil
 }
