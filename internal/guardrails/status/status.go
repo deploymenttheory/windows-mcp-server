@@ -176,7 +176,7 @@ func StatusTool(
 			Server     ServerStatus `json:"server"`
 			Killed     bool         `json:"killed"`
 			KillReason string       `json:"kill_reason,omitempty"`
-		}{Decision: d, Server: snap, Killed: tripped, KillReason: reason}
+		}{Decision: redactForAgent(d), Server: snap, Killed: tripped, KillReason: reason}
 		b, _ := json.MarshalIndent(payload, "", "  ")
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, nil
 	}
@@ -218,4 +218,27 @@ func KillTool(stop func(reason string)) (*mcp.Tool, mcp.ToolHandler) {
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Session stopping: " + reason}}}, nil
 	}
 	return tool, handler
+}
+
+// redactForAgent strips the durable device identifiers from a decision before it
+// is handed to the model.
+//
+// The tool is read-only and most of what it reports is what an agent needs to
+// reason about its own constraints -- which checks passed, whether the session is
+// admitted, what enforcement tier is in force. The identifiers are different: the
+// hardware serial, the Entra device ID and the tenant ID identify the machine and
+// the organisation, are durable, and tell an agent nothing about what it may do.
+// They are worth something only to an attacker correlating this session with a
+// fleet, and a prompt-injected agent can put anything it reads into a tool
+// argument or an outbound request.
+//
+// Hostname stays: it is how an operator (and the model, when reporting) tells one
+// machine from another, and it is visible from a dozen other places on the
+// desktop. The loopback status endpoint, which is operator-facing and
+// authenticated, still returns the whole document.
+func redactForAgent(d signals.Decision) signals.Decision {
+	d.Device.Serial = ""
+	d.Device.EntraDeviceID = ""
+	d.Device.TenantID = ""
+	return d
 }
