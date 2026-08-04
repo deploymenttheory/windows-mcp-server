@@ -74,7 +74,7 @@ do**, see the walk-throughs for a
 
 | | What it does | Guide |
 |---|---|---|
-| **Desktop automation** | 34 tools across 12 toolsets: accessibility-tree perception, UI Automation pattern invocation, synthetic input, screenshots, apps, windows, PowerShell, registry, filesystem, processes, services, event logs, network, scheduled tasks, packages, scraping, plan-and-apply | [Toolsets and personas](docs/toolsets-and-personas.md) |
+| **Desktop automation** | 35 tools across 13 toolsets: accessibility-tree perception, UI Automation pattern invocation, synthetic input, screenshots, apps, windows, PowerShell, registry, filesystem, processes, services, event logs, network, scheduled tasks, packages, scraping, plan-and-apply | [Toolsets and personas](docs/toolsets-and-personas.md) |
 | **Personas** | Presets that select toolsets *and* inject workflow guidance, so the agent adopts a role rather than just getting a tool list | [Toolsets and personas](docs/toolsets-and-personas.md#personas) |
 | **Credentials** | The agent signs in to apps and sites without ever being told the secret. The `Credentials` tool has no read mode and no engine method returns plaintext — but see the note below on toolset exposure | [Credentials](docs/credentials.md) |
 | **Session recording** | Once `transparency.recording_dir` is set, the whole session goes to one video file — automatically, under every persona — with timeline markers | [Session recording](docs/recording.md) |
@@ -104,9 +104,10 @@ are on by default; the rest are opt-in.
 |---|:---:|---|
 | `screen` | ✓ | `Snapshot`, `Screenshot`, `DisplayInventory`, `Recording` |
 | `interaction` | ✓ | `Click`, `Type`, `Invoke`, `GetText`, `Scroll`, `Move`, `Shortcut`, `Wait`, `WaitFor`, `MultiSelect`, `MultiEdit` |
-| `apps` | ✓ | `App` (launch / launch_executable / switch / resize) |
-| `system` | ✓ | `Clipboard`, `Process`, `Registry`, `Notification`, `ScheduledTask` (list / get / run / enable / disable / delete / create) |
-| `shell` | | `PowerShell` |
+| `apps` | ✓ | `App` (launch / switch / resize) |
+| `system` | ✓ | `Clipboard`, `Process`, `Notification` |
+| `system-admin` | | `Registry`, `ScheduledTask` (list / get / run / enable / disable / delete / create) |
+| `shell` | | `PowerShell`, `LaunchExecutable` |
 | `filesystem` | | `FileSystem` (read / write / copy / move / delete / list / search / info) |
 | `web` | | `Scrape` |
 | `diagnostics` | | `SystemInfo` (OS/hardware/disk via WMI), `Service` (list / start / stop / restart), `EventLog` (Get-WinEvent queries), `Network` (adapters / dns / config / test) |
@@ -234,6 +235,7 @@ its policy is written.
 |---|---|
 | `allow` | Proceeds; the failure is still recorded |
 | `warn` | Proceeds, and the warning rides back with the result so the model sees it |
+| `hold` | The call is suspended on an out-of-band human authoriser and fails closed — a timeout, an unreachable webhook or an unintelligible reply all deny |
 | `deny` | This call is refused, and re-evaluated next time — a signal that recovers restores service with no restart |
 | `kill` | The kill switch trips and the containment ladder runs |
 
@@ -260,9 +262,9 @@ tool > annotation > named toolset > `"*"`.
 .\windows-mcp-server.exe policy explain  --policy-config policy.json --tool PowerShell
 ```
 
-Five starting points ship in `policy/examples/`: `audit.json` (adopt first —
-refuses nothing), `secure.json`, `enterprise.json`, `locked-down.json` and
-`egress.json`.
+Six starting points ship in `policy/examples/`: `audit.json` (adopt first —
+refuses nothing), `secure.json`, `enterprise.json`, `locked-down.json`,
+`egress.json` and `dual-control.json`.
 
 ### Trust model — read this
 

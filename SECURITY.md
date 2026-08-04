@@ -21,9 +21,9 @@ public disclosure.
 
 ## Supported versions
 
-This project has not yet cut a tagged release. Until it does, only the current
-`main` branch is supported — please reproduce against latest `main` before
-reporting.
+Only the latest tagged release and the current `main` branch are supported.
+Please reproduce against latest `main` before reporting: fixes land there first,
+and several releases carry security fixes made after them.
 
 ## Scope — what is *not* a vulnerability
 
@@ -43,8 +43,8 @@ not replace WDAC/AppLocker, Conditional Access, or code signing.
 In scope, and genuinely interesting to us:
 
 - a way for the **agent** to bypass a control it should not be able to reach:
-  the receiving middleware, the circuit breaker, the audit chain, the kill
-  switch, or the rug-pull detector
+  the receiving middleware, the policy engine, the rate limits, the audit chain,
+  the kill switch, the egress proxy, or the rug-pull detector
 - a way to forge or silently break the hash-chained audit log
 - privilege escalation beyond the context the server was launched in
 - a control that the flags and docs claim is off but which is actually active, or

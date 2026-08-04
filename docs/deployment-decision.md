@@ -91,13 +91,18 @@ From [Monitoring](monitoring.md):
 What the controls do **not** remove, restated as things you are accepting:
 
 - Benign-annotated tool calls can still **compose** into a harmful outcome within
-  the served surface. Scope the surface with personas; plan-and-apply (on the
-  roadmap) will let the whole plan be reviewed before it runs.
-- The **audit HMAC key sits on the box** unless you anchor the head off it.
+  the served surface. Scope the surface with personas, and use
+  [plan-and-apply](plan-and-apply.md) with `require_plan` where the composition
+  risk is real — it adjudicates a whole sequence before any step runs.
+- The **audit chain is unkeyed unless `audit_destination` is a file or
+  directory**; with `stderr`, the shipped default, there is nowhere to keep a key.
+  Keyed, the **HMAC key still sits on the box** unless you anchor the head off it.
 - **`FileSystem` path protection** matches by cleaned path — not 8.3 short names
-  or hard links. It is a guardrail, not a sandbox.
-- The **`Registry` tool is in the default `system` toolset** and reads arbitrary
-  keys; gate it with `tool: Registry` if that surface is unwanted.
+  or hard links — and binds the `FileSystem` tool only. It is a guardrail, not a
+  sandbox.
+- The **`status_token` belongs in `status_token_env`**, not inline: the policy
+  document is readable through the `filesystem` toolset, and `POST /revoke`
+  behind that credential runs the containment ladder.
 - A **local administrator** can defeat any on-box control. The mitigation is the
   OS controls you pair this with, plus the surviving evidence.
 

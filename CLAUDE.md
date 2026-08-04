@@ -96,7 +96,7 @@ no CLSID constant, follow this pattern and comment why.
 
 ## Adding a tool
 
-All 27 inventory tools use `NewToolFromHandler` (`pkg/windows/dependencies.go:136`).
+All 35 inventory tools use `NewToolFromHandler` (`pkg/windows/dependencies.go:136`).
 The generic `NewTool[In, Out]` exists but has zero users — prefer the established
 path. Canonical shape (see `pkg/windows/clipboard.go:15-69`):
 
@@ -133,11 +133,17 @@ Checklist:
 5. Register in the correct comment group of `AllTools()` (`tools.go:15-60`).
 6. **Bump `TestExpectedToolCount`** (`tools_test.go:53`) — it is a deliberate
    tripwire, not an annoyance.
-7. Extend `TestReadOnlyToolsAreSafe` / `TestDestructiveToolsAreWrite` if it
-   belongs in either list.
+7. Extend `TestReadOnlyToolsAreSafe` / `TestExecutionPrimitivesAreAnnotatedDestructive`
+   if it belongs in either list.
 8. Set `DestructiveHint` honestly. Policy rules match on it, so it is what decides
    whether a tool is covered by a rule requiring hardware posture, or by a rate
    limit. It is load-bearing metadata now, not documentation.
+   `TestEveryWriteToolIsAnnotatedDestructive` makes this deny-by-default: a tool
+   that is not read-only must carry the hint or be listed there with a reason.
+   Do not add an exemption to quiet the test — it is the register of what a
+   `annotation: destructive` rule does not reach. Seven tools were once outside
+   every shipped gate because the older allowlist test only checked the names
+   someone had thought to add.
 
 ### The `IsError` convention — read this before returning an error
 
@@ -342,7 +348,8 @@ can *use* a secret but can never *read* one.
 - No function in `internal/desktop` returns a secret. `readSecretUnits` returns
   UTF-16 code units, not a string, precisely so a refactor cannot hand one to a
   caller; `InjectCredential` converts them straight to keystrokes and zeroes the
-  buffer. Only the character count comes back.
+  buffer. Only a coarse length band comes back — never a count, which would
+  confirm a guessed value (`describeTyped`, `pkg/windows/credentials.go`).
 - The `Credentials` tool has exactly three modes — `list`, `verify`, `inject` —
   and `TestCredentialsToolNeverReturnsSecrets` pins that set. **Do not add a
   `get`/`read` mode**: it would put plaintext into the model's context.

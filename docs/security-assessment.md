@@ -29,6 +29,33 @@ Every finding carries a `file:line` reference, verified against the tree at the
 commit above. Line numbers drift; the appendix gives commands that re-locate each
 one by content.
 
+## Status
+
+**Every finding in registers A, B and C has been remediated**, in the PR that
+added this document. The findings are left stated in the present tense as they
+were written, because the argument for each fix is the finding itself and a
+register rewritten into the past tense stops being checkable. What changed:
+
+| Finding | Fix |
+|---|---|
+| A1 destructive annotation | `DestructiveHint` added to `Invoke`, `Click`, `Scroll`, `MultiSelect`, `Clipboard`, `Notification`, `Recording`. `Move` deliberately left out, with the reasoning recorded. `TestEveryWriteToolIsAnnotatedDestructive` inverts the tripwire to deny-by-default |
+| A2 clipboard | Covered by A1; `Clipboard` is now behind any destructive rule |
+| A3 Scrape SSRF | Uses `hostmatch.ForbiddenAddr`; the dial goes to the vetted address, closing the rebinding window (also roadmap S1) |
+| A4 `completion/complete` | Audited and policy-decided; the typed prefix is digested, not recorded |
+| A5 `subscriptions/listen` | Policy-decided as a read-only data-egress subject |
+| A6 posture drift | Arming it without a `scope: "startup"` rule is refused at load |
+| A7 status token | `status_token_env` added; inline `status_token` deprecated and warned |
+| A8 egress auth | An `auth_token_env` naming an empty variable is now fatal, not a warning |
+| A9 malformed params | Refused and audited `policy.undecidable` instead of passing undecided |
+| A10 digest salt | Logs when it degrades; `DigestIsUnsalted()` exposes it |
+| A11 run-context | `RunContext.TokenUnread` distinguishes a failed read from an answer; reports `Error` |
+| A12 proxy challenge | Advertises `Bearer`; RFC 7617 `Basic` accepted properly |
+| B1–B5, C | Documentation corrected; the threat-model table gained a **Coverage** column |
+
+Two things this PR did **not** change, both out of its scope: roadmap items S2–S11
+remain open and are unaffected, and the two pre-existing `go vet` warnings in
+`internal/desktop/journeyhook_windows.go` are untouched.
+
 **Standing caveat.** `SECURITY.md:28-41` puts unsandboxed tool access and spoofable
 local signals out of scope, and this assessment honours that. Nothing below amounts
 to "the PowerShell tool can run PowerShell". The findings are about controls behaving

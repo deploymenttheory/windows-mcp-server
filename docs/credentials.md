@@ -140,9 +140,11 @@ design is built around:
 - **No mode returns plaintext.** There is deliberately no `get`. A unit test pins
   the mode set, so a secret-reading mode cannot be added by accident.
 - **`inject` types keystrokes.** The value is read inside the desktop engine,
-  converted straight to synthetic input, and the buffers zeroed. Only the
-  character count comes back. The secret never enters a tool result, the audit
-  log, the transcript, or the model's context.
+  converted straight to synthetic input, and the buffers zeroed. Only a coarse
+  length band comes back — "a short secret", "a medium-length secret", "a long
+  secret" — never a character count, which would confirm a guess. The secret
+  never enters a tool result, the audit log, the transcript, or the model's
+  context.
 - **No function in the engine returns a secret.** The read path returns UTF-16
   code units rather than a string, specifically so a refactor cannot hand one to
   a caller.
@@ -158,10 +160,11 @@ design is built around:
 - **Session-scoped.** Entries are written with `CRED_PERSIST_SESSION` and deleted
   on *every* shutdown path — normal exit and kill-switch trip alike. Durable
   persistence is refused rather than silently overridden.
-- `Credentials` is **not** annotated destructive — it is annotated
-  `ReadOnlyHint: false`, because `inject` synthesizes input. A rate limit or rule
-  matching `annotation: destructive` therefore does **not** cover it. Match it by
-  name (`"tool": "Credentials"`) or by toolset if you want to gate it.
+- `Credentials` is annotated **destructive** (and `ReadOnlyHint: false`, because
+  `inject` synthesizes input), so a rate limit or rule matching
+  `annotation: destructive` covers it — as does `require_plan` written against
+  that annotation. Matching it by name (`"tool": "Credentials"`) still works and
+  is the narrower expression.
 
 > Secrets exist in process memory between reading the file and installing them.
 > Buffers are zeroed and the JSON decoder avoids materializing an unwipeable Go
