@@ -3,6 +3,7 @@ package egress
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"io"
 	"log/slog"
 	"net"
@@ -352,6 +353,54 @@ func TestProxyAuthorizationIsRequiredWhenConfigured(t *testing.T) {
 		"Host: api.allowed.example:443\r\nProxy-Authorization: Bearer s3cret\r\n\r\n")
 	if authed.StatusCode != http.StatusOK {
 		t.Errorf("the correct credential should be admitted, got %d", authed.StatusCode)
+	}
+}
+
+// TestProxyChallengeMatchesWhatItAccepts pins a mismatch between the 407 and the
+// comparison behind it.
+//
+// The challenge advertised Basic while authorized compared the raw remainder
+// after stripping the prefix, so a client that followed the challenge and encoded
+// its credential per RFC 7617 could never authenticate -- it sent
+// base64("user:s3cret") and was compared against "s3cret". The challenge now names
+// Bearer, which is what the documentation shows and what the proxy accepts, and a
+// properly encoded Basic credential is accepted as well.
+func TestProxyChallengeMatchesWhatItAccepts(t *testing.T) {
+	h := newHarness(t, []string{"api.allowed.example"}, func(c *Config) { c.AuthToken = "s3cret" })
+
+	resp := h.do(t, connectRequest("api.allowed.example:443"))
+	if got := resp.Header.Get("Proxy-Authenticate"); !strings.HasPrefix(got, "Bearer ") {
+		t.Errorf("the challenge must name a scheme the proxy accepts, got %q", got)
+	}
+
+	// RFC 7617: base64("<userid>:<password>"), token in either half.
+	for _, cred := range []string{"user:s3cret", "s3cret:"} {
+		encoded := base64.StdEncoding.EncodeToString([]byte(cred))
+		got := h.do(t, "CONNECT api.allowed.example:443 HTTP/1.1\r\n"+
+			"Host: api.allowed.example:443\r\nProxy-Authorization: Basic "+encoded+"\r\n\r\n")
+		if got.StatusCode != http.StatusOK {
+			t.Errorf("Basic %q should be admitted, got %d", cred, got.StatusCode)
+		}
+	}
+
+	// The scheme token is case-insensitive per RFC 9110.
+	lower := h.do(t, "CONNECT api.allowed.example:443 HTTP/1.1\r\n"+
+		"Host: api.allowed.example:443\r\nProxy-Authorization: bearer s3cret\r\n\r\n")
+	if lower.StatusCode != http.StatusOK {
+		t.Errorf("a lowercase scheme should be admitted, got %d", lower.StatusCode)
+	}
+
+	// A wrong credential is still refused, in every form.
+	for _, header := range []string{
+		"Bearer wrong",
+		"Basic " + base64.StdEncoding.EncodeToString([]byte("user:wrong")),
+		"wrong",
+	} {
+		got := h.do(t, "CONNECT api.allowed.example:443 HTTP/1.1\r\n"+
+			"Host: api.allowed.example:443\r\nProxy-Authorization: "+header+"\r\n\r\n")
+		if got.StatusCode != http.StatusProxyAuthRequired {
+			t.Errorf("%q must be refused, got %d", header, got.StatusCode)
+		}
 	}
 }
 

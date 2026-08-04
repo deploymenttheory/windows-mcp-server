@@ -32,19 +32,24 @@ var secretEnvVars = []string{
 // inherit the parent environment as it stands. Clearing the values here means
 // there is nothing left to inherit, whatever route a child is started by.
 //
-// It also covers the one variable the prefix rule cannot know about: the egress
-// proxy's shared secret is named *by the policy document*, so its variable can be
-// called anything at all.
+// It also covers the two variables the prefix rule cannot know about: the egress
+// proxy's shared secret and the status endpoint's bearer token are named *by the
+// policy document*, so their variables can be called anything at all.
 //
 // Order matters. Call this only after the audit log, the approvals client, the
 // signal registry, the telemetry exporter and the egress proxy have been
 // constructed; each reads its secret exactly once, at startup, into the struct
 // that uses it.
 func scrubSecretEnv(devicePolicy *policy.Policy, logger *slog.Logger) {
-	names := make([]string, 0, len(secretEnvVars)+1)
+	names := make([]string, 0, len(secretEnvVars)+2)
 	names = append(names, secretEnvVars...)
 	if devicePolicy != nil && devicePolicy.Egress.AuthTokenEnv != "" {
 		names = append(names, devicePolicy.Egress.AuthTokenEnv)
+	}
+	// The status token reaches POST /revoke, which runs the containment ladder --
+	// so it is at least as worth clearing as the proxy credential beside it.
+	if devicePolicy != nil && devicePolicy.Transparency.StatusTokenEnv != "" {
+		names = append(names, devicePolicy.Transparency.StatusTokenEnv)
 	}
 
 	cleared := 0

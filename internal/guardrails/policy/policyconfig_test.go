@@ -197,6 +197,68 @@ func TestValidateRejectsARuleThatMatchesNothing(t *testing.T) {
 	}
 }
 
+// TestPostureDriftNeedsSomethingToReEvaluate pins a trigger that could be armed
+// and still never fire.
+//
+// Drift is detected by re-evaluating the startup subject on each monitor
+// interval, and a startup subject matches startup-scope rules only. With no such
+// rule the monitor runs, logs, and can never trip: the operator asked for drift
+// detection and got a timer. The other route to the trigger, the signal cache's
+// Refresh, returns nil unconditionally and deliberately, so nothing else can fire
+// it either.
+func TestPostureDriftNeedsSomethingToReEvaluate(t *testing.T) {
+	const armed = `{
+	  "version": 1, "mode": "enforce",
+	  "signals": { "run-context": { "ttl": "0s" } },
+	  "rules": [ { "name": "calls", "match": { "toolset": "*" }, "require": ["run-context"], "on_fail": "deny" } ],
+	  "kill": { "triggers": { "posture_drift": true } }
+	}`
+	p, err := Parse([]byte(armed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = p.Validate(knownSignals)
+	if err == nil {
+		t.Fatal("arming posture_drift with no startup rule must be refused")
+	}
+	// Validate collects problems into one ErrInvalidPolicy, rendering each cause
+	// rather than wrapping it, so match the way the sibling tests do.
+	if !errors.Is(err, ErrNoStartupRule) && !strings.Contains(err.Error(), "can never fire") {
+		t.Errorf("want a posture-drift rejection, got %v", err)
+	}
+
+	// Add a startup rule and the same document is fine.
+	withStartup, err := Parse([]byte(`{
+	  "version": 1, "mode": "enforce",
+	  "signals": { "run-context": { "ttl": "0s" } },
+	  "rules": [
+	    { "name": "admission", "match": { "scope": "startup" }, "require": ["run-context"], "on_fail": "deny" },
+	    { "name": "calls", "match": { "toolset": "*" }, "require": ["run-context"], "on_fail": "deny" }
+	  ],
+	  "kill": { "triggers": { "posture_drift": true } }
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := withStartup.Validate(knownSignals); err != nil {
+		t.Errorf("posture_drift with a startup rule to re-evaluate is valid: %v", err)
+	}
+
+	// And the trigger off is fine either way -- this must not become a blanket
+	// requirement that every policy carry a startup rule.
+	unarmed, err := Parse([]byte(`{
+	  "version": 1, "mode": "enforce",
+	  "signals": { "run-context": { "ttl": "0s" } },
+	  "rules": [ { "name": "calls", "match": { "toolset": "*" }, "require": ["run-context"], "on_fail": "deny" } ]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unarmed.Validate(knownSignals); err != nil {
+		t.Errorf("a policy that does not arm posture_drift needs no startup rule: %v", err)
+	}
+}
+
 // TestStartupRuleNeedsNoSelector: a startup rule is evaluated once for the
 // process, so it has no tool to select and an empty match is correct there.
 func TestStartupRuleNeedsNoSelector(t *testing.T) {

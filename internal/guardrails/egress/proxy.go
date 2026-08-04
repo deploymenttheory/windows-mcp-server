@@ -3,6 +3,7 @@ package egress
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -89,7 +90,12 @@ func newProxy(cfg Config) *proxy {
 func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !p.authorized(r) {
 		p.counters.deniedAuth.Add(1)
-		w.Header().Set("Proxy-Authenticate", `Basic realm="windows-mcp-egress"`)
+		// Bearer, because that is the scheme this proxy actually accepts and the one
+		// docs/egress.md tells clients to send. It advertised Basic while comparing
+		// the raw token, so a client that followed the challenge and encoded its
+		// credential per RFC 7617 could never authenticate. Basic is still accepted
+		// (see authorized) for a client configured to send it regardless.
+		w.Header().Set("Proxy-Authenticate", `Bearer realm="windows-mcp-egress"`)
 		http.Error(w, "egress policy: this proxy requires a Proxy-Authorization credential.",
 			http.StatusProxyAuthRequired)
 		return
@@ -103,14 +109,52 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // authorized compares in constant time so a wrong token cannot be discovered by
 // timing. An empty configured token means no authentication is required.
+//
+// Three accepted forms. "Bearer <token>" is what the challenge advertises and
+// what the documentation shows. "Basic <base64>" is decoded per RFC 7617 and
+// either half of userid:password may carry the token, because a client told only
+// "the proxy needs a credential" will often put it in one or the other. A bare
+// value with no scheme is accepted too: it worked before this function knew about
+// Basic, and breaking it would be a gratuitous change to a running deployment.
 func (p *proxy) authorized(r *http.Request) bool {
 	if p.cfg.AuthToken == "" {
 		return true
 	}
 	got := strings.TrimSpace(r.Header.Get("Proxy-Authorization"))
-	got = strings.TrimPrefix(got, "Bearer ")
-	got = strings.TrimPrefix(got, "Basic ")
-	return subtle.ConstantTimeCompare([]byte(got), []byte(p.cfg.AuthToken)) == 1
+
+	if rest, ok := cutSchemePrefix(got, "Basic "); ok {
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(rest))
+		if err != nil {
+			return false
+		}
+		userid, password, found := strings.Cut(string(decoded), ":")
+		if !found {
+			return p.tokenEquals(string(decoded))
+		}
+		// Both halves are compared, and neither short-circuits the other, so the
+		// answer takes the same work either way.
+		return p.tokenEquals(userid) || p.tokenEquals(password)
+	}
+	if rest, ok := cutSchemePrefix(got, "Bearer "); ok {
+		return p.tokenEquals(strings.TrimSpace(rest))
+	}
+	return p.tokenEquals(got)
+}
+
+func (p *proxy) tokenEquals(candidate string) bool {
+	return subtle.ConstantTimeCompare([]byte(candidate), []byte(p.cfg.AuthToken)) == 1
+}
+
+// cutSchemePrefix strips an auth-scheme prefix case-insensitively, since RFC 9110
+// makes the scheme token case-insensitive and clients vary.
+func cutSchemePrefix(header, scheme string) (rest string, ok bool) {
+	if len(header) < len(scheme) {
+		return "", false
+	}
+	if !strings.EqualFold(header[:len(scheme)], scheme) {
+		return "", false
+	}
+	return header[len(scheme):], true
 }
 
 // serveConnect tunnels a CONNECT once the authority has been vetted.
