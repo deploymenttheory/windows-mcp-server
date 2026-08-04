@@ -3,6 +3,7 @@ package audit
 import (
 	"bufio"
 	"bytes"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -48,6 +49,13 @@ type ManifestRecord struct {
 	PrevManifestHash string `json:"prev_manifest_hash"`
 	// EntryHash commits to every field above plus PrevManifestHash.
 	EntryHash string `json:"entry_hash"`
+	// Mac is the HMAC of EntryHash under the audit key, present only on a keyed
+	// log. Without it the manifest is only tamper-evident: the chain is plain
+	// SHA-256, so anyone who can write the file can drop the last record and
+	// recompute the rest. That matters because the seal record is what pins a
+	// session's head, and dropping it is how a truncated session file passes
+	// verification.
+	Mac string `json:"mac,omitempty"`
 }
 
 // hashManifest computes a manifest record's hash over its fields plus the previous
@@ -63,7 +71,9 @@ func hashManifest(r ManifestRecord) string {
 // PrevManifestHash equals the prior record's EntryHash (the first is empty) and
 // each EntryHash recomputes. It does not read the session files — VerifyDir does
 // that and cross-checks each sealed head against its file.
-func VerifyManifest(records []ManifestRecord) error {
+// A non-empty key additionally requires every record to carry a valid MAC, which
+// is what makes dropping the tail detectable rather than merely visible.
+func VerifyManifest(records []ManifestRecord, key []byte) error {
 	prev := ""
 	for i, r := range records {
 		if r.PrevManifestHash != prev {
@@ -77,6 +87,10 @@ func VerifyManifest(records []ManifestRecord) error {
 		if got := hashManifest(r); got != r.EntryHash {
 			return fmt.Errorf("%w: record %d (%s): entry_hash mismatch (tampered)", ErrManifestBroken, i, r.SessionFile)
 		}
+		if len(key) > 0 && !hmac.Equal([]byte(r.Mac), []byte(macOf(key, r.EntryHash))) {
+			return fmt.Errorf("%w: record %d (%s): mac does not verify under the audit key",
+				ErrManifestBroken, i, r.SessionFile)
+		}
 		prev = r.EntryHash
 	}
 	return nil
@@ -88,6 +102,7 @@ func VerifyManifest(records []ManifestRecord) error {
 // head so the seal record can name it without a second pass over the file.
 type sessionDestination struct {
 	mu           sync.Mutex
+	key          []byte
 	entries      *os.File
 	manifest     *os.File
 	sessionFile  string
@@ -98,7 +113,7 @@ type sessionDestination struct {
 	sealed       bool
 }
 
-func newSessionDestination(dir, sessionID string) (Destination, error) {
+func newSessionDestination(dir, sessionID string, key []byte) (Destination, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("audit dir %q: %w", dir, err)
 	}
@@ -125,6 +140,7 @@ func newSessionDestination(dir, sessionID string) (Destination, error) {
 	}
 
 	s := &sessionDestination{
+		key:          key,
 		entries:      entries,
 		manifest:     mf,
 		sessionFile:  name,
@@ -205,6 +221,9 @@ func (s *sessionDestination) writeManifest(seal bool) error {
 		r.SealedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	r.EntryHash = hashManifest(r)
+	if len(s.key) > 0 {
+		r.Mac = macOf(s.key, r.EntryHash)
+	}
 
 	b, err := json.Marshal(r)
 	if err != nil {

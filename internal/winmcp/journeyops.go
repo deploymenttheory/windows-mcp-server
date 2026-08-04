@@ -72,7 +72,8 @@ func RunJourney(ctx context.Context, cfg Config, path string) (JourneyReport, er
 	// One session stamp ties the run's audit chain (and any retrospective evidence
 	// bundle) together, exactly as a served session does.
 	sessionStamp := time.Now().Format("20060102-150405")
-	dest, err := audit.OpenDestination(devicePolicy.Transparency.AuditDestination, sessionStamp)
+	dest, err := audit.OpenDestination(devicePolicy.Transparency.AuditDestination, sessionStamp,
+		[]byte(os.Getenv("WINDOWS_MCP_AUDIT_KEY")))
 	if err != nil {
 		return JourneyReport{}, fmt.Errorf("audit log: %w", err)
 	}

@@ -153,7 +153,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// recording (session-<stamp>.mp4) correlate by name — the correlation an
 	// evidence bundle later relies on.
 	sessionStamp := time.Now().Format("20060102-150405")
-	dest, err := audit.OpenDestination(devicePolicy.Transparency.AuditDestination, sessionStamp)
+	dest, err := audit.OpenDestination(devicePolicy.Transparency.AuditDestination, sessionStamp,
+		[]byte(os.Getenv("WINDOWS_MCP_AUDIT_KEY")))
 	if err != nil {
 		return fmt.Errorf("audit log: %w", err)
 	}

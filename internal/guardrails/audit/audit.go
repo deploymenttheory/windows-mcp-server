@@ -72,12 +72,16 @@ func NewDestination(target string) (Destination, error) { return OpenDestination
 //     still leaves a chained trace, so a restart cannot silently drop history.
 //   - any other value: a single append-only JSONL file, fsync-ed on Flush — the
 //     legacy behaviour, preserved so existing configurations keep working.
-func OpenDestination(target, sessionID string) (Destination, error) {
+func OpenDestination(target, sessionID string, key ...[]byte) (Destination, error) {
 	switch {
 	case target == "" || target == "stderr":
 		return &stderrDestination{}, nil
 	case isDirTarget(target):
-		return newSessionDestination(target, sessionID)
+		var k []byte
+		if len(key) > 0 {
+			k = key[0]
+		}
+		return newSessionDestination(target, sessionID, k)
 	default:
 		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
