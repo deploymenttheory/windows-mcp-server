@@ -64,7 +64,7 @@ func Scrape() inventory.ServerTool {
 				return NewToolResultErrorFromErr("invalid URL", err), nil
 			}
 
-			text, err := fetchReadableText(ctx, rawURL)
+			text, err := fetchReadableText(ctx, rawURL, deps.EnforceHTTPS())
 			if err != nil {
 				return NewToolResultErrorFromErr("scrape failed", err), nil
 			}
@@ -112,8 +112,19 @@ func validateScrapeURL(rawURL string, enforceHTTPS bool) error {
 	return nil
 }
 
+// maxScrapeRedirects bounds the redirect chain. Go's default is 10; the lower
+// cap is here because every hop is re-validated, and a long chain of validated
+// hops is still a long chain.
+const maxScrapeRedirects = 5
+
 // fetchReadableText fetches the URL and extracts visible text.
-func fetchReadableText(ctx context.Context, rawURL string) (string, error) {
+//
+// Every redirect hop is re-validated. Validating only the URL the model supplied
+// was a full bypass of both the SSRF guard and Enforce HTTPS: an attacker-controlled
+// host answered 302 to http://169.254.169.254/... or an RFC1918 address, Go's
+// default CheckRedirect followed it without a second look, and the body came back
+// to the model.
+func fetchReadableText(ctx context.Context, rawURL string, enforceHTTPS bool) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
@@ -123,7 +134,18 @@ func fetchReadableText(ctx context.Context, rawURL string) (string, error) {
 	}
 	req.Header.Set("User-Agent", "windows-mcp-server/scrape")
 
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(r *http.Request, via []*http.Request) error {
+			if len(via) >= maxScrapeRedirects {
+				return fmt.Errorf("stopped after %d redirects", maxScrapeRedirects)
+			}
+			if err := validateScrapeURL(r.URL.String(), enforceHTTPS); err != nil {
+				return fmt.Errorf("refused a redirect to %s: %w", r.URL.Redacted(), err)
+			}
+			return nil
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

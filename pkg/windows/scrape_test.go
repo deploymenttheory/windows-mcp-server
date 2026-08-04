@@ -3,7 +3,10 @@
 package windows
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -106,5 +109,47 @@ func TestExtractText(t *testing.T) {
 	}
 	if strings.Contains(got, "color:red") || strings.Contains(got, "var x=1") {
 		t.Errorf("script/style content leaked into text: %q", got)
+	}
+}
+
+// TestRedirectsAreRevalidated is a regression test for a full SSRF and
+// Enforce-HTTPS bypass: only the URL the model supplied was validated, and Go's
+// default CheckRedirect then followed any 302 without a second look. An
+// attacker-controlled host could redirect to a link-local or RFC1918 address --
+// 169.254.169.254 being the obvious one -- and the body came back to the model.
+func TestRedirectsAreRevalidated(t *testing.T) {
+	// The redirect target resolves to loopback, which validateScrapeURL refuses.
+	// Using the real server's own address keeps the test hermetic: no outbound
+	// request is made, and the refusal happens before any connection to it.
+	var target string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, target, http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte("<html><body>should never be read</body></html>"))
+	}))
+	defer srv.Close()
+	target = srv.URL + "/private"
+
+	_, err := fetchReadableText(context.Background(), srv.URL+"/redirect", false)
+	if err == nil {
+		t.Fatal("a redirect to a non-public address must be refused, not followed")
+	}
+	if !strings.Contains(err.Error(), "refused a redirect") {
+		t.Errorf("the refusal should name the redirect as the cause, got: %v", err)
+	}
+}
+
+// TestRedirectChainIsBounded keeps a validated-but-endless chain from spinning.
+func TestRedirectChainIsBounded(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+"/next", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	if _, err := fetchReadableText(context.Background(), srv.URL, false); err == nil {
+		t.Fatal("an unbounded redirect chain must terminate with an error")
 	}
 }
