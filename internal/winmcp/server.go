@@ -555,6 +555,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	watch.StartMonitor(runCtx, watch.MonitorConfig{
 		Interval:         devicePolicy.InFlight.Interval.Std(),
 		ControlDir:       devicePolicy.InFlight.ControlDir,
+		SentinelToken:    sentinelToken(devicePolicy.InFlight.ControlDir, audit, logger),
 		TripSentinel:     tripSentinel,
 		TripPostureDrift: tripPostureDrift,
 		Stopped:          func() bool { tripped, _ := kill.Tripped(); return tripped },
