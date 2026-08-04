@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -94,5 +95,28 @@ func TestGuardrailStatusOmitsDurableDeviceIdentifiers(t *testing.T) {
 	if !strings.Contains(body, "WORKSTATION-01") {
 		t.Error("hostname should still be reported: it is how a report names the machine, " +
 			"and it is visible from a dozen other places on the desktop")
+	}
+}
+
+// TestStatusServerRefusesToBindWithoutAToken asserts the requirement at the
+// listener, not only at policy load.
+//
+// auth() was a no-op when Token was empty, so an empty token meant no
+// authentication at all rather than a closed door -- and /revoke trips the kill
+// switch. StatusServer is an exported struct with exported fields, so any
+// construction path that does not go through policy.Load got an unauthenticated
+// kill endpoint that any local process could reach.
+func TestStatusServerRefusesToBindWithoutAToken(t *testing.T) {
+	ss := &StatusServer{
+		Addr:    "127.0.0.1:0",
+		Current: func() signals.Decision { return signals.Decision{} },
+		Kill:    contain.NewKillSwitch(nil),
+	}
+	err := ss.Start(context.Background())
+	if err == nil {
+		t.Fatal("binding without a token must fail: /revoke would be unauthenticated")
+	}
+	if !errors.Is(err, ErrStatusTokenRequired) {
+		t.Errorf("want ErrStatusTokenRequired, got %v", err)
 	}
 }

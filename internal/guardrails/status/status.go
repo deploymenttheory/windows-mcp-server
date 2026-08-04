@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -81,6 +82,16 @@ func (s *StatusServer) Start(ctx context.Context) error {
 	if s.Logger == nil {
 		s.Logger = slog.Default()
 	}
+	// Asserted at the listener, not only at policy load. /revoke trips the kill
+	// switch, and auth() was a no-op when Token was empty — so an empty token meant
+	// no authentication at all rather than a closed door. StatusServer is an
+	// exported struct with exported fields, so any construction path that does not
+	// go through policy.Load (a hand-built Policy, a future caller, a test-shaped
+	// path) got an unauthenticated kill endpoint on loopback. This is the same
+	// belt-and-braces placement as egress.requireLoopback next to net.Listen.
+	if s.Token == "" {
+		return fmt.Errorf("%w: %s", ErrStatusTokenRequired, s.Addr)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/guardrails", s.auth(s.handleStatus))
 	mux.HandleFunc("/healthz", s.auth(s.handleStatus))
@@ -110,16 +121,27 @@ func (s *StatusServer) Start(ctx context.Context) error {
 
 func (s *StatusServer) auth(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.Token != "" {
-			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if subtle.ConstantTimeCompare([]byte(got), []byte(s.Token)) != 1 {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
+		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(s.Token)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		// Reject a cross-origin form POST. /revoke needs no body and no CSRF
+		// token, so without this a page in the user's browser could terminate the
+		// session with a simple form submission to loopback.
+		if origin := r.Header.Get("Origin"); origin != "" {
+			http.Error(w, "cross-origin requests are not accepted", http.StatusForbidden)
+			return
 		}
 		h(w, r)
 	}
 }
+
+// ErrStatusTokenRequired reports a status endpoint configured without a token.
+var ErrStatusTokenRequired = errors.New(
+	"the guardrails status endpoint requires a token: /revoke trips the kill switch, " +
+		"and any local process can reach a loopback listener",
+)
 
 func (s *StatusServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	d := s.Current()
