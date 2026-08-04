@@ -257,3 +257,52 @@ func TestPromptsReusePersonaGuidance(t *testing.T) {
 		t.Errorf("unknown persona should yield empty guidance, got %q", got)
 	}
 }
+
+// TestExecutionPrimitivesAreAnnotatedDestructive pins the annotations policy
+// rules match on. Each of these tools can cause or drive arbitrary execution, and
+// each was previously unannotated -- so a rule matching `annotation: destructive`
+// (as policy/examples/secure.json and enterprise.json both do, for hardware
+// posture, rate limiting and require_plan) silently did not cover them.
+//
+// App launches an arbitrary executable. Type and Shortcut are universal write
+// primitives, and win+r followed by Type is arbitrary execution without ever
+// calling PowerShell. MultiEdit amplifies Type. Credentials types a live secret.
+func TestExecutionPrimitivesAreAnnotatedDestructive(t *testing.T) {
+	want := map[string]bool{
+		"App": true, "Type": true, "Shortcut": true, "MultiEdit": true, "Credentials": true,
+	}
+	seen := map[string]bool{}
+	for _, tool := range AllTools() {
+		if !want[tool.Tool.Name] {
+			continue
+		}
+		seen[tool.Tool.Name] = true
+		a := tool.Tool.Annotations
+		if a == nil || a.DestructiveHint == nil || !*a.DestructiveHint {
+			t.Errorf("%s must carry DestructiveHint: policy rules and rate limits match on it, "+
+				"so without it this tool is outside every destructive gate", tool.Tool.Name)
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("%s is no longer in the manifest; update this test deliberately", name)
+		}
+	}
+}
+
+// TestRecordingIsNotReadOnly guards a tool that writes while claiming not to.
+// mode=mark appends a model-supplied label to the session file, so annotated
+// read-only it was served even under --read-only and no destructive rule or rate
+// limit applied to it.
+func TestRecordingIsNotReadOnly(t *testing.T) {
+	for _, tool := range AllTools() {
+		if tool.Tool.Name != "Recording" {
+			continue
+		}
+		if tool.Tool.Annotations != nil && tool.Tool.Annotations.ReadOnlyHint {
+			t.Error("Recording mode=mark writes to the session file; it must not be annotated read-only")
+		}
+		return
+	}
+	t.Error("Recording is no longer in the manifest; update this test deliberately")
+}

@@ -24,6 +24,7 @@ import (
 // the conversation transcript, or the model's context — only the number of
 // characters typed comes back.
 func Credentials() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetCredentials,
 		mcp.Tool{
@@ -37,6 +38,11 @@ func Credentials() inventory.ServerTool {
 			Annotations: &mcp.ToolAnnotations{
 				Title:        "Credentials list/verify/inject",
 				ReadOnlyHint: false, // inject synthesizes input
+				// Destructive so rules and rate limits matching that annotation cover
+				// credential injection. docs/security-architecture.md claimed they did;
+				// without the hint they did not, and enterprise.json's require_plan
+				// gate missed it too.
+				DestructiveHint: &destructive,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",

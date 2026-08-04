@@ -13,6 +13,7 @@ import (
 
 // App launches, switches to, or resizes applications and windows.
 func App() inventory.ServerTool {
+	destructive, openWorld := true, true
 	return NewToolFromHandler(
 		ToolsetApps,
 		mcp.Tool{
@@ -21,7 +22,15 @@ func App() inventory.ServerTool {
 				"mode=launch_executable starts an executable by full path with optional args/cwd; " +
 				"mode=switch brings a window (matched by title substring) to the foreground; " +
 				"mode=resize moves/resizes a matched window.",
-			Annotations: &mcp.ToolAnnotations{Title: "App / window control", ReadOnlyHint: false},
+			// Destructive and open-world: launch_executable starts an arbitrary
+			// program, and a URL-shaped launch opens the browser. Without these a
+			// policy gating "destructive" left arbitrary execution ungated.
+			Annotations: &mcp.ToolAnnotations{
+				Title:           "App / window control",
+				ReadOnlyHint:    false,
+				DestructiveHint: &destructive,
+				OpenWorldHint:   &openWorld,
+			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{

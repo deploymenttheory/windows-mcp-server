@@ -140,12 +140,13 @@ func Click() inventory.ServerTool {
 
 // Type types text, optionally after clicking a target element first.
 func Type() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetInteraction,
 		mcp.Tool{
 			Name:        "Type",
 			Description: "Type text at the current focus, or first click a target (by label or [x,y]) and then type. Optionally clear the field first and/or press Enter after.",
-			Annotations: &mcp.ToolAnnotations{Title: "Type text", ReadOnlyHint: false},
+			Annotations: &mcp.ToolAnnotations{Title: "Type text", ReadOnlyHint: false, DestructiveHint: &destructive},
 			InputSchema: targetSchema(map[string]*jsonschema.Schema{
 				"text":        {Type: "string", Description: "The text to type."},
 				"clear":       {Type: "boolean", Description: "Select-all and delete before typing (default false)."},
@@ -262,12 +263,13 @@ func Move() inventory.ServerTool {
 
 // Shortcut sends a keyboard chord like "ctrl+shift+esc".
 func Shortcut() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetInteraction,
 		mcp.Tool{
 			Name:        "Shortcut",
 			Description: "Press a keyboard shortcut chord, e.g. \"ctrl+c\", \"alt+tab\", \"ctrl+shift+esc\", \"win+r\". Keys are joined with '+'.",
-			Annotations: &mcp.ToolAnnotations{Title: "Keyboard shortcut", ReadOnlyHint: false},
+			Annotations: &mcp.ToolAnnotations{Title: "Keyboard shortcut", ReadOnlyHint: false, DestructiveHint: &destructive},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{

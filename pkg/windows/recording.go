@@ -21,7 +21,10 @@ func Recording() inventory.ServerTool {
 		mcp.Tool{
 			Name:        "Recording",
 			Description: "Query or annotate the session video recording. mode=status reports whether the session is being recorded, the output file, frame count, and duration. mode=mark adds a labeled marker to the recording timeline so journey steps align with the video (written to a sidecar .jsonl log). Recording is enabled by the operator via transparency.recording_dir in the policy document.",
-			Annotations: &mcp.ToolAnnotations{Title: "Session recording", ReadOnlyHint: true},
+			// Not read-only: mode=mark appends to the session file. Annotated
+			// read-only it was served even under --read-only, and no destructive rule
+			// or rate limit touched it.
+			Annotations: &mcp.ToolAnnotations{Title: "Session recording", ReadOnlyHint: false},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{

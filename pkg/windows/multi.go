@@ -108,12 +108,13 @@ func collectPoints(deps ToolDependencies, args map[string]any) ([][2]int, error)
 
 // MultiEdit types into several fields in sequence, clearing each first.
 func MultiEdit() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetInteraction,
 		mcp.Tool{
 			Name:        "MultiEdit",
 			Description: "Fill multiple input fields in one call. Provide 'edits' as [[label, text], ...] (label from Snapshot) or [[x, y, text], ...]. Each field is clicked, cleared, and typed into.",
-			Annotations: &mcp.ToolAnnotations{Title: "Multi-edit fields", ReadOnlyHint: false},
+			Annotations: &mcp.ToolAnnotations{Title: "Multi-edit fields", ReadOnlyHint: false, DestructiveHint: &destructive},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{
