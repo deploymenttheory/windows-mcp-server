@@ -16,6 +16,7 @@ import (
 // enabled server-side (--record-dir) so every session is tracked; this tool lets
 // the agent confirm it is being recorded and mark the timeline with step labels.
 func Recording() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetScreen,
 		mcp.Tool{
@@ -24,7 +25,11 @@ func Recording() inventory.ServerTool {
 			// Not read-only: mode=mark appends to the session file. Annotated
 			// read-only it was served even under --read-only, and no destructive rule
 			// or rate limit touched it.
-			Annotations: &mcp.ToolAnnotations{Title: "Session recording", ReadOnlyHint: false},
+			//
+			// Destructive too: mark writes model-authored text into the evidence
+			// record for the session. Anything that writes to the transparency
+			// artefacts belongs behind the destructive gate, whatever else it does.
+			Annotations: &mcp.ToolAnnotations{Title: "Session recording", ReadOnlyHint: false, DestructiveHint: &destructive},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{

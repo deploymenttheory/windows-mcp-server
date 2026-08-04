@@ -36,13 +36,17 @@ func pointForLabelOrLoc(deps ToolDependencies, v any) (int, int, bool) {
 
 // MultiSelect Ctrl-clicks several elements (by label) or points to build a
 // multi-selection.
+//
+// Destructive for the same reason Click is, amplified: this is n clicks in one
+// call, so it is also n times the reach for a single unit of rate-limit budget.
 func MultiSelect() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetInteraction,
 		mcp.Tool{
 			Name:        "MultiSelect",
 			Description: "Select multiple UI elements at once by Ctrl-clicking each. Provide 'labels' (from Snapshot) or 'locs' ([[x,y],...]).",
-			Annotations: &mcp.ToolAnnotations{Title: "Multi-select", ReadOnlyHint: false},
+			Annotations: &mcp.ToolAnnotations{Title: "Multi-select", ReadOnlyHint: false, DestructiveHint: &destructive},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{

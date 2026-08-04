@@ -269,9 +269,14 @@ func TestPromptsReusePersonaGuidance(t *testing.T) {
 // App launches an arbitrary executable. Type and Shortcut are universal write
 // primitives, and win+r followed by Type is arbitrary execution without ever
 // calling PowerShell. MultiEdit amplifies Type. Credentials types a live secret.
+// Invoke and Click are the same write primitives reached through the accessibility
+// tree rather than synthetic input -- and the persona instructions this server
+// ships tell the model to prefer Invoke over Type, so leaving Invoke unannotated
+// steered the model off the gated path onto the ungated one.
 func TestExecutionPrimitivesAreAnnotatedDestructive(t *testing.T) {
 	want := map[string]bool{
 		"App": true, "Type": true, "Shortcut": true, "MultiEdit": true, "Credentials": true,
+		"Invoke": true, "Click": true,
 	}
 	seen := map[string]bool{}
 	for _, tool := range AllTools() {
@@ -288,6 +293,56 @@ func TestExecutionPrimitivesAreAnnotatedDestructive(t *testing.T) {
 	for name := range want {
 		if !seen[name] {
 			t.Errorf("%s is no longer in the manifest; update this test deliberately", name)
+		}
+	}
+}
+
+// TestEveryWriteToolIsAnnotatedDestructive is the same rule stated so a new tool
+// cannot slip past it.
+//
+// The named-primitives test above is an allowlist, which is why it took an audit
+// rather than CI to notice that Invoke, Click, Scroll, MultiSelect, Clipboard,
+// Notification and Recording were all outside every destructive gate: a tool that
+// nobody thought to add to the list was never checked. This inverts the default.
+// A tool that is not read-only must carry DestructiveHint or appear below with a
+// reason, so the question is asked once per tool rather than once per audit.
+//
+// Keep the exemption list short and argued. It is the list of tools that a rule
+// matching `annotation: destructive` does not reach.
+func TestEveryWriteToolIsAnnotatedDestructive(t *testing.T) {
+	exempt := map[string]string{
+		"Move": "moves the cursor and commits nothing; acting on a hover menu still needs a Click, " +
+			"which is gated. Annotating every input tool destructive would make the annotation mean " +
+			"\"input\" and cost operators the ability to gate the calls that change state",
+	}
+	for _, tool := range AllTools() {
+		a := tool.Tool.Annotations
+		if a != nil && a.ReadOnlyHint {
+			continue // covered by `annotation: read-only` instead
+		}
+		if reason, ok := exempt[tool.Tool.Name]; ok {
+			if reason == "" {
+				t.Errorf("%s is exempt with no reason; state why a destructive rule need not cover it",
+					tool.Tool.Name)
+			}
+			continue
+		}
+		if a == nil || a.DestructiveHint == nil || !*a.DestructiveHint {
+			t.Errorf("%s is not read-only and carries no DestructiveHint, so no rule or rate limit "+
+				"matching `annotation: destructive` covers it. Add the hint, or add it to the exemption "+
+				"list in this test with a reason", tool.Tool.Name)
+		}
+	}
+	for name := range exempt {
+		found := false
+		for _, tool := range AllTools() {
+			if tool.Tool.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s is exempt but no longer in the manifest; prune this list deliberately", name)
 		}
 	}
 }
