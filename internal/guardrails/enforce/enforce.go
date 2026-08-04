@@ -55,10 +55,19 @@ type EnforcerDeps struct {
 // Methods the engine decides on. Everything else passes through untouched:
 // tools/list and server/discover carry no action, and gating discovery would
 // break a client's ability to see why it is being refused.
+//
+// The last two are data-egress paths rather than actions, and are decided for the
+// same reason resources and prompts are: each returns server-held state to the
+// caller, so a rule covering the tool that exposes that state must not be
+// side-stepped by asking a different method for it. completion/complete answers
+// with the names of installed credentials; subscriptions/listen opens the
+// longest-lived server-to-client stream this server has.
 const (
 	methodCallTool     = "tools/call"
 	methodReadResource = "resources/read"
 	methodGetPrompt    = "prompts/get"
+	methodComplete     = "completion/complete"
+	methodListen       = "subscriptions/listen"
 )
 
 // Middleware returns MCP receiving middleware that decides every actionable
@@ -423,17 +432,49 @@ func subjectFor(engine *policy.Engine, method string, req mcp.Request) (policy.S
 		}
 		return dataEgressSubject(method, p.Name), true, nil
 
+	case methodComplete:
+		p, ok := req.GetParams().(*mcp.CompleteParams)
+		if !ok {
+			return policy.Subject{}, false, errMalformedParams
+		}
+		return dataEgressSubject(method, completionName(p)), true, nil
+
+	case methodListen:
+		if _, ok := req.GetParams().(*mcp.SubscriptionsListenParams); !ok {
+			return policy.Subject{}, false, errMalformedParams
+		}
+		return dataEgressSubject(method, methodListen), true, nil
+
 	default:
 		return policy.Subject{}, false, nil
 	}
 }
 
-// dataEgressSubject builds the subject for a resource read or a prompt fetch.
+// completionName labels a completion request for the decision and the audit
+// record: the prompt or resource it is completing against, never the prefix the
+// caller typed.
+func completionName(p *mcp.CompleteParams) string {
+	if p.Ref == nil {
+		return p.Argument.Name
+	}
+	switch {
+	case p.Ref.Name != "":
+		return p.Ref.Name + "." + p.Argument.Name
+	case p.Ref.URI != "":
+		return p.Ref.URI + "." + p.Argument.Name
+	default:
+		return p.Argument.Name
+	}
+}
+
+// dataEgressSubject builds the subject for a resource read, a prompt fetch, a
+// completion or a subscription stream.
 //
-// Both return server-held state to the caller, so they are read-only data-egress
-// paths and are marked as such: a rule written as `annotation: read-only`, or as
-// `toolset: "*"`, covers them. That is deliberate — a resource exposing the same
-// desktop state as a tool must not be a way around the rule covering that tool.
+// All four return server-held state to the caller, so they are read-only
+// data-egress paths and are marked as such: a rule written as
+// `annotation: read-only`, or as `toolset: "*"`, covers them. That is deliberate —
+// a resource exposing the same desktop state as a tool must not be a way around
+// the rule covering that tool.
 // They carry no toolset, so a rule naming a specific toolset or tool does not
 // reach them; expressing "this resource specifically" is not something the
 // schema supports today, and pretending otherwise would be worse than the gap.

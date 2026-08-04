@@ -212,6 +212,48 @@ func TestAuditCoversTheStatelessConnection(t *testing.T) {
 	}
 }
 
+// TestCompletionIsAuditedWithoutTheTypedPrefix pins both halves of the
+// completion/complete record.
+//
+// It has to exist at all because the handler answers with server-held names --
+// including the names of installed credentials -- straight into the model's
+// context, and it used to leave no record that it had been called. And it has to
+// digest the value, because that is caller-chosen text on a method carrying no
+// rate limit, and the chain is hashed, fsynced and never rotated.
+func TestCompletionIsAuditedWithoutTheTypedPrefix(t *testing.T) {
+	dest := &memDest{}
+	mw := NewAuditLog(dest).Middleware()
+	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		return &mcp.CompleteResult{}, nil
+	}
+
+	const typed = "prod-service-account-p"
+	complete := &mcp.ServerRequest[mcp.Params]{Params: &mcp.CompleteParams{
+		Ref:      &mcp.CompleteReference{Type: "ref/prompt", Name: "rpa-journey"},
+		Argument: mcp.CompleteParamsArgument{Name: "credential", Value: typed},
+	}}
+	if _, err := mw(next)(context.Background(), "completion/complete", complete); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(dest.entries) != 1 {
+		t.Fatalf("want 1 audit entry, got %d", len(dest.entries))
+	}
+	if dest.entries[0].Event != "completion.complete" {
+		t.Errorf("event = %q, want completion.complete", dest.entries[0].Event)
+	}
+	payload := string(dest.entries[0].Payload)
+	if !containsSubstr(payload, "rpa-journey") || !containsSubstr(payload, "credential") {
+		t.Errorf("the record should say which completion was asked for: %s", payload)
+	}
+	if containsSubstr(payload, typed) {
+		t.Errorf("the typed prefix must be digested, not recorded: %s", payload)
+	}
+	if err := VerifyChain(dest.entries); err != nil {
+		t.Errorf("chain must remain verifiable: %v", err)
+	}
+}
+
 // TestDiscoverAuditToleratesAMissingMetaTriple guards the backward-compatibility
 // probe: a pre-2026-07-28 client calling server/discover over stdio carries none
 // of the _meta fields, and that must still produce an audit entry rather than a

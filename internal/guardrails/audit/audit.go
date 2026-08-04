@@ -309,8 +309,8 @@ func VerifyChainSegment(entries []AuditEntry, startSeq uint64, prevHash string) 
 }
 
 // Middleware records every invocation that can move data in the audit chain:
-// tools/call, resources/read, prompts/get, subscriptions/listen and
-// server/discover.
+// tools/call, resources/read, prompts/get, completion/complete,
+// subscriptions/listen and server/discover.
 //
 // Resources and prompts are audited for the same reason tools are — a resource
 // read returns desktop or system state to the caller, so it is a data-egress path
@@ -323,6 +323,13 @@ func VerifyChainSegment(entries []AuditEntry, startSeq uint64, prevHash string) 
 // revision; subscriptions/listen replaced the HTTP GET stream and
 // resources/subscribe with a long-lived server-to-client stream, which is a
 // standing data-egress path and the longest-lived one the server has.
+//
+// completion/complete is here because it answers with server-held names — including
+// the names of installed credentials — straight into the model's context. It
+// sources no secret, which is what its handler is careful about, and that is a
+// different question from whether the request leaves a record. Only the reference
+// and the argument name are recorded; the caller-supplied prefix is digested,
+// because it is client-chosen text and the chain is hashed and fsynced.
 //
 // It always calls next: audit never blocks, blocking is the circuit breaker's job.
 func (a *AuditLog) Middleware() mcp.Middleware {
@@ -355,6 +362,10 @@ func (a *AuditLog) Middleware() mcp.Middleware {
 			case "subscriptions/listen":
 				if p, ok := req.GetParams().(*mcp.SubscriptionsListenParams); ok {
 					_, _ = a.Append("subscriptions.listen", subscriptionFields(p.Notifications))
+				}
+			case "completion/complete":
+				if p, ok := req.GetParams().(*mcp.CompleteParams); ok {
+					_, _ = a.Append("completion.complete", completionFields(p))
 				}
 			}
 			return next(ctx, method, req)
@@ -427,6 +438,32 @@ const (
 	maxRecordedString        = 256
 	maxRecordedSubscriptions = 64
 )
+
+// completionFields records which completion was asked for, without recording what
+// was typed.
+//
+// The reference and the argument name are the useful facts after an incident:
+// they say the caller was enumerating prompt arguments, and which one. The value
+// is the prefix the caller typed — client-chosen text on a method that carries no
+// rate limit, so it is digested rather than stored, for the same reason the two
+// fields above are clipped. The digest still lets two requests be compared.
+func completionFields(p *mcp.CompleteParams) map[string]any {
+	fields := map[string]any{
+		"argument":     clip(p.Argument.Name, maxRecordedString),
+		"value_sha256": digestBytes([]byte(p.Argument.Value)),
+		"value_len":    len(p.Argument.Value),
+	}
+	if p.Ref != nil {
+		fields["ref_type"] = clip(p.Ref.Type, maxRecordedString)
+		if p.Ref.Name != "" {
+			fields["ref_name"] = clip(p.Ref.Name, maxRecordedString)
+		}
+		if p.Ref.URI != "" {
+			fields["ref_uri"] = clip(p.Ref.URI, maxRecordedString)
+		}
+	}
+	return fields
+}
 
 // clip truncates s to n bytes, marking it so a reader can tell.
 func clip(s string, n int) string {

@@ -291,6 +291,43 @@ func TestUndecidableMethodsPassThrough(t *testing.T) {
 	}
 }
 
+// TestDataEgressMethodsAreAllDecided pins that the four read-only data-egress
+// paths are decided alike.
+//
+// completion/complete answers with server-held names -- including the names of
+// installed credentials -- and subscriptions/listen opens the longest-lived
+// server-to-client stream this server has. Both used to reach the default arm of
+// subjectFor and proceed undecided, while resources/read and prompts/get were
+// brought under the engine on exactly the reasoning that covers them.
+func TestDataEgressMethodsAreAllDecided(t *testing.T) {
+	cases := []struct {
+		method string
+		params mcp.Params
+	}{
+		{"resources/read", &mcp.ReadResourceParams{URI: "windows://system/info"}},
+		{"prompts/get", &mcp.GetPromptParams{Name: "rpa-journey"}},
+		{"completion/complete", &mcp.CompleteParams{
+			Ref:      &mcp.CompleteReference{Type: "ref/prompt", Name: "rpa-journey"},
+			Argument: mcp.CompleteParamsArgument{Name: "credential", Value: "sec"},
+		}},
+		{"subscriptions/listen", &mcp.SubscriptionsListenParams{}},
+	}
+
+	for _, tc := range cases {
+		h := newEnforceHarness(t, denyPolicy, map[string]signals.Status{"bitlocker": signals.Fail})
+
+		if _, err := h.call(tc.method, tc.params); err == nil {
+			t.Errorf("%s: a deny verdict must refuse it", tc.method)
+		}
+		if got := h.reached.Load(); got != 0 {
+			t.Errorf("%s: the handler must not run on a deny, reached=%d", tc.method, got)
+		}
+		if !slices.Contains(h.events(), "policy.decided") {
+			t.Errorf("%s: the verdict must be recorded, got %v", tc.method, h.events())
+		}
+	}
+}
+
 // TestDecidableMethodWithUnreadableParamsIsRefused pins the distinction the
 // middleware has to draw: a method the engine does not decide passes through (the
 // test above), but a method it does decide, carrying params it cannot read, must
