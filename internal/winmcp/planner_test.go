@@ -331,3 +331,94 @@ func TestProposeRejectsBadPlans(t *testing.T) {
 		t.Error("applying an unknown plan id should error")
 	}
 }
+
+// requirePlanPolicy gates FileSystem behind require_plan with every signal
+// passing, so nothing else would refuse the apply.
+func requirePlanPolicy() (*policy.Policy, map[string]signals.Status) {
+	return &policy.Policy{
+			Version: 1, Mode: policy.ModeEnforcing,
+			Signals:     map[string]policy.SignalConfig{"run-context": {}},
+			RequirePlan: []policy.Match{{Tool: policy.StringSet{"FileSystem"}}},
+		},
+		map[string]signals.Status{"run-context": signals.Pass}
+}
+
+// TestApplyPutsAPlanGatedPlanToAHuman is the property require_plan is supposed to
+// have and did not.
+//
+// A direct call to a gated tool was refused with a message telling the model to
+// submit a plan and Apply it -- which the model can do itself, unassisted, in two
+// calls. Nothing else stood between proposing and executing, so on a healthy
+// device the "preventive" tier prevented only the shape of the call. The plan is
+// now put to the same authoriser a hold step uses, before any step runs.
+func TestApplyPutsAPlanGatedPlanToAHuman(t *testing.T) {
+	pol, states := requirePlanPolicy()
+	runner := allServed()
+	p, dest := newTestPlanner(t, pol, states, runner, nil)
+	fa := &fakePlanApprover{outcome: enforce.OutcomeApprove}
+	p.withApprovals(fa, "sess", time.Second)
+
+	raw := rawPlan(t, plan.Step{Tool: "FileSystem", Args: map[string]any{"mode": "read", "path": `C:\a`}})
+	prop, err := p.Propose(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Propose: %v", err)
+	}
+	if _, err := p.Apply(context.Background(), prop.PlanID); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if fa.calls != 1 {
+		t.Errorf("a plan-gated apply must consult the approver once, got %d", fa.calls)
+	}
+	if !dest.has("approval.requested") || !dest.has("approval.decided") {
+		t.Error("the plan-level approval handshake must be audited")
+	}
+	if len(runner.calls) != 1 {
+		t.Errorf("an approved plan must run, ran %v", runner.calls)
+	}
+}
+
+// TestApplyRefusesAPlanGatedPlanWithoutAnApprover fails closed. A require_plan
+// rule is an operator saying these tools need review; no webhook means there is
+// nobody to review, so the plan must not run. Proceeding would make the strictest
+// configuration the one that silently checks nothing.
+func TestApplyRefusesAPlanGatedPlanWithoutAnApprover(t *testing.T) {
+	pol, states := requirePlanPolicy()
+	runner := allServed()
+	p, _ := newTestPlanner(t, pol, states, runner, nil) // no approver configured
+
+	raw := rawPlan(t, plan.Step{Tool: "FileSystem", Args: map[string]any{"mode": "read", "path": `C:\a`}})
+	prop, err := p.Propose(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Propose: %v", err)
+	}
+	app, err := p.Apply(context.Background(), prop.PlanID)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("no step may run without an authoriser, ran %v", runner.calls)
+	}
+	if !strings.Contains(app.Report, "approvals webhook") {
+		t.Errorf("the refusal should name the missing configuration: %s", app.Report)
+	}
+}
+
+// TestApplyRefusesADeniedPlan: the authoriser's no halts the whole plan.
+func TestApplyRefusesADeniedPlan(t *testing.T) {
+	pol, states := requirePlanPolicy()
+	runner := allServed()
+	p, _ := newTestPlanner(t, pol, states, runner, nil)
+	p.withApprovals(&fakePlanApprover{outcome: enforce.OutcomeDeny}, "sess", time.Second)
+
+	raw := rawPlan(t, plan.Step{Tool: "FileSystem", Args: map[string]any{"mode": "read", "path": `C:\a`}})
+	prop, err := p.Propose(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Propose: %v", err)
+	}
+	if _, err := p.Apply(context.Background(), prop.PlanID); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("a denied plan must not run any step, ran %v", runner.calls)
+	}
+}
