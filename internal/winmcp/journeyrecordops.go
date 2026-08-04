@@ -60,7 +60,12 @@ func RecordJourney(ctx context.Context, cfg Config, name, out string) (journeys.
 	if err != nil {
 		return journeys.Journey{}, fmt.Errorf("render journey: %w", err)
 	}
-	if err := os.WriteFile(out, blob, 0o644); err != nil { //nolint:gosec // a journey is not a secret
+	// 0o600 rather than 0o644. A journey is not meant to hold a secret, but that
+	// rests entirely on the recorder's redaction being right, and redaction depends
+	// on UIA being able to report the focused element. Write it owner-only so a
+	// redaction miss is not also world-readable. (The mode is advisory on Windows,
+	// where the file inherits the directory ACL; it states the intent.)
+	if err := os.WriteFile(out, blob, 0o600); err != nil {
 		return journeys.Journey{}, fmt.Errorf("write journey %s: %w", out, err)
 	}
 	return journey, nil
