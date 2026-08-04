@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"time"
 	"unsafe"
 
 	win32 "github.com/deploymenttheory/go-bindings-win32/bindings/runtime/win32"
@@ -120,6 +121,32 @@ func NewFwPolicy() (*windowsfirewall.INetFwPolicy2, func(), error) {
 // Exported for the egress enforcer, which needs the same guarantee: its rule
 // work must not depend on the desktop engine's thread being alive.
 func WithCOMThread(fn func() error) error {
+	return WithCOMThreadTimeout(fn, comThreadTimeout)
+}
+
+// comThreadTimeout bounds one COM firewall operation.
+//
+// Generous, because these calls are slow on a loaded machine and a spurious
+// timeout mid-containment would be worse than waiting. It exists only so a hung
+// call cannot block forever.
+const comThreadTimeout = 30 * time.Second
+
+// ErrCOMThreadTimeout reports a COM operation that did not return in time.
+var ErrCOMThreadTimeout = errors.New("COM firewall operation timed out")
+
+// WithCOMThreadTimeout is WithCOMThread with an explicit bound.
+//
+// The bound matters most on the kill path. firewallIsolate ran `return <-done`
+// with nothing to interrupt it, so a stalled Windows Firewall service -- entirely
+// plausible during the incident that triggered the kill -- blocked OnTrip
+// indefinitely, and the finalize and abort steps that follow never ran. The
+// forensic trail was then lost to a hang rather than to a reordering, which is the
+// failure the ladder's ordering exists to prevent.
+//
+// On timeout the goroutine is abandoned rather than killed: it holds a locked OS
+// thread inside a COM call and there is no safe way to reclaim it. Leaking one
+// thread on the way to session termination is the right trade.
+func WithCOMThreadTimeout(fn func() error, timeout time.Duration) error {
 	done := make(chan error, 1)
 	go func() {
 		runtime.LockOSThread()
@@ -130,5 +157,15 @@ func WithCOMThread(fn func() error) error {
 		defer com.CoUninitialize()
 		done <- fn()
 	}()
-	return <-done
+	if timeout <= 0 {
+		return <-done
+	}
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-t.C:
+		return fmt.Errorf("%w after %s", ErrCOMThreadTimeout, timeout)
+	}
 }

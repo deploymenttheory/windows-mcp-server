@@ -2,6 +2,8 @@ package contain
 
 import (
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
+	"io"
+	"log/slog"
 
 	"errors"
 	"strings"
@@ -186,4 +188,70 @@ func filterActs(calls []string) []string {
 		out = append(out, c)
 	}
 	return out
+}
+
+// discardLogger keeps kill-ladder tests quiet: OnTrip logs at Error by design.
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// panickingActuator fails the way a real one can: a COM fault or a nil
+// dereference inside a Win32 call, part-way through the ladder.
+type panickingActuator struct{ elevated bool }
+
+func (p *panickingActuator) Elevated() bool { return p.elevated }
+func (p *panickingActuator) IsolateNetwork() (func() error, error) {
+	panic("simulated COM fault during isolation")
+}
+func (p *panickingActuator) KillProcesses([]string) []error       { return nil }
+func (p *panickingActuator) LockWorkstation() error               { return nil }
+func (p *panickingActuator) Shutdown(string, time.Duration) error { return nil }
+
+// TestKillLadderSurvivesAPanickingActuator pins the ALWAYS steps against a panic
+// mid-ladder.
+//
+// OnTrip runs on the monitor or watchdog goroutine, so without a recover a panic
+// took the process down without finalizing the recording or aborting the session
+// -- losing exactly the forensic trail the ladder's ordering exists to protect.
+// The existing coverage never injected a failing actuator, so this could not have
+// been caught.
+func TestKillLadderSurvivesAPanickingActuator(t *testing.T) {
+	var finalized, aborted bool
+	e := NewKillExecutor(KillExecutorDeps{
+		Config:   KillActionConfig{Isolate: true},
+		Actuator: &panickingActuator{elevated: true},
+		Finalize: func() { finalized = true },
+		Abort:    func(error) { aborted = true },
+		Logger:   discardLogger(),
+	})
+
+	// Must not propagate: the caller is a monitor goroutine with nothing above it.
+	e.OnTrip("test")
+
+	if !finalized {
+		t.Error("the recording must still be finalized after a panic in the ladder")
+	}
+	if !aborted {
+		t.Error("the session must still be aborted after a panic in the ladder")
+	}
+}
+
+// TestKillLadderToleratesANilAuditLog covers the one audit call that was not
+// nil-guarded. KillExecutorDeps documents that any dependency may be nil, and
+// AuditLog.Flush takes its mutex before checking anything, so a nil log panicked
+// on the shutdown branch.
+func TestKillLadderToleratesANilAuditLog(t *testing.T) {
+	var aborted bool
+	e := NewKillExecutor(KillExecutorDeps{
+		Config:   KillActionConfig{Shutdown: true},
+		Actuator: &fakeActuator{elevated: true},
+		Abort:    func(error) { aborted = true },
+		Logger:   discardLogger(),
+	})
+
+	e.OnTrip("test")
+
+	if !aborted {
+		t.Error("the session must still be aborted with no audit log configured")
+	}
 }

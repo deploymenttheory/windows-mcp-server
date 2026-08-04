@@ -34,6 +34,9 @@ type SystemActuator interface {
 	Shutdown(reason string, delay time.Duration) error
 }
 
+// ErrKillSwitchTripped is the cause an aborted session carries.
+var ErrKillSwitchTripped = errors.New("kill switch")
+
 // KillActionConfig selects which escalations run on a trip. Actions are applied
 // in a fixed order (isolate → kill-procs → lock → shutdown); each is opt-in and
 // configured separately from the trigger signals.
@@ -98,6 +101,28 @@ func NewKillExecutor(d KillExecutorDeps) *KillExecutor {
 // seal the audit chain and finalize the recording BEFORE any shutdown, or the
 // forensic trail is lost. See the plan's "ordering hazards".
 func (e *KillExecutor) OnTrip(reason string) {
+	// The ALWAYS steps -- banner, seal, finalize, abort -- are the forensic trail,
+	// and a panic anywhere below would skip whatever had not run yet. This runs on
+	// the monitor or watchdog goroutine, so without a recover a panic here takes
+	// the process down without finalizing the recording or aborting the session:
+	// exactly the evidence the ordering exists to protect. internal/desktop has
+	// safeCall for the same reason; the kill path had no equivalent.
+	defer func() {
+		if r := recover(); r != nil {
+			e.logger.Error("panic during the kill ladder; the session is being aborted anyway",
+				"panic", r, "reason", reason)
+			if e.finalize != nil {
+				e.finalize()
+			}
+			if e.audit != nil {
+				_ = e.audit.Flush()
+			}
+			if e.abort != nil {
+				e.abort(fmt.Errorf("%w: %s (panic during containment)", ErrKillSwitchTripped, reason))
+			}
+		}
+	}()
+
 	auditAppend(e.audit, "killswitch.tripped", map[string]any{"reason": reason}) // ALWAYS, first
 	e.logger.Error("killswitch.tripped", "reason", reason)
 	if e.banner != nil { // ALWAYS: human-visible, captured by the recording
@@ -152,7 +177,13 @@ func (e *KillExecutor) OnTrip(reason string) {
 
 	if e.cfg.Shutdown {
 		if elevated && e.act != nil {
-			_ = e.audit.Flush()
+			// Nil-guarded like every other audit site here. KillExecutorDeps
+			// documents that any dependency may be nil, and this one call was bare:
+			// AuditLog.Flush takes its mutex before checking anything, so a nil log
+			// panicked mid-ladder with shutdown armed.
+			if e.audit != nil {
+				_ = e.audit.Flush()
+			}
 			if err := e.act.Shutdown(reason, e.cfg.ShutdownDelay); err != nil {
 				auditAppend(e.audit, "killaction.failed", map[string]any{"action": "shutdown", "err": err.Error()})
 			}
