@@ -17,9 +17,10 @@ type fakeActuator struct {
 }
 
 func (f *fakeActuator) Elevated() bool { return f.elevated }
-func (f *fakeActuator) IsolateNetwork() (func() error, error) {
+func (f *fakeActuator) IsolateNetwork() (func() error, []string, error) {
 	f.calls = append(f.calls, "isolate")
-	return func() error { f.calls = append(f.calls, "restore"); return nil }, nil
+	return func() error { f.calls = append(f.calls, "restore"); return nil },
+		[]string{"profile1=block", "profile2=block", "profile4=block"}, nil
 }
 
 func (f *fakeActuator) KillProcesses(names []string) []error {
@@ -57,6 +58,64 @@ func TestKillDefaultIsolateAndAbortOnly(t *testing.T) {
 	}
 	if contains(act.calls, "shutdown") || containsPrefix(act.calls, "kill:") || contains(act.calls, "lock") {
 		t.Errorf("default must NOT kill/lock/shutdown: %v", act.calls)
+	}
+}
+
+// isolatingActuator reports isolation as having run while the OS says nothing
+// changed -- the case that motivated recording a read-back at all.
+type isolatingActuator struct{ observed []string }
+
+func (isolatingActuator) Elevated() bool { return true }
+func (a isolatingActuator) IsolateNetwork() (func() error, []string, error) {
+	return func() error { return nil }, a.observed, nil
+}
+func (isolatingActuator) KillProcesses([]string) []error       { return nil }
+func (isolatingActuator) LockWorkstation() error               { return nil }
+func (isolatingActuator) Shutdown(string, time.Duration) error { return nil }
+
+// TestIsolateRecordsWhatTheOSReportedBack keeps "isolate ran" and "isolate took
+// effect" as separate claims in the chain.
+//
+// A Put that returns no error proves the call was accepted, not that anything
+// changed. Live testing produced a trip audited killaction.done{isolate} on a run
+// where the outbound default was never observed leaving Allow, and there was no
+// way to tell a write that did not take hold from a measurement that had missed
+// it -- because the record carried only the fact that the call was made.
+func TestIsolateRecordsWhatTheOSReportedBack(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		observed []string
+		want     string
+	}{
+		{"took effect", []string{"profile1=block", "profile2=block", "profile4=block"}, "profile1=block"},
+		{"did not take effect", []string{"profile1=NOT-BLOCKED(1)"}, "NOT-BLOCKED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := &memDest{}
+			e := NewKillExecutor(KillExecutorDeps{
+				Config:   KillActionConfig{Isolate: true},
+				Actuator: isolatingActuator{observed: tc.observed},
+				Audit:    audit.NewAuditLog(dest),
+				Banner:   func(string) {},
+				Finalize: func() {},
+				Abort:    func(error) {},
+			})
+			e.OnTrip("test")
+
+			var payload string
+			for _, entry := range dest.entries {
+				if entry.Event == "killaction.done" {
+					payload = string(entry.Payload)
+				}
+			}
+			if payload == "" {
+				t.Fatal("no killaction.done entry was recorded")
+			}
+			if !strings.Contains(payload, tc.want) {
+				t.Errorf("the record must carry what the OS reported back; want %q in: %s",
+					tc.want, payload)
+			}
+		})
 	}
 }
 
@@ -200,7 +259,7 @@ func discardLogger() *slog.Logger {
 type panickingActuator struct{ elevated bool }
 
 func (p *panickingActuator) Elevated() bool { return p.elevated }
-func (p *panickingActuator) IsolateNetwork() (func() error, error) {
+func (p *panickingActuator) IsolateNetwork() (func() error, []string, error) {
 	panic("simulated COM fault during isolation")
 }
 func (p *panickingActuator) KillProcesses([]string) []error       { return nil }

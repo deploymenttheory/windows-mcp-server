@@ -16,8 +16,10 @@ type stubActuator struct{}
 // no-op stub.
 func NewSystemActuator(_ *slog.Logger) SystemActuator { return stubActuator{} }
 
-func (stubActuator) Elevated() bool                           { return false }
-func (stubActuator) IsolateNetwork() (func() error, error)    { return func() error { return nil }, nil }
+func (stubActuator) Elevated() bool { return false }
+func (stubActuator) IsolateNetwork() (func() error, []string, error) {
+	return func() error { return nil }, nil, nil
+}
 func (stubActuator) KillProcesses(_ []string) []error         { return nil }
 func (stubActuator) LockWorkstation() error                   { return nil }
 func (stubActuator) Shutdown(_ string, _ time.Duration) error { return nil }

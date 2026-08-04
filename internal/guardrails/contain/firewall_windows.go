@@ -98,8 +98,19 @@ func clearAction(profile windowsfirewall.NET_FW_PROFILE_TYPE2, valueName string)
 // firewallIsolate flips every profile's default inbound and outbound actions to
 // Block (loopback stays exempt by OS default) and returns a restore func that
 // reinstates the saved actions. Requires elevation.
-func firewallIsolate() (func() error, error) {
+//
+// The second return value reports what the firewall said the outbound action was
+// *after* each write, read back through the same COM object. It exists because a
+// successful Put proves only that the call did not error: lab testing audited
+// killaction.done{isolate} on a run where a registry poll never observed the
+// outbound default leaving Allow, and there was no way to tell a write that did
+// not take effect from one whose effect the poll had missed. The registry turned
+// out to be the wrong surface to watch -- Put_* goes to the firewall service,
+// which does not necessarily persist it synchronously -- so the read-back has to
+// come from the same API that did the writing. Audited with the trip.
+func firewallIsolate() (func() error, []string, error) {
 	var saved []savedProfile
+	var observed []string
 	err := WithCOMThread(func() error {
 		policy, release, e := NewFwPolicy()
 		if e != nil {
@@ -125,11 +136,22 @@ func firewallIsolate() (func() error, error) {
 			if e := policy.Put_DefaultOutboundAction(p, windowsfirewall.NET_FW_ACTION_BLOCK); e != nil {
 				return fmt.Errorf("block outbound (profile %d): %w", p, e)
 			}
+			// Read back through the same object, immediately. A Put that returns no
+			// error has not necessarily changed anything.
+			back, e := policy.Get_DefaultOutboundAction(p)
+			switch {
+			case e != nil:
+				observed = append(observed, fmt.Sprintf("profile%d=read-error", p))
+			case back == windowsfirewall.NET_FW_ACTION_BLOCK:
+				observed = append(observed, fmt.Sprintf("profile%d=block", p))
+			default:
+				observed = append(observed, fmt.Sprintf("profile%d=NOT-BLOCKED(%d)", p, back))
+			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, observed, err
 	}
 	restore := func() error {
 		return WithCOMThread(func() error {
@@ -163,7 +185,7 @@ func firewallIsolate() (func() error, error) {
 			return firstErr
 		})
 	}
-	return restore, nil
+	return restore, observed, nil
 }
 
 // NewFwPolicy instantiates INetFwPolicy2. The caller must run on a COM-

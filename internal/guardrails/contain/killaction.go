@@ -25,7 +25,12 @@ type SystemActuator interface {
 	Elevated() bool
 	// IsolateNetwork blocks all non-loopback traffic and returns a restore func
 	// that undoes it. Requires elevation.
-	IsolateNetwork() (restore func() error, err error)
+	//
+	// observed reports what the OS said the state was after the change, read back
+	// through the same interface that made it. A nil error means the calls
+	// succeeded; it does not mean anything changed, and the difference is not
+	// something an audit trail should have to assume. Recorded with the trip.
+	IsolateNetwork() (restore func() error, observed []string, err error)
 	// KillProcesses terminates processes matching the given executable names.
 	KillProcesses(names []string) []error
 	// LockWorkstation locks the interactive session (no elevation required).
@@ -140,13 +145,23 @@ func (e *KillExecutor) OnTrip(reason string) {
 		case !elevated:
 			auditAppend(e.audit, "killaction.skipped", map[string]any{"action": "isolate", "why": "not elevated"})
 		default:
-			if restore, err := e.act.IsolateNetwork(); err != nil {
-				auditAppend(e.audit, "killaction.failed", map[string]any{"action": "isolate", "err": err.Error()})
-			} else {
+			restore, observed, err := e.act.IsolateNetwork()
+			switch {
+			case err != nil:
+				auditAppend(e.audit, "killaction.failed", map[string]any{
+					"action": "isolate", "err": err.Error(), "observed": observed,
+				})
+			default:
 				e.mu.Lock()
 				e.restore = restore
 				e.mu.Unlock()
-				auditAppend(e.audit, "killaction.done", map[string]any{"action": "isolate"})
+				// observed is what the OS reported after the change. Recording it
+				// means "isolate ran" and "isolate took effect" are separate claims
+				// in the chain, which is the distinction a containment record has to
+				// support: killaction.done alone could not tell them apart.
+				auditAppend(e.audit, "killaction.done", map[string]any{
+					"action": "isolate", "observed": observed,
+				})
 			}
 		}
 	}

@@ -95,11 +95,19 @@ rule naming a tool does not reach `completion/complete`, so credential *names*
 stayed enumerable under a policy that refused every `Credentials` mode (documented;
 schema work is roadmap S14).
 
-**One thing remains unresolved and is the reason `isolate` should not be trusted
-yet.** The ladder audits `killaction.done{isolate}`, and driving
-`Put_DefaultOutboundAction(BLOCK)` directly does take effect and persist — but a
-2,789-sample poll at ~3 ms resolution spanning a real trip never observed the
-outbound default leaving `Allow`. Roadmap S13.
+**`isolate` was initially recorded as unproven and has since been cleared.** A
+2,789-sample registry poll spanning a real trip never observed the outbound
+default leaving `Allow`, which is indistinguishable from containment that reports
+success and does nothing. Instrumenting `firewallIsolate` to read back through the
+same COM object it writes with settled it: all three profiles report `block`
+inside the trip. The registry was the wrong surface — `Put_*` goes to the firewall
+service, which does not persist it synchronously — so the finding was a
+measurement artefact, not a defect.
+
+The reason it took instrumentation to tell those apart is worth keeping: the audit
+record said only that the call had been made. `killaction.done{isolate}` now
+carries what the OS reported back, so "isolate ran" and "isolate took effect" are
+separate claims rather than one standing in for both.
 
 **Not validated at all:** session recording, the journey recorder's password
 redaction (roadmap S4), and injection into a genuine masked field (the positive

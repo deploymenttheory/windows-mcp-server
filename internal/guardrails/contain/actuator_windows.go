@@ -37,7 +37,7 @@ func (winActuator) Elevated() bool { return signals.DetectRunContext().Elevated 
 // IsolateNetwork blocks all non-loopback traffic via the Windows Firewall and
 // returns a restore func. Loopback is exempt from the firewall by default, so
 // the loopback status endpoint survives isolation.
-func (winActuator) IsolateNetwork() (func() error, error) { return firewallIsolate() }
+func (winActuator) IsolateNetwork() (func() error, []string, error) { return firewallIsolate() }
 
 // KillProcesses terminates every running process whose image name matches one
 // of names (case-insensitive, e.g. "powershell.exe").

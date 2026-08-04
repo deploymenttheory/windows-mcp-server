@@ -87,31 +87,6 @@ with no seal.
 
 *Files:* `internal/guardrails/audit/{manifest,verify}.go`.
 
-### S13. `isolate` was never observed blocking outbound traffic
-
-The kill ladder audits `killaction.done{"action":"isolate"}`, and calling
-`Put_DefaultOutboundAction(BLOCK)` directly through `contain.NewFwPolicy` does
-take effect and persist — both verified in the lab. But a 2,789-sample registry
-poll at ~3 ms resolution spanning a real trip never observed the outbound default
-leaving `Allow`, and the flip from `NotConfigured` to an explicit `Allow` happened
-at server *startup*, before the trip.
-
-So the mechanism works when driven directly, and the ladder reports success, but
-the state change was not observable during an actual containment event. Something
-between those two facts is wrong and sampling cannot resolve it.
-
-Next step is instrumentation rather than another poll: log the read-back value
-immediately after each `Put` inside `firewallIsolate`, and establish what touches
-the firewall at startup (the egress `Recover()` path runs on every start by
-design, including when egress is off, and is the obvious candidate).
-
-Until this is settled, treat `isolate` as unproven. `docs/security-architecture.md`
-claims network isolation cuts the exfil channel; that claim currently rests on a
-unit test and an audit line, not on observed behaviour.
-
-*Files:* `internal/guardrails/contain/{firewall_windows,killaction}.go`,
-`internal/guardrails/egress/enforcer_windows.go`.
-
 ### S14. Non-tool methods cannot be selected by policy
 
 `resources/read`, `prompts/get`, `completion/complete` and `subscriptions/listen`
@@ -412,6 +387,41 @@ The ones that changed what a documented guarantee meant:
   added.
 - **`Scrape` had a second, weaker address checker** than the proxy's and
   re-resolved at dial time (this was S1).
+
+### Live validation on a Windows guest (PR #77 — 2026-08)
+
+The assessment in #75 was produced by reading code, and its tests were written
+from the same reading, so they could only confirm the code matched the review.
+Driving the shipped binary against a disposable Hyper-V guest — as a real MCP
+client over stdio, in an interactive desktop session — confirmed every fix from
+#75 and found four things the review had not.
+
+Fixed: an unsealed session's truncated tail verified clean *and silent* (now
+`UNSEALED`, a warning, and `--strict`; detection itself is S12); the firewall
+restore materialised an explicit `Allow` where nothing had been configured,
+because `Get_DefaultOutboundAction` reports `ALLOW` for an absent value; a UTF-8
+BOM — what PowerShell 5.1 and Notepad write by default — made a policy
+unparseable with a message naming neither the file nor the cause; and a rule
+naming a tool does not reach `completion/complete`, so credential *names* stayed
+enumerable under a policy that refused every `Credentials` mode (documented; the
+schema work is S14).
+
+The credential never-read invariant was tested the only way that means anything:
+with Notepad focused and the agent having just typed into it, injection into that
+same unmasked field was refused.
+
+**`isolate` was cleared, and the way it was cleared is the point.** A registry
+poll spanning a real trip never observed the outbound default leaving `Allow`,
+which read as "containment reports success but does nothing". Instrumenting
+`firewallIsolate` to read back through the same COM object it writes with settled
+it: all three profiles report `block` inside the trip. The registry was simply the
+wrong surface — `Put_*` goes to the firewall service, which does not persist it
+synchronously. The finding was a measurement artefact.
+
+What survives is the reason the artefact was indistinguishable from a real
+failure: `killaction.done{isolate}` recorded only that the call had been made. It
+now carries what the OS reported back, so "isolate ran" and "isolate took effect"
+are separate claims in the chain rather than one claim standing for both.
 
 ### Security remediation (PRs #71, #73 — 2026-08)
 
