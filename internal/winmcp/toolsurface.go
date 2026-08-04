@@ -52,6 +52,18 @@ func protectedPaths(cfg Config, p *policy.Policy) []windows.ProtectedPath {
 	if dest := p.Transparency.AuditDestination; dest != "" && dest != "stderr" {
 		out = append(out, windows.NewProtectedPath(dest, "the audit log", auditDestinationIsDir(dest), false, true))
 	}
+	// The kill-switch control directory: no write, because a file placed here is
+	// the sentinel trigger and writing one is an attempt to actuate the
+	// containment ladder — an escalation the agent must never reach. No read
+	// either: the directory is the operator's channel to the server, not the
+	// agent's to inspect.
+	//
+	// This is one of two defences. It only binds the FileSystem tool, and the
+	// shell toolset reaches the same path with no such check, which is why the
+	// sentinel also has to carry a token the agent cannot know (see sentinelToken).
+	if dir := p.InFlight.ControlDir; dir != "" {
+		out = append(out, windows.NewProtectedPath(dir, "the kill-switch control directory", true, true, true))
+	}
 	return out
 }
 

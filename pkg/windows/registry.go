@@ -13,17 +13,11 @@ import (
 	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
 )
 
-// psQuote single-quotes and escapes a string for safe embedding in a PowerShell
-// command.
-func psQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-}
-
 // Registry reads and writes the Windows registry via PowerShell cmdlets.
 func Registry() inventory.ServerTool {
 	destructive := true
 	return NewToolFromHandler(
-		ToolsetSystem,
+		ToolsetSystemAdmin,
 		mcp.Tool{
 			Name: "Registry",
 			Description: "Read and write the Windows registry. Paths use PowerShell drive syntax, e.g. \"HKCU:\\Software\\MyApp\". " +
@@ -60,15 +54,19 @@ func Registry() inventory.ServerTool {
 			}
 			name := OptionalString(args, "name", "")
 
+			// Every model-supplied value is bound as data via PSScript rather than
+			// interpolated, so a registry path or value cannot break out of its
+			// cmdlet argument into a statement. See psscript.go.
+			var ps PSScript
 			var command string
 			switch mode {
 			case "get":
 				if name == "" {
 					return NewToolResultError("name is required for get"), nil
 				}
-				command = "Get-ItemPropertyValue -Path " + psQuote(path) + " -Name " + psQuote(name)
+				command = ps.Script("Get-ItemPropertyValue -Path " + ps.Arg(path) + " -Name " + ps.Arg(name))
 			case "list":
-				command = "Get-ItemProperty -Path " + psQuote(path) + " | Format-List"
+				command = ps.Script("Get-ItemProperty -Path " + ps.Arg(path) + " | Format-List")
 			case "set":
 				if name == "" {
 					return NewToolResultError("name is required for set"), nil
@@ -78,14 +76,16 @@ func Registry() inventory.ServerTool {
 					return NewToolResultError(err.Error()), nil
 				}
 				value := OptionalString(args, "value", "")
-				command = "if (-not (Test-Path " + psQuote(path) + ")) { New-Item -Path " + psQuote(path) + " -Force | Out-Null }; " +
-					"New-ItemProperty -Path " + psQuote(path) + " -Name " + psQuote(name) +
-					" -Value " + psQuote(value) + " -PropertyType " + valType + " -Force | Out-Null; 'OK'"
+				pathRef, nameRef, valueRef := ps.Arg(path), ps.Arg(name), ps.Arg(value)
+				command = ps.Script(
+					"if (-not (Test-Path " + pathRef + ")) { New-Item -Path " + pathRef + " -Force | Out-Null }; " +
+						"New-ItemProperty -Path " + pathRef + " -Name " + nameRef +
+						" -Value " + valueRef + " -PropertyType " + valType + " -Force | Out-Null; 'OK'")
 			case "delete":
 				if name == "" {
 					return NewToolResultError("name is required for delete"), nil
 				}
-				command = "Remove-ItemProperty -Path " + psQuote(path) + " -Name " + psQuote(name) + "; 'OK'"
+				command = ps.Script("Remove-ItemProperty -Path " + ps.Arg(path) + " -Name " + ps.Arg(name) + "; 'OK'")
 			default:
 				return NewToolResultError("invalid mode"), nil
 			}

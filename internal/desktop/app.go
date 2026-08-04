@@ -14,6 +14,7 @@ import (
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/foundation"
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/system/threading"
 	wm "github.com/deploymenttheory/go-bindings-win32/bindings/win32/ui/windowsandmessaging"
+	"github.com/deploymenttheory/windows-mcp-server/internal/psdata"
 )
 
 // asfwAny is ASFW_ANY for AllowSetForegroundWindow (allow any process).
@@ -140,9 +141,11 @@ func (d *Desktop) ResizeWindow(titleSubstr string, x, y, width, height int) (Win
 // resolves apps on PATH and registered app execution aliases (e.g. "notepad",
 // "msedge"). It waits briefly and returns the launched window if one appears.
 func (d *Desktop) LaunchApp(ctx context.Context, name string) (string, error) {
-	// Single-quote and escape for PowerShell.
-	quoted := "'" + strings.ReplaceAll(name, "'", "''") + "'"
-	res, err := d.RunPowerShell(ctx, "Start-Process "+quoted, 20*time.Second)
+	// Bound as data, never interpolated: quoting cannot be made safe here, because
+	// PowerShell's lexer closes a single-quoted literal on typographic quotes as
+	// well as on the ASCII apostrophe. See internal/psdata.
+	var ps psdata.Builder
+	res, err := d.RunPowerShell(ctx, ps.Script("Start-Process "+ps.Arg(name)), 20*time.Second)
 	if err != nil {
 		return "", err
 	}

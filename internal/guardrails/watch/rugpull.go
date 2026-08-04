@@ -126,7 +126,17 @@ type RugPull struct {
 	// fingerprint. A surface with no baseline is not checked, so a server that
 	// serves no prompts cannot trip on them.
 	baselines map[string]string
-	tripped   bool
+	// tripped records which surfaces have already reported drift, so a standing
+	// mutation is reported once rather than on every tick.
+	//
+	// It is per surface, and deliberately so. A single shared flag meant the first
+	// trip on any surface silently stopped comparing all four for the rest of the
+	// session — and because it latched whether or not the trigger was armed, the
+	// default report-only configuration guaranteed it: one cheap drift on
+	// `discover`, or a false positive, and the tool manifest could then be mutated
+	// freely with nothing compared, hashed or audited. It is the same failure the
+	// monitor loop guards against with MonitorConfig.Stopped.
+	tripped map[string]bool
 }
 
 // Surfaces a rug pull can be detected on.
@@ -207,11 +217,14 @@ func (r *RugPull) compareDiscover(hash, source string) error {
 func (r *RugPull) compareSurface(surface, hash, source string) error {
 	r.mu.Lock()
 	base := r.baselines[surface]
-	if base == "" || hash == base || r.tripped {
+	if base == "" || hash == base || r.tripped[surface] {
 		r.mu.Unlock()
 		return nil
 	}
-	r.tripped = true
+	if r.tripped == nil {
+		r.tripped = map[string]bool{}
+	}
+	r.tripped[surface] = true
 	r.mu.Unlock()
 
 	reason := fmt.Sprintf("%s manifest changed after startup (%s): %s != baseline %s",

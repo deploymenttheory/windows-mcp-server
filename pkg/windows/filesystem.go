@@ -60,7 +60,7 @@ func resolvePath(path string) (string, error) {
 // FileSystem reads, writes, and manages files. Relative paths resolve against
 // the user's Desktop.
 func FileSystem() inventory.ServerTool {
-	destructive := true
+	destructive, openWorld := true, true
 	return NewToolFromHandler(
 		ToolsetFilesystem,
 		mcp.Tool{
@@ -71,6 +71,9 @@ func FileSystem() inventory.ServerTool {
 				Title:           "File system operations",
 				ReadOnlyHint:    false,
 				DestructiveHint: &destructive,
+				// Open-world: a UNC path reads from or writes to another host, which is
+				// network egress outside the proxy and the allowlist.
+				OpenWorldHint: &openWorld,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",

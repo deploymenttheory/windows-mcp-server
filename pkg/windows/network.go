@@ -71,9 +71,10 @@ func Network() inventory.ServerTool {
 				if err != nil {
 					return NewToolResultError(err.Error()), nil
 				}
-				// The host is embedded as a single-quoted PowerShell literal so it cannot
-				// break out of the Test-NetConnection argument into a command.
-				cmd := "Test-NetConnection -ComputerName " + psQuote(host)
+				// The host is bound as data via PSScript so it cannot break out of the
+				// Test-NetConnection argument into a statement. See psscript.go.
+				var ps PSScript
+				cmd := "Test-NetConnection -ComputerName " + ps.Arg(host)
 				port, err := OptionalInt(args, "port", 0)
 				if err != nil {
 					return NewToolResultError(err.Error()), nil
@@ -81,9 +82,9 @@ func Network() inventory.ServerTool {
 				if port > 0 {
 					cmd += fmt.Sprintf(" -Port %d", clampInt(port, 1, 65535))
 				}
-				command = "$ProgressPreference='SilentlyContinue'; " + cmd +
+				command = ps.Script("$ProgressPreference='SilentlyContinue'; " + cmd +
 					" | Select-Object ComputerName, RemoteAddress, RemotePort, " +
-					"TcpTestSucceeded, PingSucceeded | ConvertTo-Json -Depth 3"
+					"TcpTestSucceeded, PingSucceeded | ConvertTo-Json -Depth 3")
 			}
 
 			res, err := deps.Desktop().RunPowerShell(ctx, command, 60*time.Second)

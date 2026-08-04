@@ -44,6 +44,7 @@ func AllTools() []inventory.ServerTool {
 
 		// shell toolset
 		PowerShell(),
+		LaunchExecutable(),
 
 		// filesystem toolset
 		FileSystem(),

@@ -114,7 +114,7 @@ func TestWriteCredentialValidates(t *testing.T) {
 // It must reject before touching the engine, hence the zero-value Desktop.
 func TestInjectRejectsWriteOnlyType(t *testing.T) {
 	d := &Desktop{}
-	n, err := d.InjectCredential("anything", CredentialDomainPassword, nil)
+	n, err := d.InjectCredential("anything", CredentialDomainPassword, nil, false)
 	if err == nil {
 		t.Fatal("domain_password injection must be refused")
 	}

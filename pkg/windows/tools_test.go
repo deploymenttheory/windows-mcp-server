@@ -52,7 +52,9 @@ func TestAllToolsValid(t *testing.T) {
 
 // TestExpectedToolCount guards against accidental tool loss/addition.
 func TestExpectedToolCount(t *testing.T) {
-	const want = 34
+	// 35 since LaunchExecutable was split out of App's launch_executable mode, so
+	// arbitrary code execution sits in the shell toolset rather than in apps.
+	const want = 35
 	if got := len(AllTools()); got != want {
 		t.Errorf("tool count = %d, want %d (update this test intentionally)", got, want)
 	}
@@ -256,4 +258,105 @@ func TestPromptsReusePersonaGuidance(t *testing.T) {
 	if got := personaGuidance("no-such-persona"); got != "" {
 		t.Errorf("unknown persona should yield empty guidance, got %q", got)
 	}
+}
+
+// TestExecutionPrimitivesAreAnnotatedDestructive pins the annotations policy
+// rules match on. Each of these tools can cause or drive arbitrary execution, and
+// each was previously unannotated -- so a rule matching `annotation: destructive`
+// (as policy/examples/secure.json and enterprise.json both do, for hardware
+// posture, rate limiting and require_plan) silently did not cover them.
+//
+// App launches an arbitrary executable. Type and Shortcut are universal write
+// primitives, and win+r followed by Type is arbitrary execution without ever
+// calling PowerShell. MultiEdit amplifies Type. Credentials types a live secret.
+func TestExecutionPrimitivesAreAnnotatedDestructive(t *testing.T) {
+	want := map[string]bool{
+		"App": true, "Type": true, "Shortcut": true, "MultiEdit": true, "Credentials": true,
+	}
+	seen := map[string]bool{}
+	for _, tool := range AllTools() {
+		if !want[tool.Tool.Name] {
+			continue
+		}
+		seen[tool.Tool.Name] = true
+		a := tool.Tool.Annotations
+		if a == nil || a.DestructiveHint == nil || !*a.DestructiveHint {
+			t.Errorf("%s must carry DestructiveHint: policy rules and rate limits match on it, "+
+				"so without it this tool is outside every destructive gate", tool.Tool.Name)
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("%s is no longer in the manifest; update this test deliberately", name)
+		}
+	}
+}
+
+// TestRecordingIsNotReadOnly guards a tool that writes while claiming not to.
+// mode=mark appends a model-supplied label to the session file, so annotated
+// read-only it was served even under --read-only and no destructive rule or rate
+// limit applied to it.
+func TestRecordingIsNotReadOnly(t *testing.T) {
+	for _, tool := range AllTools() {
+		if tool.Tool.Name != "Recording" {
+			continue
+		}
+		if tool.Tool.Annotations != nil && tool.Tool.Annotations.ReadOnlyHint {
+			t.Error("Recording mode=mark writes to the session file; it must not be annotated read-only")
+		}
+		return
+	}
+	t.Error("Recording is no longer in the manifest; update this test deliberately")
+}
+
+// TestArbitraryExecutionIsNotInADefaultToolset pins where code execution lives.
+//
+// launch_executable used to be a mode of App, in the Default: true apps toolset
+// carried by every persona -- including business-user, whose instructions promise
+// "no shell, registry, or file-system access". A persona documented as having no
+// shell could therefore start cmd.exe.
+func TestArbitraryExecutionIsNotInADefaultToolset(t *testing.T) {
+	execTools := map[string]bool{"PowerShell": true, "LaunchExecutable": true}
+	found := 0
+	for _, tool := range AllTools() {
+		if !execTools[tool.Tool.Name] {
+			continue
+		}
+		found++
+		if tool.Toolset.Default {
+			t.Errorf("%s is in the default toolset %q; arbitrary code execution must be opt-in",
+				tool.Tool.Name, tool.Toolset.ID)
+		}
+		if tool.Toolset.ID != ToolsetShell.ID {
+			t.Errorf("%s is in toolset %q, want %q so one decision covers all code execution",
+				tool.Tool.Name, tool.Toolset.ID, ToolsetShell.ID)
+		}
+	}
+	if found != len(execTools) {
+		t.Errorf("found %d of %d execution tools; update this test deliberately", found, len(execTools))
+	}
+}
+
+// TestAppNoLongerExecutesByPath keeps the mode from being reintroduced on the
+// tool that every persona carries.
+func TestAppNoLongerExecutesByPath(t *testing.T) {
+	for _, tool := range AllTools() {
+		if tool.Tool.Name != "App" {
+			continue
+		}
+		schema, ok := tool.Tool.InputSchema.(*jsonschema.Schema)
+		if !ok || schema == nil {
+			t.Fatal("App input schema is not *jsonschema.Schema")
+		}
+		if props := schema.Properties; props != nil {
+			for _, banned := range []string{"executable", "cwd"} {
+				if _, ok := props[banned]; ok {
+					t.Errorf("App accepts %q again; execution by path belongs to LaunchExecutable "+
+						"in the shell toolset", banned)
+				}
+			}
+		}
+		return
+	}
+	t.Error("App is no longer in the manifest; update this test deliberately")
 }

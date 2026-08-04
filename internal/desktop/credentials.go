@@ -135,6 +135,13 @@ type CredentialInfo struct {
 	Present  bool   `json:"present"`
 	// Injectable is false for credential classes Windows will not read back.
 	Injectable bool `json:"injectable"`
+	// AllowUnmaskedTarget lets this credential be injected into a control that
+	// does not report itself as masked. It defaults to false, so injection
+	// normally requires a confirmed password field — see requireMaskedFocus. It is
+	// an operator decision, declared per credential in the credentials document,
+	// because it trades the never-read guarantee for reach into destinations that
+	// cannot report IsPassword (a console window, some Electron and Java apps).
+	AllowUnmaskedTarget bool `json:"allow_unmasked_target"`
 }
 
 // WriteCredential installs a credential into the calling user's credential set.
@@ -226,7 +233,7 @@ func (d *Desktop) CredentialPresent(target string, t CredentialType) (bool, erro
 //
 // It returns the number of characters typed, which is safe to report: the length
 // alone tells a caller the injection happened without disclosing the value.
-func (d *Desktop) InjectCredential(target string, t CredentialType, clickAt *Point) (int, error) {
+func (d *Desktop) InjectCredential(target string, t CredentialType, clickAt *Point, allowUnmasked bool) (int, error) {
 	if !t.Readable() {
 		return 0, fmt.Errorf("credential type %q is write-only: Windows does not return its secret to callers, "+
 			"so it can be installed for Windows to use but not injected as keystrokes", t)
@@ -244,6 +251,15 @@ func (d *Desktop) InjectCredential(target string, t CredentialType, clickAt *Poi
 	err = d.Do(func() error {
 		if clickAt != nil {
 			if err := leftClickAt(clickAt.X, clickAt.Y); err != nil {
+				return err
+			}
+		}
+
+		// The destination is checked here, on the STA thread, after the click and
+		// immediately before the keystrokes — so what is verified is what receives
+		// them. Doing it in the tool layer would leave a window in which focus moved.
+		if !allowUnmasked {
+			if err := requireMaskedFocus(d); err != nil {
 				return err
 			}
 		}
@@ -266,6 +282,65 @@ func (d *Desktop) InjectCredential(target string, t CredentialType, clickAt *Poi
 		return nil
 	})
 	return typed, err
+}
+
+// ErrInjectTargetNotMasked is returned when a credential injection cannot be
+// confirmed to be landing in a control that masks its input. Callers match on it
+// to distinguish a refused destination from an engine failure; the wrapped detail
+// explains which of the checks could not be satisfied, and every message names
+// the allow_unmasked_target remedy through injectRemedy.
+var ErrInjectTargetNotMasked = errors.New("refusing to inject the credential")
+
+// InjectRemedy names the documented escape hatch, for the tool layer to append to
+// a refusal. It is not baked into each error so the sentinel's message stays
+// short and the guidance appears exactly once.
+func InjectRemedy() string { return injectRemedy }
+
+const injectRemedy = ` Set "allow_unmasked_target": true on this credential if the destination ` +
+	`genuinely cannot report a masked field (a console window, or some Electron and Java applications).`
+
+// requireMaskedFocus fails unless the focused element masks its input.
+// STA-thread only; call it inside the same Do job that types the secret.
+//
+// The guarantee this protects is that the agent may *use* a secret but never
+// *read* one. Without it, the agent chose where the keystrokes landed: open
+// Notepad, click into it, inject, then read the plaintext straight back out with
+// Screenshot, GetText, or the clipboard. The credential engine never returns a
+// secret, so the destination is the whole of the remaining exposure.
+//
+// It fails closed. "Cannot tell" is not "not a password": if UIA is unavailable,
+// reports no focused element, or does not support the property, the secret is not
+// typed. A caller with a legitimate destination that cannot report IsPassword —
+// a console window, some Electron and Java apps, a field with "show password"
+// toggled — declares allow_unmasked_target on that credential, which makes the
+// exception explicit, per-credential, and visible in the credentials document.
+func requireMaskedFocus(d *Desktop) error {
+	if d.uia == nil || d.uia.automation == nil {
+		return fmt.Errorf("%w: UI Automation is unavailable, so the destination cannot be confirmed "+
+			"to be a password field", ErrInjectTargetNotMasked)
+	}
+	el, err := d.uia.automation.GetFocusedElement()
+	if err != nil {
+		return fmt.Errorf("%w: could not read the focused element, so the destination cannot be "+
+			"confirmed to be a password field (%v)", ErrInjectTargetNotMasked, err)
+	}
+	if el == nil {
+		return fmt.Errorf("%w: nothing is focused, so there is no confirmed password field to receive "+
+			"the secret — click the field first, or pass a target", ErrInjectTargetNotMasked)
+	}
+	defer el.Release()
+
+	masked, err := el.Get_CurrentIsPassword()
+	if err != nil {
+		return fmt.Errorf("%w: the focused element does not report whether it masks input (%w)",
+			ErrInjectTargetNotMasked, err)
+	}
+	if !boolVal(masked) {
+		return fmt.Errorf("%w: the focused element is not a password field, and typing a secret into "+
+			"an unmasked control would put it on screen and in reach of Screenshot, GetText and the "+
+			"clipboard", ErrInjectTargetNotMasked)
+	}
+	return nil
 }
 
 // Point is a screen coordinate in physical pixels.

@@ -153,7 +153,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// recording (session-<stamp>.mp4) correlate by name — the correlation an
 	// evidence bundle later relies on.
 	sessionStamp := time.Now().Format("20060102-150405")
-	dest, err := audit.OpenDestination(devicePolicy.Transparency.AuditDestination, sessionStamp)
+	dest, err := audit.OpenDestination(devicePolicy.Transparency.AuditDestination, sessionStamp,
+		[]byte(os.Getenv("WINDOWS_MCP_AUDIT_KEY")))
 	if err != nil {
 		return fmt.Errorf("audit log: %w", err)
 	}
@@ -301,6 +302,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		unacked, acked := splitCredentialExposure(
 			inv.EnabledToolsets(),
 			devicePolicy.Credentials.AcknowledgeToolsetExposure,
+			credentialsDeclareUnmaskedTargets(cfg.CredentialsFile),
 		)
 		if len(unacked) > 0 {
 			_, _ = audit.Append("credentials.exposure.denied", map[string]any{
@@ -456,30 +458,37 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		}
 	}
 
-	// Receiving middleware (outermost first). newMCPSurface already installed
-	// inject-deps and cache hints; these nest inside them. Telemetry sits between
-	// audit and rug-pull: audit must see every request first, and a span should
-	// cover the rug-pull and policy work that follows.
-	server.AddReceivingMiddleware(audit.Middleware())
-	if telemetryMiddleware != nil {
-		server.AddReceivingMiddleware(telemetryMiddleware)
-	}
-	server.AddReceivingMiddleware(rugpull.Middleware())
-	server.AddReceivingMiddleware(rugpull.PromptMiddleware())
-	server.AddReceivingMiddleware(rugpull.ResourceMiddleware())
-	server.AddReceivingMiddleware(rugpull.DiscoverMiddleware())
+	// Every environment secret has now been read into the component that needs it,
+	// so clear them from the process environment before any tool can run. This is
+	// the second half of the defence; see scrubSecretEnv.
+	scrubSecretEnv(devicePolicy, logger)
 
-	// The policy engine, innermost so nothing can route around it and so the audit
-	// and rug-pull layers still observe the requests it refuses.
-	server.AddReceivingMiddleware(enforce.Middleware(engine, enforce.EnforcerDeps{
-		Audit:           audit,
-		Kill:            tripPolicy,
-		RecordDecision:  recordDecision,
-		Approver:        approver,
-		SessionID:       sessionStamp,
-		ApprovalTimeout: devicePolicy.Approvals.Timeout.Std(),
-		Logger:          logger,
-	}))
+	// Receiving middleware, outermost first, installed in one call so the order
+	// below is the order that actually runs (see installReceiving). Telemetry sits
+	// between audit and rug-pull: audit must see every request first, and a span
+	// should cover the rug-pull and policy work that follows. The policy engine is
+	// innermost, so nothing can route around it and the audit and rug-pull layers
+	// still observe the requests it refuses.
+	chain := []mcp.Middleware{audit.Middleware()}
+	if telemetryMiddleware != nil {
+		chain = append(chain, telemetryMiddleware)
+	}
+	chain = append(chain,
+		rugpull.Middleware(),
+		rugpull.PromptMiddleware(),
+		rugpull.ResourceMiddleware(),
+		rugpull.DiscoverMiddleware(),
+		enforce.Middleware(engine, enforce.EnforcerDeps{
+			Audit:           audit,
+			Kill:            tripPolicy,
+			RecordDecision:  recordDecision,
+			Approver:        approver,
+			SessionID:       sessionStamp,
+			ApprovalTimeout: devicePolicy.Approvals.Timeout.Std(),
+			Logger:          logger,
+		}),
+	)
+	surface.installReceiving(chain...)
 
 	// RegisterAll rather than RegisterTools: resources and prompts are part of the
 	// served surface too. Note RegisterResources (fixed URIs) and
@@ -547,6 +556,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	watch.StartMonitor(runCtx, watch.MonitorConfig{
 		Interval:         devicePolicy.InFlight.Interval.Std(),
 		ControlDir:       devicePolicy.InFlight.ControlDir,
+		SentinelToken:    sentinelToken(devicePolicy.InFlight.ControlDir, audit, logger),
 		TripSentinel:     tripSentinel,
 		TripPostureDrift: tripPostureDrift,
 		Stopped:          func() bool { tripped, _ := kill.Tripped(); return tripped },

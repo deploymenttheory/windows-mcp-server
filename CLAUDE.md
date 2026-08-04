@@ -152,9 +152,18 @@ constructors (`NewToolResultText`, `NewToolResultErrorFromErr`, …).
 `InjectDepsMiddleware` (`dependencies.go:88`) puts `ToolDependencies` on the
 context; handlers pull it via `MustDepsFromContext`. The `deps` argument passed
 to `RegisterTools` is ignored by every handler — the context is the real path.
-Receiving-middleware order, outermost first (`internal/winmcp/server.go:239-252`):
-**inject-deps → audit → rug-pull → tool-policy**. Order matters; audit must see
-the call, and policy must be innermost so nothing bypasses it.
+Receiving-middleware order, outermost first: **inject-deps → cache-hints → audit
+→ telemetry → rug-pull → tool-policy**. Order matters; audit must see the call,
+and policy must be innermost so nothing bypasses it.
+
+**Install the whole chain in one `AddReceivingMiddleware` call** — that is what
+`mcpSurface.installReceiving` (`internal/winmcp/surface.go`) is for, and every
+entry point goes through it. The SDK composes the middleware given to a *single*
+call outermost-first, but each separate call wraps the chain built so far, so
+adding them one at a time makes the **last** one outermost — silently reversing
+the order. That inversion put the policy engine outside the audit layer, and a
+refused call produced no `tool.call` entry at all. `TestReceivingMiddlewareRuns\
+OutermostFirst` and `TestOuterMiddlewareObservesRefusedRequests` pin it.
 
 ### Personas and toolsets
 

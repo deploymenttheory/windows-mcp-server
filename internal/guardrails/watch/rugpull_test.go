@@ -311,3 +311,44 @@ func TestDiscoverMiddlewareCoversBothHandshakes(t *testing.T) {
 		})
 	}
 }
+
+// TestTripOnOneSurfaceStillWatchesTheOthers is a regression test for a latch that
+// disabled the whole detector. `tripped` was a single shared flag, so the first
+// drift on any surface stopped comparison of all four for the rest of the
+// session -- and it latched regardless of whether the trigger was armed, which is
+// the default. One cheap drift on `discover`, or one false positive, and the tool
+// manifest could then be mutated with nothing compared, hashed or audited.
+func TestTripOnOneSurfaceStillWatchesTheOthers(t *testing.T) {
+	var reasons []string
+	rp := NewRugPull(func(reason string) { reasons = append(reasons, reason) }, nil)
+
+	toolsA := []*mcp.Tool{{Name: "A", Description: "original"}}
+	promptsA := []*mcp.Prompt{{Name: "P", Description: "original"}}
+	rp.SetBaseline(toolsA)
+	rp.SetPromptBaseline(promptsA)
+
+	// Drift the prompts surface: one report.
+	promptsB := []*mcp.Prompt{{Name: "P", Description: "mutated"}}
+	if err := rp.comparePrompts(HashPrompts(promptsB), "test"); err == nil {
+		t.Fatal("a mutated prompt manifest must be reported as drift")
+	}
+	if len(reasons) != 1 {
+		t.Fatalf("want 1 report after the first drift, got %d: %v", len(reasons), reasons)
+	}
+
+	// The tools surface must still be compared afterwards.
+	toolsB := []*mcp.Tool{{Name: "A", Description: "mutated"}}
+	if err := rp.compare(HashTools(toolsB), "test"); err == nil {
+		t.Error("a mutated tool manifest must still be detected after another surface tripped; " +
+			"one drift must not blind the detector")
+	}
+	if len(reasons) != 2 {
+		t.Errorf("want a second report for the tools surface, got %d: %v", len(reasons), reasons)
+	}
+
+	// A standing mutation is still reported only once per surface.
+	_ = rp.compare(HashTools(toolsB), "test")
+	if len(reasons) != 2 {
+		t.Errorf("a standing mutation must not re-report on every check, got %d: %v", len(reasons), reasons)
+	}
+}

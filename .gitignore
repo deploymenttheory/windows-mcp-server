@@ -44,3 +44,11 @@ go.work.sum
 
 # golangci-lint SARIF output (see .golangci.yml output settings)
 golangci-lint-report.sarif
+
+# Local working files that must not be published
+/SECURITY-FINDINGS.md
+/HANDOFF-vm-testing.md
+/golangci-lint-report.sarif
+
+# Build output at the repo root (the /bin/ and /dist/ rules above miss it)
+/windows-mcp-server.exe

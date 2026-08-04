@@ -177,6 +177,9 @@ func TestCredentialInfosOmitSecretsAndDefault(t *testing.T) {
 	allowed := map[string]bool{
 		"name": true, "target": true, "username": true,
 		"type": true, "persist": true, "present": true, "injectable": true,
+		// A policy flag, not a secret: it says whether this credential may be typed
+		// into a control that does not report itself as masked.
+		"allow_unmasked_target": true,
 	}
 	for _, obj := range decoded {
 		for k := range obj {
@@ -185,6 +188,41 @@ func TestCredentialInfosOmitSecretsAndDefault(t *testing.T) {
 					"serializable to a tool result", k)
 			}
 		}
+	}
+}
+
+// TestAllowUnmaskedTargetDefaultsOffAndPropagates pins the safe default and the
+// path the flag has to travel. The destination check is what keeps the never-read
+// guarantee true — the agent chooses where the keystrokes land, so an unmasked
+// destination puts the secret in reach of Screenshot and GetText — and this flag
+// is the only way to switch it off. It must be off unless the document says
+// otherwise, and it must actually reach the tool layer when it does.
+func TestAllowUnmaskedTargetDefaultsOffAndPropagates(t *testing.T) {
+	infos := credentialInfos([]installedCredential{
+		{Name: "strict", Target: "t1", Type: desktop.CredentialGeneric, Persist: desktop.PersistSession},
+		{
+			Name: "console", Target: "t2", Type: desktop.CredentialGeneric,
+			Persist: desktop.PersistSession, AllowUnmaskedTarget: true,
+		},
+	})
+	if infos[0].AllowUnmaskedTarget {
+		t.Error("a credential that does not ask for it must not allow an unmasked target")
+	}
+	if !infos[1].AllowUnmaskedTarget {
+		t.Error("an explicit allow_unmasked_target must reach the tool layer, " +
+			"or the documented escape hatch silently does nothing")
+	}
+}
+
+// TestCredentialEntryDefaultsToMaskedTargets pins the document default: an entry
+// that says nothing about its destination gets the strict behaviour.
+func TestCredentialEntryDefaultsToMaskedTargets(t *testing.T) {
+	var e credentialEntry
+	if err := json.Unmarshal([]byte(`{"name":"a","target":"t","secret":"s"}`), &e); err != nil {
+		t.Fatal(err)
+	}
+	if e.AllowUnmaskedTarget {
+		t.Error("allow_unmasked_target must default to false when the document omits it")
 	}
 }
 

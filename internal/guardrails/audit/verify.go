@@ -128,7 +128,7 @@ func VerifyDir(dir string, key []byte) (DirReport, error) {
 	}
 	if records == nil {
 		rep.Problems = append(rep.Problems, "no "+ManifestName+" in directory")
-	} else if err := VerifyManifest(records); err != nil {
+	} else if err := VerifyManifest(records, key); err != nil {
 		rep.Problems = append(rep.Problems, err.Error())
 	}
 

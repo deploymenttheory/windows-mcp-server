@@ -5,6 +5,7 @@ package windows
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -23,6 +24,7 @@ import (
 // the conversation transcript, or the model's context — only the number of
 // characters typed comes back.
 func Credentials() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetCredentials,
 		mcp.Tool{
@@ -36,6 +38,11 @@ func Credentials() inventory.ServerTool {
 			Annotations: &mcp.ToolAnnotations{
 				Title:        "Credentials list/verify/inject",
 				ReadOnlyHint: false, // inject synthesizes input
+				// Destructive so rules and rate limits matching that annotation cover
+				// credential injection. docs/security-architecture.md claimed they did;
+				// without the hint they did not, and enterprise.json's require_plan
+				// gate missed it too.
+				DestructiveHint: &destructive,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -165,8 +172,18 @@ func credentialsInject(
 		return NewToolResultError(err.Error()), nil
 	}
 
-	typed, err := deps.Desktop().InjectCredential(cred.Target, desktop.CredentialType(cred.Type), clickAt)
+	// The engine confirms, on the STA thread and immediately before typing, that
+	// the destination masks its input — unless this credential opts out. See
+	// desktop.requireMaskedFocus.
+	typed, err := deps.Desktop().InjectCredential(
+		cred.Target, desktop.CredentialType(cred.Type), clickAt, cred.AllowUnmaskedTarget)
 	if err != nil {
+		// A refused destination is a decision the model can act on — retarget, or
+		// ask the operator for the opt-out — so it gets the remedy spelled out
+		// rather than reading as an engine failure.
+		if errors.Is(err, desktop.ErrInjectTargetNotMasked) {
+			return NewToolResultErrorf("%s%s", err.Error(), desktop.InjectRemedy()), nil
+		}
 		return NewToolResultErrorFromErr(fmt.Sprintf("failed to inject credential %q", cred.Name), err), nil
 	}
 

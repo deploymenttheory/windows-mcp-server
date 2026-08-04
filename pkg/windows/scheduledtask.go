@@ -23,7 +23,7 @@ import (
 func ScheduledTask() inventory.ServerTool {
 	destructive := true
 	return NewToolFromHandler(
-		ToolsetSystem,
+		ToolsetSystemAdmin,
 		mcp.Tool{
 			Name: "ScheduledTask",
 			Description: "List, inspect, and manage Windows scheduled tasks. mode=list shows tasks (optionally " +
@@ -84,50 +84,54 @@ func ScheduledTask() inventory.ServerTool {
 }
 
 // scheduledTaskCommand builds the PowerShell for one mode. Every caller-supplied
-// value is embedded as a single-quoted PowerShell literal via psQuote, so a task
-// name or action cannot break out of its cmdlet argument into a command.
+// value is bound as data via PSScript rather than interpolated, so a task name or
+// action cannot break out of its cmdlet argument into a statement. See
+// psscript.go.
 func scheduledTaskCommand(mode string, args map[string]any) (string, error) {
+	var ps PSScript
 	if mode == "list" {
 		filter := OptionalString(args, "name", "")
 		sel := "Get-ScheduledTask"
 		if filter != "" {
-			sel += " -TaskName ('*' + " + psQuote(filter) + " + '*')"
+			sel += " -TaskName ('*' + " + ps.Arg(filter) + " + '*')"
 		}
-		return "$ErrorActionPreference='Stop'; " + sel +
-			" | Select-Object TaskName, TaskPath, State | ConvertTo-Json -Depth 3 -AsArray", nil
+		return ps.Script("$ErrorActionPreference='Stop'; " + sel +
+			" | Select-Object TaskName, TaskPath, State | ConvertTo-Json -Depth 3 -AsArray"), nil
 	}
 
 	name, err := RequiredString(args, "name")
 	if err != nil {
 		return "", err
 	}
-	q := psQuote(name)
+	q := ps.Arg(name)
 
 	switch mode {
 	case "get":
-		return "$ErrorActionPreference='Stop'; $t = Get-ScheduledTask -TaskName " + q + "; " +
+		return ps.Script("$ErrorActionPreference='Stop'; $t = Get-ScheduledTask -TaskName " + q + "; " +
 			"$i = $t | Get-ScheduledTaskInfo; " +
 			"[pscustomobject]@{ TaskName=$t.TaskName; TaskPath=$t.TaskPath; State=$t.State.ToString(); " +
 			"LastRunTime=$i.LastRunTime; NextRunTime=$i.NextRunTime; LastTaskResult=$i.LastTaskResult } | " +
-			"ConvertTo-Json -Depth 3", nil
+			"ConvertTo-Json -Depth 3"), nil
 	case "run":
-		return "$ErrorActionPreference='Stop'; Start-ScheduledTask -TaskName " + q + "; 'started'", nil
+		return ps.Script("$ErrorActionPreference='Stop'; Start-ScheduledTask -TaskName " + q + "; 'started'"), nil
 	case "enable":
-		return "$ErrorActionPreference='Stop'; Enable-ScheduledTask -TaskName " + q + " | Out-Null; 'enabled'", nil
+		return ps.Script("$ErrorActionPreference='Stop'; Enable-ScheduledTask -TaskName " + q + " | Out-Null; 'enabled'"), nil
 	case "disable":
-		return "$ErrorActionPreference='Stop'; Disable-ScheduledTask -TaskName " + q + " | Out-Null; 'disabled'", nil
+		return ps.Script("$ErrorActionPreference='Stop'; Disable-ScheduledTask -TaskName " + q + " | Out-Null; 'disabled'"), nil
 	case "delete":
-		return "$ErrorActionPreference='Stop'; Unregister-ScheduledTask -TaskName " + q + " -Confirm:$false; 'deleted'", nil
+		return ps.Script("$ErrorActionPreference='Stop'; Unregister-ScheduledTask -TaskName " + q +
+			" -Confirm:$false; 'deleted'"), nil
 	case "create":
-		return scheduledTaskCreateCommand(q, args)
+		return scheduledTaskCreateCommand(&ps, q, args)
 	default:
 		return "", fmt.Errorf("unknown mode %q", mode)
 	}
 }
 
 // scheduledTaskCreateCommand builds a Register-ScheduledTask invocation for a task
-// that runs a program on a trigger.
-func scheduledTaskCreateCommand(nameLiteral string, args map[string]any) (string, error) {
+// that runs a program on a trigger. It shares the caller's PSScript so every value
+// is bound as data in one script.
+func scheduledTaskCreateCommand(ps *PSScript, nameRef string, args map[string]any) (string, error) {
 	action, err := RequiredString(args, "action")
 	if err != nil {
 		return "", err
@@ -140,9 +144,9 @@ func scheduledTaskCreateCommand(nameLiteral string, args map[string]any) (string
 		return "", fmt.Errorf("create requires a trigger (at_logon, at_startup, daily, or once)")
 	}
 
-	act := "$a = New-ScheduledTaskAction -Execute " + psQuote(action)
+	act := "$a = New-ScheduledTaskAction -Execute " + ps.Arg(action)
 	if arguments := OptionalString(args, "arguments", ""); arguments != "" {
-		act += " -Argument " + psQuote(arguments)
+		act += " -Argument " + ps.Arg(arguments)
 	}
 
 	var trig string
@@ -152,16 +156,16 @@ func scheduledTaskCreateCommand(nameLiteral string, args map[string]any) (string
 	case "at_startup":
 		trig = "$t = New-ScheduledTaskTrigger -AtStartup"
 	case "daily":
-		trig = "$t = New-ScheduledTaskTrigger -Daily -At " + psQuote(OptionalString(args, "time", "09:00"))
+		trig = "$t = New-ScheduledTaskTrigger -Daily -At " + ps.Arg(OptionalString(args, "time", "09:00"))
 	case "once":
-		trig = "$t = New-ScheduledTaskTrigger -Once -At " + psQuote(OptionalString(args, "time", "09:00"))
+		trig = "$t = New-ScheduledTaskTrigger -Once -At " + ps.Arg(OptionalString(args, "time", "09:00"))
 	}
 
-	register := "Register-ScheduledTask -TaskName " + nameLiteral + " -Action $a -Trigger $t -Force"
+	register := "Register-ScheduledTask -TaskName " + nameRef + " -Action $a -Trigger $t -Force"
 	if desc := OptionalString(args, "description", ""); desc != "" {
-		register += " -Description " + psQuote(desc)
+		register += " -Description " + ps.Arg(desc)
 	}
 	register += " | Out-Null; 'created'"
 
-	return "$ErrorActionPreference='Stop'; " + act + "; " + trig + "; " + register, nil
+	return ps.Script("$ErrorActionPreference='Stop'; " + act + "; " + trig + "; " + register), nil
 }

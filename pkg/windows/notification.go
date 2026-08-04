@@ -58,14 +58,18 @@ func Notification() inventory.ServerTool {
 				"<text>" + xmlEscape(message) + "</text>" +
 				"</binding></visual></toast>"
 
-			command := "" +
+			// The toast XML and app id are bound as data via PSScript rather than
+			// interpolated, so neither can break out into a statement. See
+			// psscript.go; xmlEscape still guards the XML document itself.
+			var ps PSScript
+			command := ps.Script("" +
 				"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null;" +
 				"[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null;" +
 				"$xml = New-Object Windows.Data.Xml.Dom.XmlDocument;" +
-				"$xml.LoadXml(" + psQuote(toastXML) + ");" +
+				"$xml.LoadXml(" + ps.Arg(toastXML) + ");" +
 				"$toast = New-Object Windows.UI.Notifications.ToastNotification $xml;" +
-				"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(" + psQuote(appID) + ").Show($toast);" +
-				"'OK'"
+				"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(" + ps.Arg(appID) + ").Show($toast);" +
+				"'OK'")
 
 			res, err := deps.Desktop().RunWindowsPowerShell(ctx, command, 20*time.Second)
 			if err != nil {

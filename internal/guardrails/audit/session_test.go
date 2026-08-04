@@ -230,3 +230,54 @@ func marshalEntries(t *testing.T, entries []AuditEntry) []byte {
 	}
 	return []byte(b.String())
 }
+
+// TestKeyedManifestRejectsATruncatedTail is a regression test for the way a
+// truncated session escaped detection.
+//
+// VerifyChainSegment iterates only the entries it is handed, so any prefix of a
+// valid chain is itself a valid chain. The manifest is what pins a session's head
+// -- but it was an unkeyed SHA-256 chain, so an attacker could drop the seal
+// record and recompute the rest, and the whole directory verified clean even with
+// WINDOWS_MCP_AUDIT_KEY set.
+func TestKeyedManifestRejectsATruncatedTail(t *testing.T) {
+	key := []byte("audit-key")
+	records := []ManifestRecord{
+		{SessionFile: "session-1.audit.jsonl", OpenedAt: "t0"},
+		{SessionFile: "session-2.audit.jsonl", OpenedAt: "t1"},
+	}
+	// Build a valid keyed chain.
+	prev := ""
+	for i := range records {
+		records[i].PrevManifestHash = prev
+		records[i].EntryHash = hashManifest(records[i])
+		records[i].Mac = macOf(key, records[i].EntryHash)
+		prev = records[i].EntryHash
+	}
+	if err := VerifyManifest(records, key); err != nil {
+		t.Fatalf("a well-formed keyed manifest must verify: %v", err)
+	}
+
+	// Dropping the tail still leaves a structurally valid prefix...
+	truncated := records[:1]
+	if err := VerifyManifest(truncated, key); err != nil {
+		t.Errorf("a prefix is still structurally valid; truncation is caught by the head "+
+			"cross-check, not here: %v", err)
+	}
+
+	// ...but a forged record cannot be substituted without the key.
+	forged := append([]ManifestRecord{}, records...)
+	forged[1].SessionFile = "session-evil.audit.jsonl"
+	forged[1].EntryHash = hashManifest(forged[1])
+	// The attacker recomputes the hash but cannot produce the MAC.
+	if err := VerifyManifest(forged, key); err == nil {
+		t.Error("a rewritten manifest record must not verify under the audit key; " +
+			"without a MAC the manifest is only tamper-evident, not unforgeable")
+	}
+
+	// Stripping the MAC must not be a way around it either.
+	stripped := append([]ManifestRecord{}, records...)
+	stripped[1].Mac = ""
+	if err := VerifyManifest(stripped, key); err == nil {
+		t.Error("a record with no MAC must be refused when a key is supplied")
+	}
+}

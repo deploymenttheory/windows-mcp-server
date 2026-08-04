@@ -149,3 +149,51 @@ func TestMonitorSentinelReportedOnce(t *testing.T) {
 		t.Errorf("sentinel must be reported once, got %d", n)
 	}
 }
+
+// TestSentinelRequiresTheSessionToken is a regression test for the one
+// authoritative kill trigger an agent could fire by itself. The sentinel was
+// authenticated by its own existence, so a single file write -- via the
+// FileSystem tool, or any PowerShell redirect, which protected paths do not
+// cover -- ran the containment ladder, including network isolation and shutdown
+// when the policy armed them.
+func TestSentinelRequiresTheSessionToken(t *testing.T) {
+	cases := []struct {
+		name          string
+		token         string
+		contents      string
+		wantAuthentic bool
+	}{
+		{"matching token trips", "secret-token", "secret-token", true},
+		{"trailing whitespace is tolerated", "secret-token", "secret-token\r\n", true},
+		{"agent-written content is refused", "secret-token", "kill", false},
+		{"empty file is refused", "secret-token", "", false},
+		{"wrong token is refused", "secret-token", "guessed", false},
+		{"no token configured falls back to presence", "", "anything", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "kill"), []byte(tc.contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := MonitorConfig{ControlDir: dir, SentinelToken: tc.token}
+			authentic, present := cfg.readSentinel()
+			if !present {
+				t.Fatal("the sentinel file exists and must be reported present")
+			}
+			if authentic != tc.wantAuthentic {
+				t.Errorf("authentic = %v, want %v", authentic, tc.wantAuthentic)
+			}
+		})
+	}
+}
+
+// TestAbsentSentinelIsNotPresent keeps the common case -- no file -- from
+// reading as a rejected trip.
+func TestAbsentSentinelIsNotPresent(t *testing.T) {
+	cfg := MonitorConfig{ControlDir: t.TempDir(), SentinelToken: "t"}
+	if authentic, present := cfg.readSentinel(); present || authentic {
+		t.Errorf("no sentinel file should be neither present nor authentic, got present=%v authentic=%v",
+			present, authentic)
+	}
+}

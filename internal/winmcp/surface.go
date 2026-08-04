@@ -27,16 +27,14 @@ type mcpSurface struct {
 	// Instructions is the combined persona and toolset guidance, kept for the same
 	// reason.
 	Instructions string
+	// deps backs the inject-deps layer, held until installReceiving runs because
+	// the whole chain must be installed in a single call — see installReceiving.
+	deps windows.ToolDependencies
 }
 
-// newMCPSurface builds the server and installs the two middlewares that are
-// unconditional on every entry point.
-//
-// Callers add their own middleware afterwards. Receiving middleware is applied
-// outermost-first, so anything a caller adds is nested inside these two — which is
-// what the ordering requires: dependency injection has to be outermost for every
-// other layer to see it, and the caching hints have to be outside the guardrails
-// so nothing inside can undo the envelope they set.
+// newMCPSurface builds the server. It installs no middleware: every entry point
+// must call installReceiving exactly once, with the layers that belong inside the
+// two unconditional ones.
 func newMCPSurface(
 	cfg Config,
 	inv *inventory.Inventory,
@@ -46,6 +44,7 @@ func newMCPSurface(
 	s := &mcpSurface{
 		Capabilities: pinnedCapabilities(),
 		Instructions: combineInstructions(personaInstructions, inv.Instructions()),
+		deps:         deps,
 	}
 	s.Server = mcp.NewServer(&mcp.Implementation{
 		Name:    "windows-mcp-server",
@@ -56,7 +55,27 @@ func newMCPSurface(
 		Capabilities:      s.Capabilities,
 		CompletionHandler: completionHandler(inv),
 	})
-	s.Server.AddReceivingMiddleware(windows.InjectDepsMiddleware(deps))
-	s.Server.AddReceivingMiddleware(cacheHintsMiddleware())
 	return s
+}
+
+// installReceiving installs the whole receiving chain, outermost first: inject
+// deps, cache hints, then inner.
+//
+// It must be ONE call, and that is the entire reason this method exists.
+// AddReceivingMiddleware composes the middleware handed to a single call
+// outermost-first, but each separate call wraps the chain built so far — so
+// across several calls the last middleware added ends up outermost, the reverse
+// of the order intended. Installing across calls put the policy engine outside
+// the audit layer, and a refused call therefore produced no tool.call entry at
+// all: the refusals are precisely the events the chain exists to hold.
+//
+// Dependency injection has to be outermost for every other layer to read deps
+// from the context, and the cache hints have to sit outside the guardrails so
+// nothing inside can undo the envelope they set.
+// TestReceivingMiddlewareRunsOutermostFirst pins the resulting order.
+func (s *mcpSurface) installReceiving(inner ...mcp.Middleware) {
+	chain := make([]mcp.Middleware, 0, len(inner)+2)
+	chain = append(chain, windows.InjectDepsMiddleware(s.deps), cacheHintsMiddleware())
+	chain = append(chain, inner...)
+	s.Server.AddReceivingMiddleware(chain...)
 }

@@ -65,7 +65,11 @@ func CaptureSurface(ctx context.Context, cfg Config) (Surface, error) {
 	// Built by the same function RunStdio uses, so the captured manifest and
 	// capabilities are the ones a real client would receive.
 	deps := windows.NewBaseDeps(nil, logger, nil)
-	server := newMCPSurface(cfg, inv, personaInstructions, deps).Server
+	surface := newMCPSurface(cfg, inv, personaInstructions, deps)
+	// No guardrail layers here — the capture exists to record the advertised
+	// surface offline — but the unconditional two still have to be installed.
+	surface.installReceiving()
+	server := surface.Server
 	inv.RegisterAll(ctx, server, deps)
 
 	// The two guardrail tools are registered unconditionally by RunStdio, so they
