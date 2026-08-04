@@ -270,3 +270,36 @@ func TestPlaintextApprovalWebhookIsRejected(t *testing.T) {
 		}
 	}
 }
+
+// TestTelemetryEndpointMustNotExportInClear pins that a collector off this
+// machine is reached over TLS.
+//
+// The exporter treats a schemeless endpoint as plaintext, and "collector:4318" is
+// the form the field's own documentation offers first -- so the default reading of
+// the docs exported tool names, service identity and the WINDOWS_MCP_OTLP_HEADERS
+// bearer credentials in clear, with nothing in the document showing it.
+func TestTelemetryEndpointMustNotExportInClear(t *testing.T) {
+	rejected := []string{
+		"collector:4318",             // schemeless, remote: the documented form
+		"http://collector.corp:4318", // explicit plaintext, remote
+		"HTTP://collector.corp:4318", // scheme comparison must be case-insensitive
+		"ftp://collector:4318",       // not a scheme we speak
+	}
+	for _, ep := range rejected {
+		if err := requireSecureEndpoint(ep); err == nil {
+			t.Errorf("%s must be refused: it would export in clear or over an unknown protocol", ep)
+		}
+	}
+
+	accepted := []string{
+		"https://collector.corp:4318", // TLS to a remote collector
+		"localhost:4318",              // schemeless loopback: the usual dev setup
+		"127.0.0.1:4318",
+		"http://localhost:4318", // explicit plaintext loopback
+	}
+	for _, ep := range accepted {
+		if err := requireSecureEndpoint(ep); err != nil {
+			t.Errorf("%s should be accepted, got %v", ep, err)
+		}
+	}
+}

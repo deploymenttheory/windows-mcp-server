@@ -135,13 +135,13 @@ func (s *Severity) UnmarshalJSON(raw []byte) error {
 // Errors surfaced by loading and validation. They are distinct values so the
 // `policy validate` command can report a precise cause rather than a string.
 var (
-	ErrUnknownSeverity  = errors.New("unknown severity")
-	ErrPolicyVersion    = errors.New("unsupported policy version")
-	ErrUnknownMode      = errors.New("unknown policy mode")
-	ErrUnknownSignal    = errors.New("unknown signal")
-	ErrUndeclaredSignal = errors.New("rule requires a signal that is not declared")
-	ErrEmptyMatch       = errors.New("rule matches nothing")
-	ErrInvalidRateLimit = errors.New("invalid rate limit")
+	ErrUnknownSeverity    = errors.New("unknown severity")
+	ErrPolicyVersion      = errors.New("unsupported policy version")
+	ErrUnknownMode        = errors.New("unknown policy mode")
+	ErrUnknownSignal      = errors.New("unknown signal")
+	ErrUndeclaredSignal   = errors.New("rule requires a signal that is not declared")
+	ErrEmptyMatch         = errors.New("rule matches nothing")
+	ErrInvalidRateLimit   = errors.New("invalid rate limit")
 	ErrInvalidEgress      = errors.New("invalid egress policy")
 	ErrInvalidAnchor      = errors.New("invalid anchor policy")
 	ErrInvalidCredentials = errors.New("invalid credentials policy")
@@ -781,6 +781,14 @@ func (p *Policy) Validate(known []string) error {
 		if p.Telemetry.SampleRatio < 0 || p.Telemetry.SampleRatio > 1 {
 			add("%v: telemetry.sample_ratio %v is out of range [0,1]", ErrInvalidTelemetry, p.Telemetry.SampleRatio)
 		}
+		// A bare "collector:4318" — the form this field's own documentation offers
+		// first — exported over plaintext, carrying tool names, service identity
+		// and the WINDOWS_MCP_OTLP_HEADERS bearer credentials in clear. Require an
+		// explicit scheme so the choice is visible, and require it to be https
+		// unless the collector is on this machine.
+		if err := requireSecureEndpoint(p.Telemetry.Endpoint); err != nil {
+			add("%v: telemetry.endpoint %q %v", ErrInvalidTelemetry, p.Telemetry.Endpoint, err)
+		}
 	}
 
 	p.validateApprovals(add)
@@ -955,4 +963,45 @@ func isLoopbackHost(host string) bool {
 	}
 	ip, err := netip.ParseAddr(host)
 	return err == nil && ip.IsLoopback()
+}
+
+// ErrInsecureEndpoint reports an exporter endpoint that would send in clear.
+var ErrInsecureEndpoint = errors.New("endpoint is not secure")
+
+// requireSecureEndpoint rejects an OTLP endpoint that would export in clear.
+//
+// A value with no scheme is refused rather than assumed: the exporter treated it
+// as plaintext and there was nothing in the document to show that had happened.
+// Loopback http is allowed, where TLS buys nothing and a local collector is the
+// usual development setup.
+func requireSecureEndpoint(endpoint string) error {
+	if !strings.Contains(endpoint, "://") {
+		// Schemeless means plaintext to the exporter. Fine for a collector on this
+		// machine, which is the usual development setup; anything else is exporting
+		// in clear without saying so.
+		host := endpoint
+		if h, _, err := net.SplitHostPort(endpoint); err == nil {
+			host = h
+		}
+		if isLoopbackHost(host) {
+			return nil
+		}
+		return fmt.Errorf("%w: has no scheme and is not loopback, so it would export in clear; "+
+			"write https://host:port", ErrInsecureEndpoint)
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("is not a URL: %w", err)
+	}
+	switch {
+	case strings.EqualFold(u.Scheme, "https"):
+		return nil
+	case !strings.EqualFold(u.Scheme, "http"):
+		return fmt.Errorf("%w: unsupported scheme %q", ErrInsecureEndpoint, u.Scheme)
+	case isLoopbackHost(u.Hostname()):
+		return nil
+	default:
+		return fmt.Errorf("%w: plaintext http to a non-loopback host would export tool names "+
+			"and the OTLP credentials in clear; use https", ErrInsecureEndpoint)
+	}
 }
