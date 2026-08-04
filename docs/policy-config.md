@@ -85,6 +85,7 @@ is what keeps audit mode observe-only.
   "kill": {
     "triggers": {                  // sources with no severity of their own
       "posture_drift": true,       // a background re-evaluation stops admitting
+                                   //   (needs a scope:"startup" rule -- see below)
       "rugpull": true,             // the served manifest changed after startup
       "heartbeat_gap": true,
       "sentinel": true             // a "kill" file appears in inflight.control_dir
@@ -105,7 +106,8 @@ is what keeps audit mode observe-only.
     "evidence_dir": "",            // non-empty auto-seals a signed evidence bundle per session (needs a directory audit_destination)
     "banner": true,                // on-screen banner on a kill
     "status_addr": "",             // loopback status endpoint, e.g. 127.0.0.1:8177
-    "status_token": "",
+    "status_token_env": "",        // env var NAME holding its bearer credential (preferred)
+    "status_token": "",            // the credential inline (deprecated -- see below)
     "anchor": {                    // off-box publication of the audit chain head (default: off)
       "destination": "",           // "eventlog" writes the head to the Windows Application log
       "cadence": ""                // required when destination is set, e.g. "5m"
@@ -224,6 +226,27 @@ refuses — regardless of policy — to read the credentials file or to write ov
 audit log or the policy document. Those are guardrail paths; letting the agent
 read a secret back or edit its own audit trail through a general file tool would
 undo the controls around them.
+
+Note what that list does *not* include: the policy document is protected against
+being **written**, not against being **read**, because a policy is meant to be
+reviewable. Keep secrets out of it — use `status_token_env` rather than
+`status_token`, and `egress.auth_token_env` rather than any inline value. The
+`shell` toolset reaches every one of these paths with no protected-path check at
+all, which is why serving it alongside `--credentials-file` requires an explicit
+acknowledgement.
+
+### Arming a trigger that has nothing to watch
+
+`kill.triggers.posture_drift` re-evaluates the **startup rules** on each
+`inflight.interval`. A policy that arms it without a `scope: "startup"` rule is
+refused at load: with no startup rule there is nothing to re-evaluate, so the
+monitor would run, log, and never trip — drift detection replaced by a timer. If
+you want drift watched, write the admission rule you want re-checked:
+
+```jsonc
+{ "name": "admission", "match": { "scope": "startup" },
+  "require": ["secure-boot", "bitlocker", "mdm-enrolled"], "on_fail": "deny" }
+```
 
 ### Freshness
 
@@ -585,7 +608,7 @@ channel: this is a policy control, not a data-exfiltration control.
 
 ## Examples
 
-`policy/examples/` holds five starting points, each validated by the test suite:
+`policy/examples/` holds six starting points, each validated by the test suite:
 
 | File | For |
 |---|---|
@@ -618,7 +641,7 @@ The security flags are gone. Each maps to a field:
 | `--with-logging` | `"transparency": {"audit_destination": …}` |
 | `--heartbeat-interval` | `"transparency": {"heartbeat": …}` |
 | `--with-video-session-recording`, `--record-dir` | `"transparency": {"recording_dir": …}` |
-| `--guardrails-status-addr`, `--guardrails-status-token` | `"transparency": {"status_addr", "status_token"}` |
+| `--guardrails-status-addr`, `--guardrails-status-token` | `"transparency": {"status_addr", "status_token_env"}` |
 | `--with-kill-switch` | removed; a rule's `on_fail: "kill"` and the `kill.triggers` block arm it |
 | `--kill-on-*` | `"kill": {"triggers": …}` |
 | `--kill-action-*` | `"kill": {"actions": …}` |

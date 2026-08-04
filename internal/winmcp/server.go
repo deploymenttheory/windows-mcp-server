@@ -462,6 +462,14 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		}
 	}
 
+	// Read before the scrub below, like every other environment secret, even though
+	// the endpoint it belongs to is constructed much further down. Resolving it at
+	// the point of use would read a variable this line has already cleared.
+	statusToken, err := resolveStatusToken(devicePolicy.Transparency, logger)
+	if err != nil {
+		return err
+	}
+
 	// Every environment secret has now been read into the component that needs it,
 	// so clear them from the process environment before any tool can run. This is
 	// the second half of the defence; see scrubSecretEnv.
@@ -586,7 +594,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	if devicePolicy.Transparency.StatusAddr != "" {
 		ss := &status.StatusServer{
 			Addr:     devicePolicy.Transparency.StatusAddr,
-			Token:    devicePolicy.Transparency.StatusToken,
+			Token:    statusToken,
 			Current:  holder.get,
 			Snapshot: snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress),
 			Kill:     kill,

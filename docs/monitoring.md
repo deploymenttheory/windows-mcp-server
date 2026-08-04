@@ -17,14 +17,29 @@ Off by default. Enable it in the policy document:
 ```jsonc
 "transparency": {
   "status_addr": "127.0.0.1:8177",
-  "status_token": "a-long-random-string"
+  "status_token_env": "WINDOWS_MCP_STATUS_TOKEN"
 }
 ```
 
 Both fields are validated at load. `status_addr` must be a loopback address —
 this server does not expose listeners the network can reach — and setting it
-without a `status_token` is refused, because any local process could otherwise
-read the device posture and trip the kill switch.
+without a credential is refused, because any local process could otherwise read
+the device posture and trip the kill switch.
+
+**Put the credential in the environment, not the document.** `status_token_env`
+names a variable; the value never enters a file. `POST /revoke` behind this
+credential runs the whole containment ladder, so it is a trigger credential — and
+the policy document is registered as an *agent-readable* protected path, because
+a policy is meant to be reviewable. An agent served the `filesystem` toolset can
+read that document, and the `shell` toolset reaches it with no protected-path
+check at all. Every other trigger credential in this server is an environment
+secret for the same reason.
+
+The inline `status_token` still works and warns at startup. It is kept because
+removing a schema key would break documents that run today, and unknown keys are
+rejected outright. If the named variable is unset or empty, startup fails rather
+than serving the endpoint without the credential the document asked for — the
+same answer the egress proxy gives.
 
 ### Routes
 

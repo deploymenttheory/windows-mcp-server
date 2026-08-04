@@ -62,12 +62,24 @@ func provisionEgress(
 		return nil, noop, noop, fmt.Errorf("egress allowlist: %w", err)
 	}
 
+	// A named variable that holds nothing is refused, not warned about. An empty
+	// AuthToken means the proxy authorises every request, so continuing would serve
+	// an open local proxy to a document that asked for a credentialled one — the
+	// same failure the elevation check below refuses, and it deserves the same
+	// answer. Naming no variable at all remains fine: that is a documented,
+	// deliberate choice (docs/policy-config.md, "Limits worth knowing").
 	var token string
 	if cfg.AuthTokenEnv != "" {
 		token = os.Getenv(cfg.AuthTokenEnv)
 		if token == "" {
-			logger.Warn("egress auth_token_env names an empty variable; the proxy will not require a credential",
-				"variable", cfg.AuthTokenEnv)
+			_, _ = auditLog.Append("egress.auth.failed", map[string]any{
+				"reason":   "auth_token_env names an empty variable",
+				"variable": cfg.AuthTokenEnv,
+			})
+			return nil, noop, noop, fmt.Errorf(
+				"egress.auth_token_env names %q, which is unset or empty: the proxy would accept "+
+					"every local request. Set it, or remove auth_token_env to run the proxy without "+
+					"a credential deliberately", cfg.AuthTokenEnv)
 		}
 	}
 

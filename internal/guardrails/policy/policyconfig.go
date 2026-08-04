@@ -148,6 +148,8 @@ var (
 	ErrInvalidRequirePlan = errors.New("invalid require_plan selector")
 	ErrInvalidTelemetry   = errors.New("invalid telemetry policy")
 	ErrInvalidApprovals   = errors.New("invalid approvals policy")
+	// ErrNoStartupRule covers a posture-drift trigger with nothing to re-evaluate.
+	ErrNoStartupRule = errors.New("posture_drift is armed but no startup rule exists")
 	// ErrNotLoopback covers every address this server is willing to bind. Both
 	// listeners it can stand up are loopback-only by design.
 	ErrNotLoopback = errors.New("address is not loopback")
@@ -477,8 +479,27 @@ type TransparencyPolicy struct {
 	// Banner shows the on-screen security banner on a kill.
 	Banner bool `json:"banner"`
 	// StatusAddr is a loopback address for the status endpoint; empty disables.
-	StatusAddr  string `json:"status_addr,omitempty"`
+	StatusAddr string `json:"status_addr,omitempty"`
+	// StatusToken is the bearer credential for that endpoint, inline.
+	//
+	// Deprecated in favour of StatusTokenEnv, and warned about at load. The
+	// endpoint's POST /revoke trips the kill switch and runs the whole containment
+	// ladder, so this is a trigger credential -- and it is the only one the schema
+	// ever accepted in the document itself. The document is registered as an
+	// agent-readable protected path (it is meant to be reviewable), and the shell
+	// toolset bypasses that check entirely, so an agent served either shell or
+	// filesystem could read this value and actuate containment. That is the
+	// escalation the sentinel was hardened against and the reason the agent-facing
+	// Kill tool routes to StopGracefully.
+	//
+	// Still accepted, because removing a schema key breaks documents that work
+	// today and unknown keys are rejected. Prefer StatusTokenEnv.
 	StatusToken string `json:"status_token,omitempty"`
+	// StatusTokenEnv names an environment variable holding the bearer credential,
+	// the way egress.auth_token_env does. The document names the variable; the
+	// value never enters a file the agent can read. Takes precedence over
+	// StatusToken when both are set.
+	StatusTokenEnv string `json:"status_token_env,omitempty"`
 	// Anchor periodically publishes the audit chain head off the box. Empty
 	// destination disables it (the default).
 	Anchor AnchorPolicy `json:"anchor,omitempty"`
@@ -712,6 +733,27 @@ func (p *Policy) Validate(known []string) error {
 			}
 		}
 	}
+	// The posture-drift trigger re-evaluates the startup subject on every monitor
+	// interval, and a startup subject matches startup-scope rules only. Armed with
+	// no such rule, the monitor runs, logs and can never trip -- the operator has
+	// asked for drift detection and been given a timer. Refused rather than warned:
+	// a control believed to be in force and silently absent is the failure mode the
+	// unknown-key rejection exists for, and this is the same shape.
+	if p.Kill.Triggers.PostureDrift {
+		hasStartupRule := false
+		for _, r := range p.Rules {
+			if r.scope() == ScopeStartup {
+				hasStartupRule = true
+				break
+			}
+		}
+		if !hasStartupRule {
+			add("%v: kill.triggers.posture_drift is on but no rule has scope \"startup\"; "+
+				"drift is detected by re-evaluating the startup rules, so with none there is "+
+				"nothing to re-evaluate and the trigger can never fire", ErrNoStartupRule)
+		}
+	}
+
 	for i, rl := range p.RateLimits {
 		label := ruleLabel(rl.Name, i)
 		if rl.Window <= 0 {
@@ -735,9 +777,9 @@ func (p *Policy) Validate(known []string) error {
 	if p.Transparency.StatusAddr != "" {
 		if err := validateLoopbackAddr(p.Transparency.StatusAddr); err != nil {
 			add("transparency.status_addr %v", err)
-		} else if p.Transparency.StatusToken == "" {
-			add("transparency.status_addr is set without a status_token: any local " +
-				"process could read the device posture and trip the kill switch")
+		} else if p.Transparency.StatusToken == "" && p.Transparency.StatusTokenEnv == "" {
+			add("transparency.status_addr is set without a status_token or status_token_env: " +
+				"any local process could read the device posture and trip the kill switch")
 		}
 	}
 

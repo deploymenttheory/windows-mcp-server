@@ -13,7 +13,14 @@ import (
 
 // Invoke acts on a UI element through its accessibility control pattern rather
 // than by synthesizing input. This is the reliable, RPA-preferred path.
+//
+// Destructive, and load-bearingly so: invoke presses buttons and set_value fills
+// fields, which is what Type does and more reliably. Without the hint every rule
+// and rate limit matching `annotation: destructive` missed it — while the persona
+// instructions this server ships tell the model to prefer Invoke over Type, which
+// steered the model off the gated path onto the ungated one.
 func Invoke() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetInteraction,
 		mcp.Tool{
@@ -23,7 +30,11 @@ func Invoke() inventory.ServerTool {
 				"actions: invoke (buttons, links, menu items), set_value (text fields — provide 'value', types instantly), " +
 				"toggle (checkboxes/switches), select (list items, radio buttons, tabs), expand / collapse (combo boxes, tree " +
 				"items). If an element does not support the pattern this returns an error — fall back to Click/Type.",
-			Annotations: &mcp.ToolAnnotations{Title: "Invoke UI element (pattern)", ReadOnlyHint: false},
+			Annotations: &mcp.ToolAnnotations{
+				Title:           "Invoke UI element (pattern)",
+				ReadOnlyHint:    false,
+				DestructiveHint: &destructive,
+			},
 			InputSchema: targetSchema(map[string]*jsonschema.Schema{
 				"action": {Type: "string", Enum: []any{"invoke", "set_value", "toggle", "select", "expand", "collapse"}, Description: "The pattern action (default invoke)."},
 				"value":  {Type: "string", Description: "Text to set (required for set_value)."},

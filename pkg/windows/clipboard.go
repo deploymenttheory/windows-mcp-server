@@ -12,15 +12,25 @@ import (
 )
 
 // Clipboard gets or sets the Windows clipboard's Unicode text.
+//
+// Destructive on both modes, for different reasons. set overwrites a buffer the
+// user owns and cannot recover. get is the one that matters more: the clipboard
+// is one of the three channels the credential never-read invariant exists to
+// defeat (see internal/desktop/credentials.go, requireMaskedFocus), so a get is a
+// read of whatever a password manager last placed there. The invariant holds at
+// the Credentials tool; this is the way around the reasoning behind it, and it
+// belongs behind the same gate.
 func Clipboard() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetSystem,
 		mcp.Tool{
 			Name:        "Clipboard",
 			Description: "Get or set the Windows clipboard text. mode=get returns the current clipboard text; mode=set replaces it with the provided text.",
 			Annotations: &mcp.ToolAnnotations{
-				Title:        "Clipboard get/set",
-				ReadOnlyHint: false,
+				Title:           "Clipboard get/set",
+				ReadOnlyHint:    false,
+				DestructiveHint: &destructive,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",

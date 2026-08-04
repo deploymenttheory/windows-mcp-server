@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"sort"
 	"time"
@@ -54,10 +55,19 @@ type EnforcerDeps struct {
 // Methods the engine decides on. Everything else passes through untouched:
 // tools/list and server/discover carry no action, and gating discovery would
 // break a client's ability to see why it is being refused.
+//
+// The last two are data-egress paths rather than actions, and are decided for the
+// same reason resources and prompts are: each returns server-held state to the
+// caller, so a rule covering the tool that exposes that state must not be
+// side-stepped by asking a different method for it. completion/complete answers
+// with the names of installed credentials; subscriptions/listen opens the
+// longest-lived server-to-client stream this server has.
 const (
 	methodCallTool     = "tools/call"
 	methodReadResource = "resources/read"
 	methodGetPrompt    = "prompts/get"
+	methodComplete     = "completion/complete"
+	methodListen       = "subscriptions/listen"
 )
 
 // Middleware returns MCP receiving middleware that decides every actionable
@@ -72,7 +82,22 @@ func Middleware(engine *policy.Engine, deps EnforcerDeps) mcp.Middleware {
 	}
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			subj, decidable := subjectFor(engine, method, req)
+			subj, decidable, err := subjectFor(engine, method, req)
+			if err != nil {
+				// Recorded here rather than left to the audit layer, which type-asserts
+				// the same way and would also have skipped this request. Audit mode does
+				// not cap it: this is not a policy severity, it is the enforcement point
+				// declining to guess.
+				if deps.Audit != nil {
+					_, _ = deps.Audit.Append("policy.undecidable", map[string]any{
+						"method": method,
+						"reason": err.Error(),
+					})
+				}
+				logger.Error("refusing a decidable request whose parameters could not be read",
+					"method", method, "error", err)
+				return refuseUndecidable(method)
+			}
 			if !decidable {
 				return next(ctx, method, req)
 			}
@@ -190,6 +215,20 @@ func refuse(method string, v policy.Verdict) (mcp.Result, error) {
 	// InvalidRequest rather than an MCP-specific code: protocol revision
 	// 2026-07-28 reserves -32020..-32099 for the specification, so a
 	// server-policy refusal has no business minting a code in that range.
+	return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidRequest, Message: msg}
+}
+
+// refuseUndecidable denies a request the enforcement point could not read, in
+// the shape the method requires — the same split as refuse, for the same reason.
+func refuseUndecidable(method string) (mcp.Result, error) {
+	msg := "blocked by device policy: this request's parameters could not be read, " +
+		"so it could not be decided"
+	if method == methodCallTool {
+		return &mcp.CallToolResult{
+			IsError: true,
+			Content: []mcp.Content{&mcp.TextContent{Text: msg}},
+		}, nil
+	}
 	return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidRequest, Message: msg}
 }
 
@@ -351,42 +390,91 @@ func attachWarning(res mcp.Result, v policy.Verdict) mcp.Result {
 	return ctr
 }
 
+// errMalformedParams reports a decidable method whose params were not the type
+// the SDK declares for it.
+//
+// This must never be conflated with "not decidable". A method the engine does not
+// decide is passed through by design; a method it does decide, carrying params it
+// cannot read, is an unexpected condition on a path whose whole job is to answer
+// yes or no. Returning "not decidable" for it — which this function used to do —
+// meant the call proceeded with no verdict and no policy.decided record, and the
+// audit middleware type-asserts identically, so both layers fell silent on the
+// same input. Contradicts the guarantee that every verdict is recorded, so it
+// fails closed instead.
+var errMalformedParams = errors.New("request parameters were not the expected type for this method")
+
 // subjectFor resolves a request to the thing being decided about, and reports
 // whether this method is subject to policy at all.
-func subjectFor(engine *policy.Engine, method string, req mcp.Request) (policy.Subject, bool) {
+//
+// Three outcomes, and they are distinct: (subject, true, nil) decide it,
+// (zero, false, nil) not a decidable method, (zero, false, err) decidable but
+// unreadable — refuse.
+func subjectFor(engine *policy.Engine, method string, req mcp.Request) (policy.Subject, bool, error) {
 	switch method {
 	case methodCallTool:
 		p, ok := req.GetParams().(*mcp.CallToolParamsRaw)
 		if !ok {
-			return policy.Subject{}, false
+			return policy.Subject{}, false, errMalformedParams
 		}
-		return engine.SubjectForTool(method, p.Name), true
+		return engine.SubjectForTool(method, p.Name), true, nil
 
 	case methodReadResource:
 		p, ok := req.GetParams().(*mcp.ReadResourceParams)
 		if !ok {
-			return policy.Subject{}, false
+			return policy.Subject{}, false, errMalformedParams
 		}
-		return dataEgressSubject(method, p.URI), true
+		return dataEgressSubject(method, p.URI), true, nil
 
 	case methodGetPrompt:
 		p, ok := req.GetParams().(*mcp.GetPromptParams)
 		if !ok {
-			return policy.Subject{}, false
+			return policy.Subject{}, false, errMalformedParams
 		}
-		return dataEgressSubject(method, p.Name), true
+		return dataEgressSubject(method, p.Name), true, nil
+
+	case methodComplete:
+		p, ok := req.GetParams().(*mcp.CompleteParams)
+		if !ok {
+			return policy.Subject{}, false, errMalformedParams
+		}
+		return dataEgressSubject(method, completionName(p)), true, nil
+
+	case methodListen:
+		if _, ok := req.GetParams().(*mcp.SubscriptionsListenParams); !ok {
+			return policy.Subject{}, false, errMalformedParams
+		}
+		return dataEgressSubject(method, methodListen), true, nil
 
 	default:
-		return policy.Subject{}, false
+		return policy.Subject{}, false, nil
 	}
 }
 
-// dataEgressSubject builds the subject for a resource read or a prompt fetch.
+// completionName labels a completion request for the decision and the audit
+// record: the prompt or resource it is completing against, never the prefix the
+// caller typed.
+func completionName(p *mcp.CompleteParams) string {
+	if p.Ref == nil {
+		return p.Argument.Name
+	}
+	switch {
+	case p.Ref.Name != "":
+		return p.Ref.Name + "." + p.Argument.Name
+	case p.Ref.URI != "":
+		return p.Ref.URI + "." + p.Argument.Name
+	default:
+		return p.Argument.Name
+	}
+}
+
+// dataEgressSubject builds the subject for a resource read, a prompt fetch, a
+// completion or a subscription stream.
 //
-// Both return server-held state to the caller, so they are read-only data-egress
-// paths and are marked as such: a rule written as `annotation: read-only`, or as
-// `toolset: "*"`, covers them. That is deliberate — a resource exposing the same
-// desktop state as a tool must not be a way around the rule covering that tool.
+// All four return server-held state to the caller, so they are read-only
+// data-egress paths and are marked as such: a rule written as
+// `annotation: read-only`, or as `toolset: "*"`, covers them. That is deliberate —
+// a resource exposing the same desktop state as a tool must not be a way around
+// the rule covering that tool.
 // They carry no toolset, so a rule naming a specific toolset or tool does not
 // reach them; expressing "this resource specifically" is not something the
 // schema supports today, and pretending otherwise would be worse than the gap.

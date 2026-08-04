@@ -92,13 +92,18 @@ func targetSchema(extra map[string]*jsonschema.Schema) *jsonschema.Schema {
 
 // Click clicks a UI element identified by label (from Snapshot) or explicit
 // coordinates.
+//
+// Destructive: a click is what presses "Delete", "Send" and "Confirm". The button
+// it lands on is not knowable from the arguments, so the annotation has to assume
+// the worst — a rule that gates Type but not Click gates nothing much.
 func Click() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetInteraction,
 		mcp.Tool{
 			Name:        "Click",
 			Description: "Click a UI element by its Snapshot label or explicit [x,y] coordinates. Supports left/right/middle button and single/double click (clicks=0 hovers).",
-			Annotations: &mcp.ToolAnnotations{Title: "Click", ReadOnlyHint: false},
+			Annotations: &mcp.ToolAnnotations{Title: "Click", ReadOnlyHint: false, DestructiveHint: &destructive},
 			InputSchema: targetSchema(map[string]*jsonschema.Schema{
 				"button": {Type: "string", Enum: []any{"left", "right", "middle"}, Description: "Mouse button (default left)."},
 				"clicks": {Type: "integer", Description: "0 = hover, 1 = single (default), 2 = double."},
@@ -191,13 +196,20 @@ func Type() inventory.ServerTool {
 }
 
 // Scroll scrolls the wheel at a target or the current cursor position.
+//
+// Destructive, which is the less obvious of the input annotations: a wheel notch
+// over a Windows combo box changes the selection and over a spinner changes the
+// value. Scroll targets a point, not a control type, so it cannot know which it
+// is landing on — a silent field edit is within reach of a tool that reads as
+// pure navigation.
 func Scroll() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetInteraction,
 		mcp.Tool{
 			Name:        "Scroll",
 			Description: "Scroll the mouse wheel at a target element (by label or [x,y]) or the current cursor position. Direction up/down/left/right; wheel_times is the number of notches.",
-			Annotations: &mcp.ToolAnnotations{Title: "Scroll", ReadOnlyHint: false},
+			Annotations: &mcp.ToolAnnotations{Title: "Scroll", ReadOnlyHint: false, DestructiveHint: &destructive},
 			InputSchema: targetSchema(map[string]*jsonschema.Schema{
 				"direction":   {Type: "string", Enum: []any{"up", "down", "left", "right"}, Description: "Scroll direction (default down)."},
 				"wheel_times": {Type: "integer", Description: "Number of wheel notches (default 1)."},
@@ -232,6 +244,12 @@ func Scroll() inventory.ServerTool {
 }
 
 // Move moves the cursor to a target element or coordinates (hover).
+//
+// Deliberately NOT destructive, and the only input tool that is not. Moving the
+// cursor commits nothing: it can open a hover menu, but acting on one still needs
+// a Click, which is gated. Annotating every input tool destructive regardless of
+// what it does would make `annotation: destructive` mean "input" and cost
+// operators the ability to gate the calls that actually change state.
 func Move() inventory.ServerTool {
 	return NewToolFromHandler(
 		ToolsetInteraction,

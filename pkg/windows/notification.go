@@ -21,13 +21,20 @@ func xmlEscape(s string) string {
 
 // Notification shows a Windows toast notification. It uses Windows PowerShell
 // 5.1 because the WinRT toast APIs are not available in PowerShell 7.
+//
+// Destructive: app_id attributes the toast to any AppUserModelID, so this writes
+// model-authored text to the user's screen under another application's identity.
+// The target is the human at the console rather than the machine — "your session
+// expired, sign in again" is a phishing primitive, and it was reachable from a
+// default toolset with no rule and no rate limit covering it.
 func Notification() inventory.ServerTool {
+	destructive := true
 	return NewToolFromHandler(
 		ToolsetSystem,
 		mcp.Tool{
 			Name:        "Notification",
 			Description: "Show a Windows toast notification with a title and message.",
-			Annotations: &mcp.ToolAnnotations{Title: "Show notification", ReadOnlyHint: false},
+			Annotations: &mcp.ToolAnnotations{Title: "Show notification", ReadOnlyHint: false, DestructiveHint: &destructive},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{

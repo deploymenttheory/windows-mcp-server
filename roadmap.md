@@ -14,29 +14,18 @@ A record of what has shipped, and what is deliberately excluded, is at the end.
 
 ## Release
 
-### Cut a release carrying the security fixes
+### Compare project architecture of CUA
 
-**Why this is first.** PRs #71 and #73 fixed a critical remote-code-execution path
-and twelve further high-severity findings, and both PRs describe the underlying
-vulnerabilities in the open — that was a deliberate transparency decision for a
-project with a small user base. The consequence is that **v1.1.0 is the newest
-tagged release, it is vulnerable, and the exploit is public**. The window closes
-when a fixed release exists, so nothing else should go ahead of this.
+This is my first mcp server and there's much more research and study i need to 
+undertake from more mature projects and to take their learning's and selectively
+apply them.
 
-The release *engineering* is already done: GoReleaser config, amd64/arm64, cosign
-keyless signing, syft SBOMs, checksums. What remains is operational.
+### Allow the export of evidence to cloud blob destinations
+This includes GCP, AWS and Azure.
 
-- Tag and run the release pipeline.
-- Write release notes that name the fixed issues plainly, and say which
-  configurations were affected — in particular that `--read-only` and the
-  `business-user` persona were **not** protected from the PowerShell injection,
-  because an operator reading "read-only" would reasonably assume otherwise.
-- Call out the breaking changes: `--toolsets system` no longer carries `Registry`
-  and `ScheduledTask`; `App mode=launch_executable` is now `LaunchExecutable` and
-  needs `shell`; approval webhooks must sign replies; a remote telemetry endpoint
-  must be `https`; the status endpoint refuses to bind without a token; `Package`
-  installers must be local paths; a `require_plan` plan now needs an approvals
-  webhook to apply.
+### Criterions for journey's-as-code
+Define clear verbs and actions for the journey's as code to align with and be
+attested to.
 
 ---
 
@@ -48,21 +37,6 @@ These are the findings from the 2026-08-04 review that PRs #71 and #73 did not
 close. Each was recorded in the commit that fixed its neighbours rather than left
 implied, so none of this is new information — it is the tail that was deliberately
 deferred.
-
-### S1. `Scrape` re-resolves at dial time (DNS rebinding)
-
-`validateScrapeURL` resolves the host and checks the answers against the forbidden
-ranges; `fetchReadableText` then hands the *name* to `http.Client`, which resolves
-it again. Two lookups mean an attacker-controlled name can answer publicly for the
-first and with `127.0.0.1` or an RFC1918 address for the second.
-
-Redirect hops are now re-validated (#71), so this is the remaining half of the same
-class. The fix is the one `internal/guardrails/egress/proxy.go` already implements:
-resolve once, vet the answers, and dial the **vetted address** with a custom
-`DialContext` rather than the name. The proxy is the reference implementation;
-`Scrape` should not have a second, weaker one.
-
-*Files:* `pkg/windows/scrape.go`. *Reference:* `egress/proxy.go` `checkTarget`/`dial`.
 
 ### S2. Audit session-file truncation is not detected by the chain
 
@@ -336,12 +310,42 @@ The remaining half of the release work, once a fixed release is out (see **Now**
 
 ## Delivered
 
+### Security posture assessment remediation (PR #75 — 2026-08)
+
+A claims-versus-implementation review, recorded in
+[`docs/security-assessment.md`](docs/security-assessment.md), which is the input
+for the external penetration test in C.1.4. Twelve gaps documented nowhere, five
+documented claims the code contradicted, and eight stale claims — all closed.
+
+The ones that changed what a documented guarantee meant:
+
+- **Most of the input surface was outside every destructive gate.** `Invoke`,
+  `Click`, `Scroll`, `MultiSelect`, `Clipboard`, `Notification` and `Recording`
+  carried no `DestructiveHint`, so no rule or rate limit in any shipped policy
+  reached them. The persona instructions tell the model to *prefer* `Invoke` over
+  `Type` — gated — so the server steered it onto the ungated path. The tripwire
+  test was an allowlist and never asked about tools nobody had added to it; it is
+  now deny-by-default.
+- **The audit chain is not keyed by default**, contrary to what the threat model
+  said: the shipped `audit_destination` is `stderr`, where there is no file to
+  protect and nowhere to keep a key. Documentation corrected rather than the
+  default changed — `README.md` and `docs/monitoring.md` already said so.
+- **`completion/complete` was neither audited nor decided** while answering with
+  the names of installed credentials.
+- **Posture drift could be armed and never fire**, because detection re-evaluates
+  startup rules and nothing required a policy to have one.
+- **The status endpoint's credential sat inline in an agent-readable document**,
+  and `POST /revoke` behind it runs the containment ladder. `status_token_env`
+  added.
+- **`Scrape` had a second, weaker address checker** than the proxy's and
+  re-resolved at dial time (this was S1).
+
 ### Security remediation (PRs #71, #73 — 2026-08)
 
 A full defensive review of `main` produced findings across critical, high, medium
 and low severity. Every critical and high finding is fixed, along with most of the
 medium and low set — each with the regression test that would have caught it. The
-remainder is **S1–S11** above.
+remainder is **S2–S11** above.
 
 Highlights, because they change what the documented guarantees actually mean:
 

@@ -13,7 +13,7 @@ actually means.
 
 ## Toolset reference
 
-Ten toolsets. Four are on by default; the rest are opt-in because they reach
+Thirteen toolsets. Four are on by default; the rest are opt-in because they reach
 further than looking at the screen.
 
 ### `screen` — default

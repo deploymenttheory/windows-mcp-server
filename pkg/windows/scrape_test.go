@@ -5,6 +5,7 @@ package windows
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,15 +113,66 @@ func TestExtractText(t *testing.T) {
 	}
 }
 
+// permissiveDial connects without vetting the address, so a test can use an
+// httptest server on loopback -- which the real dialer refuses, by design and by
+// the test below. Everything except the address check is still exercised.
+func permissiveDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	return (&net.Dialer{}).DialContext(ctx, network, addr)
+}
+
+// TestScrapeDialerRefusesTheAddressesItResolves is the regression test for the
+// DNS-rebinding half of the SSRF class.
+//
+// The address check used to run in validateScrapeURL over a net.LookupIP whose
+// answers were then discarded; http.Client resolved the name again at connect, so
+// a short-TTL name could answer publicly for the check and with a loopback or
+// RFC1918 address for the fetch. The check now happens in the dialer and the
+// connection goes to the vetted address, so there is no second resolution.
+//
+// The NAT64 case is the one the hand-rolled predicate missed entirely: To4()
+// returns nil for 64:ff9b::a9fe:a9fe, so IsLinkLocalUnicast never saw the
+// 169.254.169.254 inside it.
+func TestScrapeDialerRefusesTheAddressesItResolves(t *testing.T) {
+	for _, addr := range []string{
+		"127.0.0.1:80",            // loopback
+		"10.0.0.1:80",             // RFC1918
+		"169.254.169.254:80",      // link-local, the cloud metadata endpoint
+		"100.64.0.1:80",           // CGNAT -- missed by the old IsPrivate check
+		"[::ffff:127.0.0.1]:80",   // IPv4-mapped loopback
+		"[64:ff9b::a9fe:a9fe]:80", // NAT64-embedded link-local
+		"[::7f00:1]:80",           // ::/96-embedded loopback
+	} {
+		if _, err := scrapeDialContext(context.Background(), "tcp", addr); err == nil {
+			t.Errorf("scrapeDialContext(%q) connected; it must refuse the address", addr)
+		}
+	}
+}
+
+// TestScrapeRefusesAddressLiteralsUpFront: a literal needs no resolution, so it
+// is settled in validateScrapeURL with a message naming the reason.
+func TestScrapeRefusesAddressLiteralsUpFront(t *testing.T) {
+	for _, u := range []string{
+		"http://169.254.169.254/latest/meta-data/",
+		"http://100.64.0.1/",
+		"http://[64:ff9b::a9fe:a9fe]/",
+	} {
+		if err := validateScrapeURL(u, false); err == nil {
+			t.Errorf("validateScrapeURL(%q) should have failed", u)
+		}
+	}
+}
+
 // TestRedirectsAreRevalidated is a regression test for a full SSRF and
 // Enforce-HTTPS bypass: only the URL the model supplied was validated, and Go's
 // default CheckRedirect then followed any 302 without a second look. An
 // attacker-controlled host could redirect to a link-local or RFC1918 address --
 // 169.254.169.254 being the obvious one -- and the body came back to the model.
+//
+// The address half of that is now the dialer's job (see above), which covers
+// redirect hops by construction. What CheckRedirect still owns is the scheme: a
+// 302 from https to plaintext http is a policy question no dialer can see, so
+// that is what this exercises, with a permissive dialer so the hop is reached.
 func TestRedirectsAreRevalidated(t *testing.T) {
-	// The redirect target resolves to loopback, which validateScrapeURL refuses.
-	// Using the real server's own address keeps the test hermetic: no outbound
-	// request is made, and the refusal happens before any connection to it.
 	var target string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/redirect" {
@@ -132,9 +184,11 @@ func TestRedirectsAreRevalidated(t *testing.T) {
 	defer srv.Close()
 	target = srv.URL + "/private"
 
-	_, err := fetchReadableText(context.Background(), srv.URL+"/redirect", false)
+	// enforceHTTPS on, and the httptest server speaks plaintext, so the hop is
+	// refused by the per-hop scheme check.
+	_, err := fetchReadableText(context.Background(), srv.URL+"/redirect", true, permissiveDial)
 	if err == nil {
-		t.Fatal("a redirect to a non-public address must be refused, not followed")
+		t.Fatal("a redirect to a refused target must not be followed")
 	}
 	if !strings.Contains(err.Error(), "refused a redirect") {
 		t.Errorf("the refusal should name the redirect as the cause, got: %v", err)
@@ -142,14 +196,30 @@ func TestRedirectsAreRevalidated(t *testing.T) {
 }
 
 // TestRedirectChainIsBounded keeps a validated-but-endless chain from spinning.
+//
+// Exercised against checkScrapeRedirect directly. Driving it with a real loop is
+// no longer possible hermetically: every local fixture is a loopback address, and
+// the hop is refused for that reason on the first redirect, so a live test would
+// pass without the cap existing at all.
 func TestRedirectChainIsBounded(t *testing.T) {
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, srv.URL+"/next", http.StatusFound)
-	}))
-	defer srv.Close()
+	req, err := http.NewRequest(http.MethodGet, "https://example.com/next", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if _, err := fetchReadableText(context.Background(), srv.URL, false); err == nil {
+	// One hop short of the cap: allowed on scheme grounds.
+	via := make([]*http.Request, maxScrapeRedirects-1)
+	if err := checkScrapeRedirect(req, via, false); err != nil {
+		t.Errorf("hop %d should be allowed, got: %v", len(via), err)
+	}
+
+	// At the cap: refused, and it says why.
+	via = make([]*http.Request, maxScrapeRedirects)
+	err = checkScrapeRedirect(req, via, false)
+	if err == nil {
 		t.Fatal("an unbounded redirect chain must terminate with an error")
+	}
+	if !strings.Contains(err.Error(), "stopped after") {
+		t.Errorf("the chain should end at the redirect cap, got: %v", err)
 	}
 }

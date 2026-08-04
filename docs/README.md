@@ -53,5 +53,5 @@ what you are trying to do.
   AI agents alike.
 - [SECURITY.md](../SECURITY.md) — how to report a vulnerability, and what falls
   outside scope given the project's deliberate no-sandboxing design.
-- `../policy/examples/` — five starting-point policy documents, validated by the
+- `../policy/examples/` — six starting-point policy documents, validated by the
   test suite.
