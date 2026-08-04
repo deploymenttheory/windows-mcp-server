@@ -389,6 +389,23 @@ func (e WindowsEnforcer) Recover() (int, error) {
 			"command", `netsh advfirewall firewall delete rule group="`+ruleGroup+`"`)
 		return 0, nil
 	case len(state.RuleNames) == 0:
+		// No firewall rules to undo, but the WinINET settings still have to come
+		// back. Returning here deleted the only record of them: in the proxy-only
+		// tier with set_system_proxy, applySystemProxyOnly writes state with
+		// SystemProxy set and RuleNames empty, so an unclean exit left the user
+		// pointed at a dead loopback proxy with the undo information gone --
+		// contradicting the documented promise that every start undoes whatever
+		// the file describes.
+		if state.SystemProxy != nil {
+			if err := restoreSystemProxy(state.SystemProxy); err != nil {
+				e.logger().Error("could not restore WinINET proxy settings; "+
+					"the state file is being kept so the next start can retry",
+					"error", err)
+				return 0, nil
+			}
+			e.logger().Warn("restored WinINET proxy settings after an unclean shutdown",
+				"previous_pid", state.PID)
+		}
 		return 0, clearState()
 	}
 	if !e.Elevated() {
