@@ -468,6 +468,10 @@ func auditVerifyCmd() *cobra.Command {
 					return fmt.Errorf("audit verify: %w", err)
 				}
 				fmt.Fprint(out, rep.String())
+				strict, _ := cmd.Flags().GetBool("strict")
+				if strict && !rep.StrictOK() {
+					os.Exit(1)
+				}
 				if !rep.OK() {
 					os.Exit(1)
 				}
@@ -485,6 +489,9 @@ func auditVerifyCmd() *cobra.Command {
 	}
 	cmd.Flags().String("key-env", "", "Name of an environment variable holding the audit HMAC key; "+
 		"when set, entry MACs are verified in addition to the hash chain.")
+	cmd.Flags().Bool("strict", false, "Also fail when any session carries no seal. An unsealed "+
+		"session's chain verifies even if its tail was removed, because there is no sealed head to "+
+		"compare against; use this when collecting evidence rather than checking a live server.")
 	return cmd
 }
 

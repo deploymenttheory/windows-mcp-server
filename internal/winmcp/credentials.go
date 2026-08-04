@@ -137,8 +137,14 @@ func loadCredentialsFile(path string) ([]credentialEntry, error) {
 	}
 	defer wipe(raw)
 
+	// Same UTF-8 BOM tolerance the policy loader has, and for the same reason:
+	// PowerShell 5.1 and Notepad both write one, so it is the ordinary result of
+	// an operator creating this file on Windows. Trimmed in place rather than
+	// re-sliced so the wipe above still covers every byte that was read.
+	body := bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
+
 	var doc credentialsDocument
-	if err := json.Unmarshal(raw, &doc); err != nil {
+	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, fmt.Errorf("parse credentials file: %w", err)
 	}
 	if len(doc.Credentials) == 0 {

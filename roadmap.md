@@ -61,6 +61,54 @@ Options, roughly in order of cost:
 
 *Files:* `internal/guardrails/audit/{audit,manifest,verify}.go`.
 
+**Confirmed in the lab (2026-08-04), and worse than the description above.** With
+the server hard-killed, `audit verify` reported `ok  open  5 entries` and exited 0
+after three of eight entries were removed. PR #76 made that loud — the marker is
+now `UNSEALED`, a warning explains what a missing seal does not prove, and
+`--strict` fails on it. That is reporting, not detection: the first option above
+is still the real fix, and nothing yet detects truncation *within* an open
+session. Tracked as S12.
+
+### S12. Detect truncation of an unsealed session
+
+The tail of an open session can still be removed undetectably. Once sealed, the
+manifest head cross-check catches it (demonstrated in the lab); before that there
+is nothing to compare against.
+
+The cheapest real fix is a periodically checkpointed head: on each flush, update
+the session's manifest record with the current seq and entry hash, so an open
+session has a moving high-water mark that truncation falls below. The manifest is
+already MAC'd, so a checkpoint inherits that protection. Cost is one manifest
+write per flush, which the fsync already dominates.
+
+This matters because the kill ladder's `Shutdown` rung leaves the session
+unsealed by construction — the sessions worth tampering with are exactly the ones
+with no seal.
+
+*Files:* `internal/guardrails/audit/{manifest,verify}.go`.
+
+### S14. Non-tool methods cannot be selected by policy
+
+`resources/read`, `prompts/get`, `completion/complete` and `subscriptions/listen`
+are decided as read-only subjects carrying no toolset, so only `toolset: "*"` or
+`annotation: "read-only"` reaches them. A rule written as `{"tool": "Credentials"}`
+does not.
+
+The lab showed the consequence: under a policy gating `annotation: destructive`,
+every `Credentials` mode was refused while `completion/complete` still returned
+the credential *name* `lab-sso`. Names are identifiers rather than secrets — the
+audit chain records them, and `Credentials list` returns them — so this is an
+asymmetry, not a disclosure, and all six shipped examples carry a `toolset: "*"`
+rule that closes it. But a hand-written policy that gates by tool name leaves an
+enumeration path open, and nothing said so until now (`docs/policy-config.md`).
+
+The fix is schema work: let a match select a method or a named resource/prompt,
+so "this completion specifically" is expressible. `enforce.dataEgressSubject`
+already notes the gap.
+
+*Files:* `internal/guardrails/policy/policyconfig.go`,
+`internal/guardrails/enforce/enforce.go`.
+
 ### S3. An existing egress state directory keeps whatever DACL it has
 
 `ensureStateDir` now creates `%ProgramData%\WindowsMCP` with an explicit protected
@@ -339,6 +387,41 @@ The ones that changed what a documented guarantee meant:
   added.
 - **`Scrape` had a second, weaker address checker** than the proxy's and
   re-resolved at dial time (this was S1).
+
+### Live validation on a Windows guest (PR #77 — 2026-08)
+
+The assessment in #75 was produced by reading code, and its tests were written
+from the same reading, so they could only confirm the code matched the review.
+Driving the shipped binary against a disposable Hyper-V guest — as a real MCP
+client over stdio, in an interactive desktop session — confirmed every fix from
+#75 and found four things the review had not.
+
+Fixed: an unsealed session's truncated tail verified clean *and silent* (now
+`UNSEALED`, a warning, and `--strict`; detection itself is S12); the firewall
+restore materialised an explicit `Allow` where nothing had been configured,
+because `Get_DefaultOutboundAction` reports `ALLOW` for an absent value; a UTF-8
+BOM — what PowerShell 5.1 and Notepad write by default — made a policy
+unparseable with a message naming neither the file nor the cause; and a rule
+naming a tool does not reach `completion/complete`, so credential *names* stayed
+enumerable under a policy that refused every `Credentials` mode (documented; the
+schema work is S14).
+
+The credential never-read invariant was tested the only way that means anything:
+with Notepad focused and the agent having just typed into it, injection into that
+same unmasked field was refused.
+
+**`isolate` was cleared, and the way it was cleared is the point.** A registry
+poll spanning a real trip never observed the outbound default leaving `Allow`,
+which read as "containment reports success but does nothing". Instrumenting
+`firewallIsolate` to read back through the same COM object it writes with settled
+it: all three profiles report `block` inside the trip. The registry was simply the
+wrong surface — `Put_*` goes to the firewall service, which does not persist it
+synchronously. The finding was a measurement artefact.
+
+What survives is the reason the artefact was indistinguishable from a real
+failure: `killaction.done{isolate}` recorded only that the call had been made. It
+now carries what the OS reported back, so "isolate ran" and "isolate took effect"
+are separate claims in the chain rather than one claim standing for both.
 
 ### Security remediation (PRs #71, #73 — 2026-08)
 

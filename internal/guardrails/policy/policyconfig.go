@@ -635,7 +635,17 @@ func Load(path string, known []string) (*Policy, error) {
 // Parse decodes a policy document without validating it against a signal
 // registry. Unknown fields are rejected: a typo in a key would otherwise be
 // silently dropped, leaving the operator believing a control is in force.
+// utf8BOM is the byte-order mark Windows text tooling writes by default.
+//
+// PowerShell 5.1's `Set-Content -Encoding utf8` and Notepad both emit it, which
+// makes it the *normal* result of an operator writing a policy on the platform
+// this server targets. encoding/json rejects it, and the resulting message --
+// `invalid character 'ï' looking for beginning of value` -- says nothing about
+// the actual problem. Strip it rather than make people find that out.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
 func Parse(raw []byte) (*Policy, error) {
+	raw = bytes.TrimPrefix(raw, utf8BOM)
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var p Policy
