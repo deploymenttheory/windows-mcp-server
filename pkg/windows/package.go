@@ -91,9 +91,10 @@ func Package() inventory.ServerTool {
 const wingetNonInteractive = "--accept-source-agreements --accept-package-agreements --disable-interactivity"
 
 // packageCommand builds the command and its timeout for one mode. Every
-// caller-supplied value is embedded as a single-quoted PowerShell literal via
-// psQuote, so a package id or path cannot break out into a command.
+// caller-supplied value is bound as data via PSScript rather than interpolated,
+// so a package id or path cannot break out into a statement. See psscript.go.
 func packageCommand(mode string, args map[string]any) (string, time.Duration, error) {
+	var ps PSScript
 	switch mode {
 	case "list":
 		return "winget list --disable-interactivity", 60 * time.Second, nil
@@ -102,7 +103,7 @@ func packageCommand(mode string, args map[string]any) (string, time.Duration, er
 		if err != nil {
 			return "", 0, err
 		}
-		return "winget search --query " + psQuote(query) + " " + wingetNonInteractive, 60 * time.Second, nil
+		return ps.Script("winget search --query " + ps.Arg(query) + " " + wingetNonInteractive), 60 * time.Second, nil
 	case "install":
 		// A local MSI is an alternative to a winget id; if given, it takes precedence.
 		if msi := OptionalString(args, "msi", ""); msi != "" {
@@ -111,20 +112,21 @@ func packageCommand(mode string, args map[string]any) (string, time.Duration, er
 			}
 			// Start-Process waits, and $LASTEXITCODE is not set by msiexec through
 			// Start-Process, so surface the process exit code explicitly.
-			return "$p = Start-Process msiexec.exe -ArgumentList '/i', " + psQuote(msi) +
-				", '/quiet', '/norestart' -Wait -PassThru; if ($p.ExitCode -ne 0) { throw \"msiexec exit $($p.ExitCode)\" }; 'installed'", packageTimeout, nil
+			return ps.Script("$p = Start-Process msiexec.exe -ArgumentList '/i', " + ps.Arg(msi) +
+				", '/quiet', '/norestart' -Wait -PassThru; " +
+				"if ($p.ExitCode -ne 0) { throw \"msiexec exit $($p.ExitCode)\" }; 'installed'"), packageTimeout, nil
 		}
 		id, err := RequiredString(args, "id")
 		if err != nil {
 			return "", 0, err
 		}
-		return "winget install --id " + psQuote(id) + " --exact " + wingetNonInteractive, packageTimeout, nil
+		return ps.Script("winget install --id " + ps.Arg(id) + " --exact " + wingetNonInteractive), packageTimeout, nil
 	case "uninstall":
 		id, err := RequiredString(args, "id")
 		if err != nil {
 			return "", 0, err
 		}
-		return "winget uninstall --id " + psQuote(id) + " --exact " + wingetNonInteractive, packageTimeout, nil
+		return ps.Script("winget uninstall --id " + ps.Arg(id) + " --exact " + wingetNonInteractive), packageTimeout, nil
 	default:
 		return "", 0, fmt.Errorf("unknown mode %q", mode)
 	}

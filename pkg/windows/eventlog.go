@@ -65,28 +65,29 @@ func EventLog() inventory.ServerTool {
 			hours := clampInt(hoursArg, 1, 720)
 			max := clampInt(maxArg, 1, 500)
 
-			// Build the FilterHashtable from vetted parts. User strings are embedded as
-			// single-quoted PowerShell literals (psQuote doubles any embedded quote), so
-			// a log or provider name cannot break out of the hashtable into a command.
-			filter := "LogName=" + psQuote(log)
+			// Build the FilterHashtable from vetted parts. Model-supplied strings are
+			// bound as data via PSScript, so a log or provider name cannot break out
+			// of the hashtable into a statement. See psscript.go.
+			var ps PSScript
+			filter := "LogName=" + ps.Arg(log)
 			if n, ok := eventLogLevels[level]; ok {
 				filter += "; Level=" + strconv.Itoa(n)
 			}
 			if provider != "" {
-				filter += "; ProviderName=" + psQuote(provider)
+				filter += "; ProviderName=" + ps.Arg(provider)
 			}
 			filter += fmt.Sprintf("; StartTime=(Get-Date).AddHours(-%d)", hours)
 
 			// A FilterHashtable that matches nothing makes Get-WinEvent throw
 			// "No events were found"; catch exactly that and return an empty array
 			// rather than an error, so "nothing happened" reads as a clean result.
-			command := "$ErrorActionPreference='Stop'; try { " +
+			command := ps.Script("$ErrorActionPreference='Stop'; try { " +
 				fmt.Sprintf("Get-WinEvent -FilterHashtable @{ %s } -MaxEvents %d -ErrorAction Stop | ", filter, max) +
 				"Select-Object @{n='time';e={$_.TimeCreated.ToString('s')}}, Id, " +
 				"@{n='level';e={$_.LevelDisplayName}}, @{n='provider';e={$_.ProviderName}}, " +
 				"@{n='message';e={($_.Message -replace '\\s+',' ').Trim()}} | " +
 				"ConvertTo-Json -Depth 3 -AsArray } " +
-				"catch { if ($_.Exception.Message -match 'No events were found') { '[]' } else { throw } }"
+				"catch { if ($_.Exception.Message -match 'No events were found') { '[]' } else { throw } }")
 
 			res, err := deps.Desktop().RunPowerShell(ctx, command, 60*time.Second)
 			if err != nil {
