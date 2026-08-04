@@ -272,3 +272,33 @@ func TestProxyAllowPortsMirrorsThePolicy(t *testing.T) {
 		t.Errorf("default ports = %q, want 80,443", got)
 	}
 }
+
+// TestRecoverOnlyRemovesItsOwnRules is a regression test for a local privilege
+// escalation. The state file lives in %ProgramData%\WindowsMCP, which a standard
+// user can create and therefore own, and its contents were trusted verbatim by an
+// elevated recovery path. Planting a file naming "Core Networking - DNS (UDP-Out)"
+// or an EDR agent's rule made the next elevated start delete it.
+func TestRecoverOnlyRemovesItsOwnRules(t *testing.T) {
+	ours := []string{
+		ruleGroup + "-Allow-proxy",
+		ruleGroup + "-Block-chrome",
+	}
+	theirs := []string{
+		"Core Networking - DNS (UDP-Out)",
+		"CrowdStrike Falcon Sensor",
+		"",
+		"windowsmcp-egress-lowercase", // prefix match is exact, not case-folded
+		ruleGroup, // the bare group name is not a rule this package creates
+	}
+	for _, name := range ours {
+		if !isOwnRuleName(name) {
+			t.Errorf("isOwnRuleName(%q) = false; recovery must still clean up its own rules", name)
+		}
+	}
+	for _, name := range theirs {
+		if isOwnRuleName(name) {
+			t.Errorf("isOwnRuleName(%q) = true; a tampered state file must not be able to "+
+				"name an unrelated firewall rule for elevated deletion", name)
+		}
+	}
+}

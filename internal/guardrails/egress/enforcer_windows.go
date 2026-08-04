@@ -320,6 +320,20 @@ func isAllowRuleName(name string) bool {
 	return strings.HasPrefix(name, ruleGroup+"-Allow-")
 }
 
+// isOwnRuleName reports whether a rule name is one this package could have
+// created. Recovery removes only these.
+//
+// The state file lives in %ProgramData%\WindowsMCP, which a standard user can
+// create and therefore own, and nothing validates its contents. Without this
+// check, planting a file naming "Core Networking - DNS (UDP-Out)" or an EDR
+// agent's rule made the next elevated start delete it -- the recovery path
+// turned into an arbitrary-firewall-rule remover running with the operator's
+// privileges. Recovery is meant to undo this package's own work; a name outside
+// its namespace is not that.
+func isOwnRuleName(name string) bool {
+	return strings.HasPrefix(name, ruleGroup+"-")
+}
+
 // addGlobalAllowRules installs the proxy's own route out plus the exception set
 // that keeps the machine functioning under a block-by-default policy.
 func addGlobalAllowRules(rules *windowsfirewall.INetFwRules, spec EnforceSpec) error {
@@ -417,6 +431,16 @@ func (e WindowsEnforcer) Recover() (int, error) {
 		}
 		defer release()
 		for _, name := range state.RuleNames {
+			if !isOwnRuleName(name) {
+				// Not ours to remove. Recorded rather than ignored: a name outside
+				// the namespace means the state file was written by something other
+				// than a previous run of this package.
+				e.logger().Error("refusing to remove a firewall rule named in the egress "+
+					"recovery state but outside this server's namespace; the state file "+
+					"may have been tampered with",
+					"rule", name, "expected_prefix", ruleGroup+"-", "state_file", statePath())
+				continue
+			}
 			if ruleExists(rules, name) {
 				removeRule(rules, name)
 				removed++

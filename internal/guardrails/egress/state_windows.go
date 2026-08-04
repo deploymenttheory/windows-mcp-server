@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 // The recovery state exists because the rules outlive the process that made
@@ -68,17 +71,18 @@ func statePath() string { return filepath.Join(stateDir(), stateFileName) }
 // is a no-op. The reverse order would leave real rules with nothing recording
 // them.
 func writeState(state enforcementState) error {
-	if err := os.MkdirAll(stateDir(), 0o755); err != nil {
-		return fmt.Errorf("create egress state directory: %w", err)
+	if err := ensureStateDir(); err != nil {
+		return err
 	}
 	raw, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode egress state: %w", err)
 	}
-	// The mode is nominal on Windows — the real access control is the ACL on
-	// ProgramData, and Go synthesizes a Unix mode that means nothing here. It is
-	// written restrictively anyway so the intent is not misread: this file
-	// describes machine state, and only an elevated process should rewrite it.
+	// The mode is nominal on Windows — Go synthesizes a Unix mode that means
+	// nothing here. The real access control is the directory's DACL, set by
+	// ensureStateDir. The mode is written restrictively anyway so the intent is
+	// not misread: this file describes machine state, and only an elevated
+	// process should rewrite it.
 	if err := os.WriteFile(statePath(), append(raw, '\n'), 0o600); err != nil {
 		return fmt.Errorf("write egress state: %w", err)
 	}
@@ -111,6 +115,66 @@ func readState() (*enforcementState, error) {
 func clearState() error {
 	if err := os.Remove(statePath()); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear egress state: %w", err)
+	}
+	return nil
+}
+
+// stateDirSDDL builds the DACL for the state directory: full control for
+// Administrators, SYSTEM and the account this server runs as, and nothing for
+// anyone else.
+//
+// It is SDDL rather than a hand-built ACL so it can be read in review. "P" makes
+// it protected, so ProgramData's inheritable entries — which is where a standard
+// user's ability to write here comes from — do not apply. The running user is
+// named explicitly because the server may run unelevated in the proxy-only tier
+// and still has to write its own state; granting the Users group instead would
+// put every other account on the machine back in the same position.
+func stateDirSDDL() (string, error) {
+	token := windows.GetCurrentProcessToken()
+	user, err := token.GetTokenUser()
+	if err != nil {
+		return "", fmt.Errorf("read the current user SID: %w", err)
+	}
+	return "D:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;FA;;;" + user.User.Sid.String() + ")", nil
+}
+
+// ensureStateDir creates the state directory with an explicit DACL.
+//
+// %ProgramData% grants BUILTIN\Users an inheritable right to create
+// subdirectories, and CREATOR OWNER full control of what it creates — so a
+// standard user who gets there first owns this directory and can write whatever
+// they like into egress-rules.json. That file drives an elevated recovery path:
+// it names firewall rules to delete, whether to restore the machine's default
+// outbound action, and WinINET proxy settings to write into the elevated user's
+// registry. Inheriting ProgramData's permissions makes it a local privilege
+// escalation, so the directory is created with its own.
+//
+// If the directory already exists this does not rewrite its DACL: an operator may
+// have set one deliberately, and silently replacing it would be its own surprise.
+// checkStateDirTrusted is what notices a pre-existing directory that is unsafe.
+func ensureStateDir() error {
+	dir := stateDir()
+	if _, err := os.Stat(dir); err == nil {
+		return nil
+	}
+	sddl, err := stateDirSDDL()
+	if err != nil {
+		return err
+	}
+	sd, err := windows.SecurityDescriptorFromString(sddl)
+	if err != nil {
+		return fmt.Errorf("build egress state directory DACL: %w", err)
+	}
+	sa := &windows.SecurityAttributes{
+		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+		SecurityDescriptor: sd,
+	}
+	pathPtr, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		return fmt.Errorf("egress state directory path: %w", err)
+	}
+	if err := windows.CreateDirectory(pathPtr, sa); err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		return fmt.Errorf("create egress state directory %q: %w", dir, err)
 	}
 	return nil
 }
