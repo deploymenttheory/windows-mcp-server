@@ -301,6 +301,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		unacked, acked := splitCredentialExposure(
 			inv.EnabledToolsets(),
 			devicePolicy.Credentials.AcknowledgeToolsetExposure,
+			credentialsDeclareUnmaskedTargets(cfg.CredentialsFile),
 		)
 		if len(unacked) > 0 {
 			_, _ = audit.Append("credentials.exposure.denied", map[string]any{

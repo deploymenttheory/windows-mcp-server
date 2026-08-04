@@ -60,6 +60,17 @@ type credentialEntry struct {
 	Type desktop.CredentialType `json:"type,omitempty"`
 	// Persist is "session" (default), "local_machine", or "enterprise".
 	Persist desktop.CredentialPersist `json:"persist,omitempty"`
+	// AllowUnmaskedTarget permits injection into a control that does not report
+	// itself as masked. Defaults to false: injection normally requires a confirmed
+	// password field, because the agent chooses where the keystrokes land and an
+	// unmasked destination puts the secret in reach of Screenshot, GetText and the
+	// clipboard — defeating the guarantee that a secret may be used but never read.
+	//
+	// Set it only for a destination that genuinely cannot report IsPassword, such
+	// as a console window or some Electron and Java applications. It is per
+	// credential and in the document precisely so the exception is an operator
+	// decision, narrow, and reviewable.
+	AllowUnmaskedTarget bool `json:"allow_unmasked_target,omitempty"`
 }
 
 // secretBytes holds a JSON string as wipeable bytes.
@@ -94,6 +105,9 @@ type installedCredential struct {
 	Username string
 	Type     desktop.CredentialType
 	Persist  desktop.CredentialPersist
+	// AllowUnmaskedTarget carries the entry's opt-out through to the tool layer,
+	// which passes it to the engine's destination check.
+	AllowUnmaskedTarget bool
 }
 
 // loadCredentialsFile reads and validates the credentials document.
@@ -200,6 +214,7 @@ func installCredentials(
 		rec := installedCredential{
 			Name: e.Name, Target: e.Target, Username: e.Username,
 			Type: defaultType(e.Type), Persist: defaultPersist(e.Persist),
+			AllowUnmaskedTarget: e.AllowUnmaskedTarget,
 		}
 		installed = append(installed, rec)
 		if logger != nil {
@@ -257,12 +272,13 @@ func credentialInfos(installed []installedCredential) []desktop.CredentialInfo {
 	out := make([]desktop.CredentialInfo, 0, len(installed))
 	for _, c := range installed {
 		out = append(out, desktop.CredentialInfo{
-			Name:       c.Name,
-			Target:     c.Target,
-			Username:   c.Username,
-			Type:       string(c.Type),
-			Persist:    string(c.Persist),
-			Injectable: c.Type.Readable(),
+			Name:                c.Name,
+			Target:              c.Target,
+			Username:            c.Username,
+			Type:                string(c.Type),
+			Persist:             string(c.Persist),
+			Injectable:          c.Type.Readable(),
+			AllowUnmaskedTarget: c.AllowUnmaskedTarget,
 		})
 	}
 	return out
