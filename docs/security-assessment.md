@@ -56,6 +56,57 @@ Two things this PR did **not** change, both out of its scope: roadmap items S2�
 remain open and are unaffected, and the two pre-existing `go vet` warnings in
 `internal/desktop/journeyhook_windows.go` are untouched.
 
+## Dynamic validation (2026-08-04)
+
+The registers below were produced by reading code. That has a specific weakness:
+the tests written from a source review encode the same model of the system the
+review used, so green tests confirm the code matches the reading, not that either
+matches Windows.
+
+So the fixes were then driven against a disposable Hyper-V guest — the untagged
+product binary, full guardrails, spoken to as a real MCP client over stdio, in an
+interactive desktop session.
+
+**Confirmed working on a live system:** the destructive annotations (`Clipboard`,
+`Invoke`, `Click` refused by an `annotation: destructive` rule, while `Move` — the
+deliberate exemption — was allowed and moved the cursor); `completion.complete`
+audited with the typed prefix digested; `status_token_env` fatal when unset and
+the inline form warning; the proxy advertising `Bearer` and accepting RFC 7617
+`Basic`; `posture_drift` refused without a startup rule; `Scrape` fetching real
+hosts while refusing internal ones through real DNS; the chain keyed only for
+file/directory destinations; in-place and sealed-file truncation both detected;
+the credential ACL and toolset-exposure refusals; and the kill ladder sealing the
+chain, auditing `killaction.done{isolate}` when elevated and
+`killaction.skipped{"why":"not elevated"}` when not.
+
+**The credential invariant, tested the only way that means anything:** with
+Notepad focused and the agent having just typed into it, injection into that same
+unmasked field was refused. That check cannot run without a desktop, and the
+behaviour it protects was a real vulnerability before #73.
+
+**Four findings no source review had produced**, all fixed or recorded in PR #77:
+an unsealed session's truncated tail verified clean and silent (now `UNSEALED` +
+`--strict`; detection itself is roadmap S12); the firewall restore materialised an
+explicit `Allow` where nothing had been configured, because
+`Get_DefaultOutboundAction` reports `ALLOW` for an absent value (now restored to
+absent); a UTF-8 BOM — what PowerShell 5.1 and Notepad write by default — made a
+policy unparseable with a message naming neither the file nor the cause; and a
+rule naming a tool does not reach `completion/complete`, so credential *names*
+stayed enumerable under a policy that refused every `Credentials` mode (documented;
+schema work is roadmap S14).
+
+**One thing remains unresolved and is the reason `isolate` should not be trusted
+yet.** The ladder audits `killaction.done{isolate}`, and driving
+`Put_DefaultOutboundAction(BLOCK)` directly does take effect and persist — but a
+2,789-sample poll at ~3 ms resolution spanning a real trip never observed the
+outbound default leaving `Allow`. Roadmap S13.
+
+**Not validated at all:** session recording, the journey recorder's password
+redaction (roadmap S4), and injection into a genuine masked field (the positive
+case).
+
+---
+
 **Standing caveat.** `SECURITY.md:28-41` puts unsandboxed tool access and spoofable
 local signals out of scope, and this assessment honours that. Nothing below amounts
 to "the PowerShell tool can run PowerShell". The findings are about controls behaving
