@@ -416,3 +416,41 @@ func TestCountersSeparateTheReasonsForRefusal(t *testing.T) {
 		t.Errorf("Denied() = %d, want 2", c.Denied())
 	}
 }
+
+// TestEmptyAllowPortsIsNotAnyPort pins the port gate against a Config built in
+// code rather than parsed from a document.
+//
+// checkTarget enforced ports only when AllowPorts was non-empty. policy.Parse
+// defaults it for a document, so documents were safe -- but egress.Start has an
+// explicit belt for an empty *allowlist* and had none for empty *ports*, and a
+// hand-built Config is exactly the case that belt exists for. The result was a
+// generic TCP relay to any port on an allowed host: 445 for SMB and NTLM
+// coercion, 22, 3389.
+func TestEmptyAllowPortsIsNotAnyPort(t *testing.T) {
+	set, err := hostmatch.Compile([]string{"allowed.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &proxy{
+		cfg: Config{
+			Allow: set, // AllowPorts deliberately unset
+			Resolve: func(context.Context, string) ([]netip.Addr, error) {
+				return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+			},
+		},
+		counters: &counters{},
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	for _, port := range []int{445, 22, 3389, 8080} {
+		if _, refused := p.checkTarget(context.Background(), "allowed.example", port); refused == nil {
+			t.Errorf("port %d must not be reachable when no ports were configured", port)
+		}
+	}
+	// The defaults must still work, or an empty config would deny everything.
+	for _, port := range []int{443, 80} {
+		if _, refused := p.checkTarget(context.Background(), "allowed.example", port); refused != nil {
+			t.Errorf("port %d is a default and should be allowed, got %q", port, refused.message)
+		}
+	}
+}

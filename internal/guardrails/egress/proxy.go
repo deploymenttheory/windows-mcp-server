@@ -141,13 +141,25 @@ func (p *proxy) serveConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = upstream.Close() }()
 
-	client, _, err := http.NewResponseController(w).Hijack()
+	client, brw, err := http.NewResponseController(w).Hijack()
 	if err != nil {
 		p.counters.failed.Add(1)
 		http.Error(w, "egress policy: this connection cannot be tunnelled.", http.StatusInternalServerError)
 		return
 	}
 	defer func() { _ = client.Close() }()
+
+	// Whatever the client pipelined after the CONNECT line is already in the
+	// hijacked reader, not on the socket. A client that writes its TLS ClientHello
+	// in the same segment as the request — most of them, under load — lost it
+	// here, and the tunnel then hung waiting for a handshake that had already been
+	// read. Hand it upstream before wiring the two ends together.
+	if brw != nil && brw.Reader.Buffered() > 0 {
+		if _, err := io.CopyN(upstream, brw, int64(brw.Reader.Buffered())); err != nil {
+			p.counters.failed.Add(1)
+			return
+		}
+	}
 
 	// Counted at the decision rather than after the tunnel closes: the question
 	// the counter answers is how many connections policy admitted, and a
@@ -237,6 +249,12 @@ func (p *proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return p.dial(ctx, tgt)
 	}
 
+	// The clone carries its own connection pool, and a dropped Transport keeps its
+	// idle sockets and read-loop goroutine alive for IdleConnTimeout (90s) —
+	// nothing finalizes one. At N requests a second that is ~90N sockets held for
+	// no reason.
+	defer transport.CloseIdleConnections()
+
 	resp, err := transport.RoundTrip(outbound)
 	if err != nil {
 		p.counters.failed.Add(1)
@@ -269,14 +287,29 @@ func (p *proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 // against the forbidden ranges before one is chosen to dial, because an allowed
 // name that resolves to loopback or an intranet address is exactly the bypass
 // this proxy exists to prevent.
+// defaultAllowPorts mirrors policy.DefaultEgressPorts. It is duplicated rather
+// than imported because egress must not depend on policy — the proxy's request
+// path is deliberately pure Go with no document schema behind it.
+var defaultAllowPorts = []int{443, 80}
+
 func (p *proxy) checkTarget(ctx context.Context, host string, port int) (target, *refusal) {
-	if len(p.cfg.AllowPorts) > 0 && !slices.Contains(p.cfg.AllowPorts, port) {
+	// An empty AllowPorts is treated as the default set, never as "any port".
+	// policy.Parse defaults it for a document, but egress.Start has an explicit
+	// belt for an empty allowlist and had none for empty ports — so a Config built
+	// in code, which is exactly the case that belt exists for, produced a generic
+	// TCP relay to any port on an allowed host: 445 for SMB and NTLM coercion, 22,
+	// 3389.
+	allowed := p.cfg.AllowPorts
+	if len(allowed) == 0 {
+		allowed = defaultAllowPorts
+	}
+	if !slices.Contains(allowed, port) {
 		p.counters.deniedPort.Add(1)
 		p.logger.Info("egress deny", "reason", "port", "host", host, "port", port)
 		return target{}, &refusal{status: http.StatusForbidden, host: host, message: fmt.Sprintf(
 			"egress policy: port %d is not allowed. Allowed ports: %s. "+
 				"Add it to egress.allow_ports in the policy document to permit it.",
-			port, joinInts(p.cfg.AllowPorts))}
+			port, joinInts(allowed))}
 	}
 
 	// An IP literal never gets a name lookup, and is judged on the address the

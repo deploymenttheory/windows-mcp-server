@@ -147,21 +147,42 @@ func (d *Desktop) RecordingStatus() (RecordingStatus, bool) {
 	return d.recorder.status(), true
 }
 
-// MarkRecording adds a labeled marker to the session recording timeline, if
-// recording is active.
+// MarkRecording adds an agent-supplied marker to the session recording timeline,
+// if recording is active.
+//
+// The label is namespaced and length-capped, and both matter. Guardrail events go
+// into the same file as "SECURITY: ..." (see ShowSecurityBanner), so an unprefixed
+// agent marker reading "SECURITY: kill switch disarmed by operator" was
+// byte-identical to a real one in the forensic timeline. The prefix makes the
+// author of every marker unambiguous; the cap stops an unbounded label filling the
+// recording volume.
 func (d *Desktop) MarkRecording(label string) bool {
 	if d.recorder == nil {
 		return false
 	}
-	d.recorder.mark(label)
+	if len(label) > maxMarkerLabel {
+		label = label[:maxMarkerLabel] + "…(truncated)"
+	}
+	d.recorder.mark(agentMarkerPrefix + label)
 	return true
 }
+
+// agentMarkerPrefix distinguishes a marker the agent asked for from one this
+// server wrote. Guardrail markers carry no prefix and cannot be forged with one.
+const agentMarkerPrefix = "agent: "
+
+// maxMarkerLabel bounds one marker label.
+const maxMarkerLabel = 512
 
 // ShowSecurityBanner raises a persistent, human-visible on-screen banner for a
 // security event and marks the recording timeline so the event is captured on
 // video. Best-effort: a no-op if the overlay manager is unavailable.
 func (d *Desktop) ShowSecurityBanner(text string) {
-	d.MarkRecording("SECURITY: " + text)
+	// Deliberately not MarkRecording: this marker is the server's own, and must not
+	// carry the agent namespace that keeps the two tellable apart.
+	if d.recorder != nil {
+		d.recorder.mark("SECURITY: " + text)
+	}
 	if d.overlay != nil {
 		d.overlay.showBanner(text)
 	}

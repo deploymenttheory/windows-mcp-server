@@ -402,6 +402,29 @@ func (d *Desktop) closeWMI() {
 // ProcessKill terminates processes matching pid (if non-zero) or whose name
 // contains nameSubstr (case-insensitive). Returns the number of processes
 // terminated.
+// escapeWQLLike renders s as a literal inside a WQL LIKE pattern.
+//
+// Only quotes were escaped before, which left the LIKE metacharacters live: a
+// name of "_" became "Name LIKE '%_%'", matching every process with at least one
+// character in its name — Explorer, the EDR agent, this server. One call, and the
+// desktop is gone. "%" did the same.
+//
+// WQL escapes with a backslash and also supports [] character classes, so those
+// are escaped too. The quote doubling that was here is wrong for WQL, which uses
+// a backslash rather than a doubled quote, so quotes are escaped the same way.
+func escapeWQLLike(s string) string {
+	const wqlMeta = `\%_[]^'`
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for _, r := range s {
+		if strings.ContainsRune(wqlMeta, r) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 func (d *Desktop) ProcessKill(pid uint32, nameSubstr string) (int, error) {
 	killed := 0
 	err := d.withWMI(func(svc *wmi.Service) error {
@@ -410,8 +433,9 @@ func (d *Desktop) ProcessKill(pid uint32, nameSubstr string) (int, error) {
 		case pid != 0:
 			where = wmi.Where("ProcessId = ?", pid)
 		case nameSubstr != "":
-			// WMI LIKE for substring match.
-			where = "Name LIKE '%" + strings.ReplaceAll(nameSubstr, "'", "''") + "%'"
+			// WMI LIKE for substring match, with the caller's text escaped so it is
+			// matched literally. See escapeWQLLike.
+			where = "Name LIKE '%" + escapeWQLLike(nameSubstr) + "%'"
 		default:
 			return fmt.Errorf("provide a pid or name to kill")
 		}

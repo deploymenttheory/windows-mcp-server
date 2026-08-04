@@ -132,6 +132,12 @@ func MultiEdit() inventory.ServerTool {
 			if !ok || len(raw) == 0 {
 				return NewToolResultError("provide 'edits' as a non-empty array"), nil
 			}
+			// One call fans out to four engine round-trips per edit, all on the
+			// single serialized COM thread, and audits as one tool call. Bound it.
+			if len(raw) > desktop.MaxBatchItems {
+				return NewToolResultErrorf("too many edits: %d (limit %d) — split the call",
+					len(raw), desktop.MaxBatchItems), nil
+			}
 			dsk := deps.Desktop()
 			done := 0
 			for _, item := range raw {

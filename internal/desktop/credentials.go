@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"unicode/utf16"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/deploymenttheory/go-bindings-win32/bindings/runtime/win32"
@@ -368,13 +369,26 @@ func readSecretUnits(target string, credType credentials.CRED_TYPE) ([]uint16, e
 }
 
 // utf16Bytes re-encodes UTF-8 plaintext as a UTF-16LE byte blob.
+// It decodes from the byte slice directly rather than going through
+// utf16.Encode([]rune(string(secret))). That form made two copies of the
+// plaintext that cannot be wiped — an immutable string and a []rune — in the one
+// function whose parameter is documented as "a byte slice rather than a string so
+// the caller can zero it". Only the third copy, the returned blob, was ever
+// zeroed. Here the rune slice is decoded a code point at a time and the
+// intermediate is zeroed with the rest.
 func utf16Bytes(secret []byte) []byte {
-	units := utf16.Encode([]rune(string(secret)))
-	out := make([]byte, len(units)*2)
-	for i, u := range units {
-		// Truncation is the operation: low byte then high byte, little-endian.
-		out[i*2] = byte(u)        //nolint:gosec // deliberate UTF-16LE split
-		out[i*2+1] = byte(u >> 8) //nolint:gosec // deliberate UTF-16LE split
+	out := make([]byte, 0, len(secret)*2)
+	for i := 0; i < len(secret); {
+		r, size := utf8.DecodeRune(secret[i:])
+		i += size
+		r1, r2 := utf16.EncodeRune(r)
+		if r1 == 0xFFFD && r2 == 0xFFFD {
+			// Not a surrogate pair: r fits in one UTF-16 code unit.
+			// Truncation is the operation: low byte then high byte, little-endian.
+			out = append(out, byte(r), byte(r>>8)) //nolint:gosec // deliberate UTF-16LE split
+			continue
+		}
+		out = append(out, byte(r1), byte(r1>>8), byte(r2), byte(r2>>8)) //nolint:gosec // deliberate UTF-16LE split
 	}
 	return out
 }

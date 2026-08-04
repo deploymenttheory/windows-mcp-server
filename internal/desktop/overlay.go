@@ -242,8 +242,15 @@ func (m *overlayManager) createBanner(text string) *activeOverlay {
 }
 
 // showBanner / dismissBanner enqueue security-banner commands.
+//
+// The banner is delivered with sendBlocking, not send. It is a transparency
+// control -- the human-visible, recording-captured record that containment
+// fired -- and send drops on a full queue, which is right for a click flash and
+// wrong for this. A burst of decoration commands could fill the 64-slot buffer at
+// the moment a kill trip enqueued its banner, and the one command that must not
+// be lost was the one dropped.
 func (m *overlayManager) showBanner(text string) {
-	m.send(overlayCmd{kind: cmdSecurityBanner, text: text})
+	m.sendBlocking(overlayCmd{kind: cmdSecurityBanner, text: text})
 }
 
 func (m *overlayManager) dismissBanner() {
@@ -437,6 +444,27 @@ func (m *overlayManager) send(cmd overlayCmd) {
 		// Drop if the queue is full: overlays are best-effort decoration.
 	}
 }
+
+// sendBlocking enqueues a command that must not be dropped, waiting for room.
+//
+// Bounded by a timeout so it cannot stall the kill ladder: the render thread
+// drains on every command and on a 15ms tick, so anything approaching this
+// deadline means that thread is wedged, and in that case the banner was never
+// going to appear. The trip continues either way -- the banner is one of several
+// ALWAYS steps, and blocking the rest of them to wait on a dead message pump
+// would cost more than it buys.
+func (m *overlayManager) sendBlocking(cmd overlayCmd) {
+	t := time.NewTimer(overlaySendTimeout)
+	defer t.Stop()
+	select {
+	case m.cmds <- cmd:
+	case <-m.quit:
+	case <-t.C:
+	}
+}
+
+// overlaySendTimeout bounds how long a must-deliver overlay command waits.
+const overlaySendTimeout = 2 * time.Second
 
 func (m *overlayManager) close() {
 	select {

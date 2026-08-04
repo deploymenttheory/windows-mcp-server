@@ -77,7 +77,9 @@ func (d *Desktop) RecordInput(ctx context.Context, stopVK uint32, out func(Recor
 					return nil
 				}
 				if r, printable, key := translateKey(in.vk, in.shift, in.caps); printable {
-					var secure bool
+					// Fail closed: a keystroke whose destination cannot be
+					// established is treated as secret. See focusedIsPassword.
+					secure := true
 					_ = d.Do(func() error {
 						secure = d.focusedIsPassword()
 						return nil
@@ -168,19 +170,32 @@ func smallestChildContaining(
 	return best
 }
 
-// focusedIsPassword reports whether the currently focused element masks its input.
-// STA-thread only.
+// focusedIsPassword reports whether the currently focused element masks its
+// input, treating "cannot tell" as yes. STA-thread only.
+//
+// Every failure path returns true, which is the opposite of what it used to do.
+// Returning false on no UIA, no focused element, or an unsupported property meant
+// "not known" became "not secret", and the characters were written to the journey
+// file in clear -- a file created 0o644 with a nolint saying a journey is not a
+// secret, which is true only while redaction holds.
+//
+// The cost of failing closed is a journey step recorded as redacted when it did
+// not need to be, which an author can see and fix. The cost of failing open is a
+// password in a file on disk.
 func (d *Desktop) focusedIsPassword() bool {
 	if d.uia == nil || d.uia.automation == nil {
-		return false
+		return true
 	}
 	el, err := d.uia.automation.GetFocusedElement()
 	if err != nil || el == nil {
-		return false
+		return true
 	}
 	defer el.Release()
 	b, err := el.Get_CurrentIsPassword()
-	return err == nil && boolVal(b)
+	if err != nil {
+		return true
+	}
+	return boolVal(b)
 }
 
 func absInt(v int) int {

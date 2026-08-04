@@ -203,6 +203,22 @@ func (p *planner) Apply(ctx context.Context, planID string) (windows.PlanApplica
 		}, nil
 	}
 
+	// A plan-gated tool needs a person, not just a shape. require_plan refuses a
+	// direct call and tells the model to submit a plan instead -- which the model
+	// can do itself, so on its own it only forces the Plan/Apply shape and adds the
+	// manifest and the audit trail. This is where the human enters: if any step is
+	// plan-gated, the whole plan is put to the same authoriser a hold step uses,
+	// with the operations it will run named, before any of it starts.
+	if gated := p.gatedSteps(doc); len(gated) > 0 {
+		if d, err := p.approvePlan(ctx, planID, doc, gated); err != nil || d != enforce.OutcomeApprove {
+			return windows.PlanApplication{
+				PlanID: planID,
+				Report: planApprovalReport(d, err),
+				Failed: len(doc.Steps),
+			}, nil
+		}
+	}
+
 	var b strings.Builder
 	completed, failed, skipped := 0, 0, 0
 	for i, s := range doc.Steps {
@@ -398,3 +414,88 @@ func resultDetail(res *mcp.CallToolResult, err error) string {
 	}
 	return b.String()
 }
+
+// gatedSteps returns the tools in doc that require_plan covers.
+func (p *planner) gatedSteps(doc plan.Document) []string {
+	var gated []string
+	seen := map[string]bool{}
+	for _, s := range doc.Steps {
+		if seen[s.Tool] {
+			continue
+		}
+		if p.engine.RequiresPlan(p.engine.SubjectForTool("tools/call", s.Tool)) {
+			seen[s.Tool] = true
+			gated = append(gated, s.Tool)
+		}
+	}
+	return gated
+}
+
+// approvePlan puts the whole plan to the out-of-band authoriser.
+//
+// Fails closed in every direction, and deliberately so: a require_plan rule is an
+// operator saying these tools need review, so no approver configured means there
+// is nobody to review and the plan does not run. The alternative -- proceeding
+// when the webhook is absent -- would make the strictest configuration the one
+// that silently checks nothing.
+//
+// The request carries the tool names and a digest of the plan, never the raw
+// arguments, matching what a hold step sends.
+func (p *planner) approvePlan(
+	ctx context.Context,
+	planID string,
+	doc plan.Document,
+	gated []string,
+) (enforce.Outcome, error) {
+	if p.approver == nil {
+		_, _ = p.audit.Append("plan.approval.unavailable", map[string]any{
+			"plan_id": planID, "gated_tools": gated,
+		})
+		return enforce.OutcomeDeny, ErrPlanApprovalUnavailable
+	}
+
+	req := enforce.ApprovalRequest{
+		RequestID:  enforce.NewRequestID(),
+		SessionID:  p.sessionID,
+		Method:     "plans/apply",
+		Tool:       strings.Join(gated, ", "),
+		ArgsDigest: planDigest(doc),
+		Reason: fmt.Sprintf("plan %s applies %d step(s) including the plan-gated tool(s) %s",
+			shortPlanID(planID), len(doc.Steps), strings.Join(gated, ", ")),
+	}
+	_, _ = p.audit.Append("approval.requested", map[string]any{
+		"plan_id": planID, "request_id": req.RequestID, "gated_tools": gated,
+	})
+
+	ctx, cancel := context.WithTimeout(ctx, p.approvalTimeout)
+	defer cancel()
+	d := p.approver.Await(ctx, req)
+	_, _ = p.audit.Append("approval.decided", map[string]any{
+		"plan_id": planID, "request_id": req.RequestID,
+		"outcome": string(d.Outcome), "approver": d.Approver,
+	})
+	return d.Outcome, nil
+}
+
+// planApprovalReport renders the refusal a caller sees.
+func planApprovalReport(outcome enforce.Outcome, err error) string {
+	if err != nil {
+		return "refused: this plan contains tools that require review, and no approvals " +
+			"webhook is configured to ask. Set approvals.webhook_url in the policy document."
+	}
+	return fmt.Sprintf("refused: the plan was not approved (%s)", outcome)
+}
+
+// planDigest is a digest of the plan's content for the approval request, so the
+// authoriser can pin what they approved without seeing raw arguments.
+func planDigest(doc plan.Document) string {
+	raw, err := json.Marshal(doc.Steps)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+// ErrPlanApprovalUnavailable reports a plan-gated apply with no authoriser.
+var ErrPlanApprovalUnavailable = errors.New("no approvals webhook is configured")

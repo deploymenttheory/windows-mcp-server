@@ -66,8 +66,11 @@ func FuzzForbiddenAddr(f *testing.F) {
 		if err != nil {
 			return
 		}
-		// No panic; a loopback/link-local/CGNAT address stays forbidden even when
-		// private networks are allowed.
+		// No panic, and a forbidden address always carries a reason. Note the
+		// classes that survive allow_private_networks are the special ones --
+		// loopback, link-local, multicast, unspecified -- not CGNAT, which sits
+		// below the early return with RFC1918 because an operator allowing private
+		// networks may legitimately be on carrier-grade NAT space.
 		reason, forbidden := ForbiddenAddr(a, allowPrivate)
 		if forbidden && reason == "" {
 			t.Fatalf("ForbiddenAddr(%q) forbade with no reason", addr)

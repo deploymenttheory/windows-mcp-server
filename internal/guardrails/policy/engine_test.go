@@ -382,3 +382,57 @@ func TestRateLimitWindowSlides(t *testing.T) {
 		t.Error("hits older than the window must not count")
 	}
 }
+
+// TestSkippedRequiredSignalIsRecorded pins the other half of skip handling.
+//
+// A skipped signal must not deny (TestSkippedSignalIsNotAFailure), but it must
+// not vanish either. Skip is produced when a may-run endpoint is unconfigured,
+// when there is no DHA state, when no AIK is provisioned, and for any id no
+// provider serves -- so a rule written on_fail: deny passed forever, recording
+// nothing, on exactly the devices it was written for. An operator reading the
+// chain in audit mode saw a clean run.
+func TestSkippedRequiredSignalIsRecorded(t *testing.T) {
+	e, _ := newTestEngine(t, layeredPolicy, map[string]signals.Status{
+		"run-context": signals.Pass, "bitlocker": signals.Skip, "mdm-enrolled": signals.Pass,
+	})
+	v := e.Evaluate(context.Background(), e.SubjectForTool("tools/call", "Registry"))
+
+	if !v.Allowed() {
+		t.Fatalf("a skipped signal must still not deny: %+v", v.Failures)
+	}
+	var found bool
+	for _, f := range v.Failures {
+		if f.Signal == "bitlocker" {
+			found = true
+			if f.Severity != SeverityWarn {
+				t.Errorf("a skipped required signal should be recorded at warn, got %v", f.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Error("a required signal that could not be evaluated must appear in the verdict; " +
+			"silently satisfying the rule is how a control that is not in force reads as one that is")
+	}
+}
+
+// TestWildcardToolSelectorIsBroadNotNarrow pins the precedence of {tool: "*"}.
+//
+// specificity ranked any non-empty tool selector 3, the narrowest tier, including
+// the wildcard -- which matches every tool. So a later "and warn on everything
+// else" rule written {tool: "*", on_fail: "warn"} won attribution over an earlier
+// {tool: "PowerShell", on_fail: "deny"} and silently downgraded it. toolset: "*"
+// already carried the demotion; tool did not, and nothing covered it.
+func TestWildcardToolSelectorIsBroadNotNarrow(t *testing.T) {
+	specific := Rule{Match: Match{Tool: StringSet{"PowerShell"}}}
+	wildcard := Rule{Match: Match{Tool: StringSet{"*"}}}
+	annotation := Rule{Match: Match{Annotation: StringSet{"destructive"}}}
+
+	if specific.specificity() <= wildcard.specificity() {
+		t.Error("a named tool must outrank a wildcard tool selector, " +
+			"or a broad rule can downgrade the severity a specific one assigned")
+	}
+	if wildcard.specificity() >= annotation.specificity() {
+		t.Error("a wildcard tool selector matches everything, so it must rank below " +
+			"an annotation selector, not above it")
+	}
+}

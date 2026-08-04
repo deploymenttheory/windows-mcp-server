@@ -255,3 +255,33 @@ func TestWriteCredentialZeroesSecretBlob(t *testing.T) {
 		t.Errorf("WriteCredential must not mutate the caller's secret: %q", secret)
 	}
 }
+
+// TestUTF16BytesRoundTrips guards the encoder that replaced a
+// string/[]rune conversion. That form made two unwipeable copies of the
+// plaintext -- an immutable Go string and a rune slice -- inside the one function
+// whose parameter is documented as a byte slice precisely so the caller can zero
+// it. Only the returned blob was ever wiped.
+func TestUTF16BytesRoundTrips(t *testing.T) {
+	cases := []string{
+		"",
+		"password",
+		"p@ssw0rd!£$%",
+		"日本語のパスワード",
+		"emoji \U0001F510 key", // astral plane: encodes as a surrogate pair
+		"mixed \U0001F600 ascii",
+	}
+	for _, in := range cases {
+		blob := utf16Bytes([]byte(in))
+		if len(blob)%2 != 0 {
+			t.Errorf("%q: produced an odd number of bytes (%d)", in, len(blob))
+			continue
+		}
+		units := make([]uint16, 0, len(blob)/2)
+		for i := 0; i < len(blob); i += 2 {
+			units = append(units, uint16(blob[i])|uint16(blob[i+1])<<8)
+		}
+		if got := string(utf16.Decode(units)); got != in {
+			t.Errorf("round trip of %q produced %q", in, got)
+		}
+	}
+}

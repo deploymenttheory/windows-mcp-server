@@ -194,6 +194,12 @@ func StartupSubject() Subject { return Subject{Scope: ScopeStartup, Method: "sta
 // The planning tools themselves are never gated — you cannot require a plan to
 // make a plan — so a subject in the planning toolset is exempt regardless of the
 // selectors.
+// AuditOnly reports whether the active policy caps every severity at warn.
+//
+// Callers that refuse outside Evaluate — the require_plan gate is the only one —
+// need this, because that path never passes through the mode clamp.
+func (e *Engine) AuditOnly() bool { return e.policy.Mode == ModeAuditOnly }
+
 func (e *Engine) RequiresPlan(subj Subject) bool {
 	if subj.Scope != ScopeCall || subj.Facts.Toolset == "planning" {
 		return false
@@ -275,6 +281,30 @@ func (e *Engine) evaluateSignals(ctx context.Context, subj Subject) Verdict {
 	// Read the signals in a stable order so the audit record is reproducible.
 	for _, id := range sortedKeys(attributed) {
 		res := e.cache.Read(ctx, id, e.args)
+		if res.Status == signals.Skip {
+			// A required signal that cannot be evaluated is recorded, at warn, and
+			// never silently satisfies the rule that asked for it.
+			//
+			// Skip is produced when a may-run endpoint is unconfigured, when there
+			// is no DHA state, when no AIK is provisioned, and for an id no
+			// provider serves. Treating it as a pass meant a rule written
+			// on_fail: deny passed forever, with nothing recorded — precisely on
+			// the devices the rule was written for. It stays a warning rather than
+			// becoming the rule's own severity, because "this device cannot answer"
+			// is not the same claim as "this device failed", and turning every
+			// unprovisioned machine into a denial on upgrade would be its own
+			// outage.
+			v.Failures = append(v.Failures, Failure{
+				Signal:   id,
+				Rule:     attributed[id].rule,
+				Severity: SeverityWarn,
+				Detail:   "signal could not be evaluated on this device: " + res.Detail,
+			})
+			if SeverityWarn > v.Intended {
+				v.Intended = SeverityWarn
+			}
+			continue
+		}
 		if res.Status != signals.Fail && res.Status != signals.Error {
 			continue
 		}

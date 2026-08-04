@@ -13,6 +13,8 @@ package audit
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -373,10 +375,10 @@ func clientIdentity(meta mcp.Meta) map[string]any {
 	// wants an identifier, not an arbitrary client-supplied blob.
 	if info, ok := meta[mcp.MetaKeyClientInfo].(map[string]any); ok {
 		if name, ok := info["name"].(string); ok {
-			fields["client_name"] = name
+			fields["client_name"] = clip(name, maxRecordedString)
 		}
 		if version, ok := info["version"].(string); ok {
-			fields["client_version"] = version
+			fields["client_version"] = clip(version, maxRecordedString)
 		}
 	}
 	return fields
@@ -390,12 +392,46 @@ func subscriptionFields(n *mcp.NotificationSubscriptions) map[string]any {
 	if n == nil {
 		return map[string]any{}
 	}
-	return map[string]any{
+	subs := n.ResourceSubscriptions
+	dropped := 0
+	if len(subs) > maxRecordedSubscriptions {
+		dropped = len(subs) - maxRecordedSubscriptions
+		subs = subs[:maxRecordedSubscriptions]
+	}
+	fields := map[string]any{
 		"tools_list_changed":     n.ToolsListChanged,
 		"prompts_list_changed":   n.PromptsListChanged,
 		"resources_list_changed": n.ResourcesListChanged,
-		"resource_subscriptions": n.ResourceSubscriptions,
+		"resource_subscriptions": subs,
 	}
+	if dropped > 0 {
+		// Say what was dropped rather than silently recording a partial list; a
+		// truncation nobody can see reads as a complete record.
+		fields["resource_subscriptions_dropped"] = dropped
+	}
+	return fields
+}
+
+// Bounds on client-supplied text reaching the chain.
+//
+// The chain is hashed, fsynced and append-only, with no rotation and no size
+// ceiling, and these two fields are the only places a client controls how many
+// bytes an entry costs. server/discover is deliberately outside the rate limits
+// and is not decidable by the policy engine, so a client looping it with a 10 MB
+// clientInfo.name filled the audit volume -- and, since the audit destination and
+// the recording directory usually share a disk, took the recording with it. It is
+// the same chain-flooding the egress summary logic was built to avoid.
+const (
+	maxRecordedString        = 256
+	maxRecordedSubscriptions = 64
+)
+
+// clip truncates s to n bytes, marking it so a reader can tell.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…(truncated)"
 }
 
 // promptArgsBytes renders prompt arguments deterministically for digesting. Keys
@@ -419,7 +455,39 @@ func promptArgsBytes(args map[string]string) []byte {
 	return b.Bytes()
 }
 
+// digestSalt is minted once per process. It is never written down, so the
+// digests it produces are comparable within a session — which is what
+// correlating a plan step with the call that ran it needs — and not attackable
+// once the chain leaves the machine.
+//
+// A bare SHA-256 of the arguments was not much of a redaction. Tool arguments
+// here are short and highly structured: {"text":"P@ssw0rd1"} from Type,
+// {"command":"..."} from Shell, a path from FileSystem. Anyone holding the audit
+// file could confirm a guessed value instantly or run a dictionary over it, and
+// the chain is designed to be handed to auditors and shipped inside evidence
+// bundles. The same digest also travels to an external approvals webhook.
+//
+// It is per process, not persisted, on purpose: a salt stored beside the log
+// would be readable by whoever holds the log, which is the position this is
+// defending against.
+var digestSalt = newDigestSalt()
+
+func newDigestSalt() []byte {
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		// Degrade to an unsalted digest rather than failing: the digest's job is
+		// to keep raw arguments out of the chain, and it still does that.
+		return nil
+	}
+	return salt
+}
+
 func digestBytes(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	if len(digestSalt) == 0 {
+		sum := sha256.Sum256(b)
+		return hex.EncodeToString(sum[:])
+	}
+	m := hmac.New(sha256.New, digestSalt)
+	m.Write(b)
+	return hex.EncodeToString(m.Sum(nil))
 }

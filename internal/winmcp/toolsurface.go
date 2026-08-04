@@ -4,6 +4,7 @@ package winmcp
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
@@ -51,6 +52,13 @@ func protectedPaths(cfg Config, p *policy.Policy) []windows.ProtectedPath {
 	}
 	if dest := p.Transparency.AuditDestination; dest != "" && dest != "stderr" {
 		out = append(out, windows.NewProtectedPath(dest, "the audit log", auditDestinationIsDir(dest), false, true))
+		// The audit key: no read and no write. Reading it is enough to forge a
+		// chain that verifies, which is the whole thing the key exists to prevent
+		// — unlike the log itself, which is meant to be inspected.
+		if dir := auditKeyDir(dest); dir != "" {
+			out = append(out, windows.NewProtectedPath(
+				filepath.Join(dir, auditKeyFile), "the audit signing key", false, true, true))
+		}
 	}
 	// The kill-switch control directory: no write, because a file placed here is
 	// the sentinel trigger and writing one is an attempt to actuate the

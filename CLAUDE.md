@@ -459,9 +459,12 @@ The SDK implements the wire; the gaps were in our layers, and they are load-bear
   is transport-derived and differs legitimately between stdio and HTTP).
 - `server.discover` and `subscriptions.listen` are audited. Without the first the
   chain holds no record that a client connected — there is no handshake any more.
-- `subscriptions/listen` counts against the circuit-breaker window;
-  `server/discover` deliberately does not, since a stateless client may probe it
-  before every request.
+- Neither `subscriptions/listen` nor `server/discover` is rate-limited. The
+  circuit breaker they were once counted against no longer exists — rate limits
+  live in the policy document and are spent inside `Engine.Evaluate`, which only
+  the three decidable methods reach. Both are audited, and the client-supplied
+  text each carries is clipped, because an unthrottled method whose payload the
+  client chooses is otherwise a way to grow the chain without bound.
 - A blocked non-tool method returns a **JSON-RPC error** (`blockedError`), not an
   `IsError` result. The `IsError` convention is tools-only: answering a
   `resources/read` with a `CallToolResult` puts the wrong envelope on the wire.

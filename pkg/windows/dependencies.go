@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -61,8 +60,9 @@ type ToolDependencies interface {
 // ProtectedPath marks a filesystem location the FileSystem tool must not touch,
 // so the agent cannot use it to reach the guardrail state that governs it — read
 // the credentials file back, or write over the audit log or the policy document.
-// It is a guardrail, not a sandbox: matching is by cleaned, case-insensitive path,
-// so 8.3 short names and hard links are not canonicalized.
+// It is a guardrail, not a sandbox: matching is by normalized, case-insensitive
+// path (see normalizeProtectedPath), so 8.3 short names and hard links still
+// reach the file under another name.
 type ProtectedPath struct {
 	path      string // cleaned, lower-cased absolute path
 	label     string // human name for the refusal message
@@ -74,7 +74,7 @@ type ProtectedPath struct {
 // NewProtectedPath builds a ProtectedPath, normalizing the path for matching.
 func NewProtectedPath(path, label string, tree, denyRead, denyWrite bool) ProtectedPath {
 	return ProtectedPath{
-		path:      strings.ToLower(filepath.Clean(path)),
+		path:      normalizeProtectedPath(path),
 		label:     label,
 		tree:      tree,
 		denyRead:  denyRead,
@@ -151,7 +151,7 @@ func (d *BaseDeps) Planner() Planner { return d.planner }
 // suitable for a tool error. It implements the optional interface the FileSystem
 // tool checks.
 func (d *BaseDeps) ProtectedPathViolation(absPath string, write bool) (string, bool) {
-	target := strings.ToLower(filepath.Clean(absPath))
+	target := normalizeProtectedPath(absPath)
 	verb := "read"
 	if write {
 		verb = "written"
