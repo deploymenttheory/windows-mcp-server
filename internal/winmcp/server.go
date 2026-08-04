@@ -153,8 +153,12 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// recording (session-<stamp>.mp4) correlate by name — the correlation an
 	// evidence bundle later relies on.
 	sessionStamp := time.Now().Format("20060102-150405")
-	dest, err := audit.OpenDestination(devicePolicy.Transparency.AuditDestination, sessionStamp,
-		[]byte(os.Getenv("WINDOWS_MCP_AUDIT_KEY")))
+	// Keyed by default now: an unkeyed chain is tamper-evident but not
+	// unforgeable, since anyone who can write the file can recompute every hash
+	// after an edit. See resolveAuditKey for what the generated key does and does
+	// not protect against.
+	auditKey := resolveAuditKey(devicePolicy.Transparency.AuditDestination, logger)
+	dest, err := audit.OpenDestination(devicePolicy.Transparency.AuditDestination, sessionStamp, auditKey)
 	if err != nil {
 		return fmt.Errorf("audit log: %w", err)
 	}
@@ -163,7 +167,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// unkeyed — the default — so a device that worked yesterday still starts. (The
 	// local name shadows the package; on the right-hand side it is still the
 	// package, since a := binding is not in scope until after the statement.)
-	audit := audit.NewAuditLog(dest, audit.WithHMACKey([]byte(os.Getenv("WINDOWS_MCP_AUDIT_KEY"))))
+	audit := audit.NewAuditLog(dest, audit.WithHMACKey(auditKey))
 	// sealAtExit is populated later, once the planner exists and the closing posture
 	// is captured. It runs from inside the audit-close defer, so it fires after the
 	// chain is sealed and (defers being LIFO) after the recorder is finalized — both
