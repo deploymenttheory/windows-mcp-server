@@ -53,6 +53,15 @@ func Registry() inventory.ServerTool {
 				return NewToolResultError(err.Error()), nil
 			}
 			name := OptionalString(args, "name", "")
+			// PowerShell's provider cmdlets glob, so "HKCU:\*" enumerated far more
+			// than one key under a single audited call. -LiteralPath below stops the
+			// expansion; rejecting the metacharacters as well means the model gets
+			// told why rather than silently reading nothing.
+			if i := strings.IndexAny(path, "*?["); i >= 0 {
+				return NewToolResultErrorf(
+					"registry path %q contains the wildcard %q; name a single key",
+					path, string(path[i])), nil
+			}
 
 			// Every model-supplied value is bound as data via PSScript rather than
 			// interpolated, so a registry path or value cannot break out of its
@@ -64,9 +73,9 @@ func Registry() inventory.ServerTool {
 				if name == "" {
 					return NewToolResultError("name is required for get"), nil
 				}
-				command = ps.Script("Get-ItemPropertyValue -Path " + ps.Arg(path) + " -Name " + ps.Arg(name))
+				command = ps.Script("Get-ItemPropertyValue -LiteralPath " + ps.Arg(path) + " -Name " + ps.Arg(name))
 			case "list":
-				command = ps.Script("Get-ItemProperty -Path " + ps.Arg(path) + " | Format-List")
+				command = ps.Script("Get-ItemProperty -LiteralPath " + ps.Arg(path) + " | Format-List")
 			case "set":
 				if name == "" {
 					return NewToolResultError("name is required for set"), nil
@@ -78,14 +87,14 @@ func Registry() inventory.ServerTool {
 				value := OptionalString(args, "value", "")
 				pathRef, nameRef, valueRef := ps.Arg(path), ps.Arg(name), ps.Arg(value)
 				command = ps.Script(
-					"if (-not (Test-Path " + pathRef + ")) { New-Item -Path " + pathRef + " -Force | Out-Null }; " +
-						"New-ItemProperty -Path " + pathRef + " -Name " + nameRef +
+					"if (-not (Test-Path -LiteralPath " + pathRef + ")) { New-Item -Path " + pathRef + " -Force | Out-Null }; " +
+						"New-ItemProperty -LiteralPath " + pathRef + " -Name " + nameRef +
 						" -Value " + valueRef + " -PropertyType " + valType + " -Force | Out-Null; 'OK'")
 			case "delete":
 				if name == "" {
 					return NewToolResultError("name is required for delete"), nil
 				}
-				command = ps.Script("Remove-ItemProperty -Path " + ps.Arg(path) + " -Name " + ps.Arg(name) + "; 'OK'")
+				command = ps.Script("Remove-ItemProperty -LiteralPath " + ps.Arg(path) + " -Name " + ps.Arg(name) + "; 'OK'")
 			default:
 				return NewToolResultError("invalid mode"), nil
 			}
