@@ -29,6 +29,10 @@ func DetectRunContext() RunContext {
 		defer func() { _ = foundation.CloseHandle(token) }()
 		rc.IsSystem = tokenIsSystem(token)
 		rc.Elevated = tokenIsElevated(token)
+	} else {
+		// Record that the fields below are unset rather than answered. Leaving
+		// IsSystem false here used to read as "not SYSTEM", which passed the check.
+		rc.TokenUnread = true
 	}
 
 	rc.User = currentUserName()

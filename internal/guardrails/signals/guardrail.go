@@ -46,12 +46,25 @@ type RunContext struct {
 	SessionID uint32 `json:"session_id"`
 	Elevated  bool   `json:"elevated"`
 	User      string `json:"user,omitempty"`
+	// TokenUnread reports that the process token could not be read, so IsSystem
+	// and Elevated are zero values rather than answers.
+	//
+	// Without this the two are indistinguishable: a failed OpenProcessToken left
+	// IsSystem false, and IsInteractiveUser was then true for any session but 0 —
+	// so an error reading the token produced a pass on the one signal the shipped
+	// default policy requires. The engine already scores an errored signal at the
+	// rule's full severity; this lets the check report the error it had.
+	TokenUnread bool `json:"token_unread,omitempty"`
 }
 
 // IsInteractiveUser reports whether the process runs as a normal user in an
 // interactive session (not SYSTEM, not Session 0) — the only context in which
 // desktop automation works.
-func (r RunContext) IsInteractiveUser() bool { return !r.IsSystem && r.SessionID != 0 }
+//
+// False when the token could not be read: "we could not tell" is not "yes".
+func (r RunContext) IsInteractiveUser() bool {
+	return !r.TokenUnread && !r.IsSystem && r.SessionID != 0
+}
 
 // DeviceIdentity identifies the host for the decision document / may-run request.
 type DeviceIdentity struct {

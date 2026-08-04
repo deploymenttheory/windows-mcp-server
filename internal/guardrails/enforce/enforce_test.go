@@ -290,3 +290,42 @@ func TestUndecidableMethodsPassThrough(t *testing.T) {
 		t.Errorf("undecidable methods should not produce policy decisions, got %v", h.events())
 	}
 }
+
+// TestDecidableMethodWithUnreadableParamsIsRefused pins the distinction the
+// middleware has to draw: a method the engine does not decide passes through (the
+// test above), but a method it does decide, carrying params it cannot read, must
+// not.
+//
+// This used to return "not decidable" and proceed, producing no verdict and no
+// policy.decided record -- and the audit middleware type-asserts the same way, so
+// both layers fell silent on the same input. An allow with no record is the one
+// outcome the transparency guarantee says cannot happen.
+func TestDecidableMethodWithUnreadableParamsIsRefused(t *testing.T) {
+	for _, method := range []string{"tools/call", "resources/read", "prompts/get"} {
+		// Signals passing, so the verdict would be allow: without the refusal these
+		// calls reach the handler, which is exactly the behaviour being pinned out.
+		h := newEnforceHarness(t, denyPolicy, map[string]signals.Status{"bitlocker": signals.Pass})
+
+		// Params of a type this method never carries.
+		_, err := h.call(method, &mcp.ListToolsParams{})
+
+		switch method {
+		case "tools/call":
+			// The IsError convention is tools-only, so this arm refuses in-band.
+			if err != nil {
+				t.Errorf("%s: refusal must be an IsError result, not a Go error: %v", method, err)
+			}
+		default:
+			if err == nil {
+				t.Errorf("%s: a decidable method with unreadable params must be refused", method)
+			}
+		}
+
+		if got := h.reached.Load(); got != 0 {
+			t.Errorf("%s: the handler must not run, reached=%d", method, got)
+		}
+		if !slices.Contains(h.events(), "policy.undecidable") {
+			t.Errorf("%s: the refusal must be audited, got %v", method, h.events())
+		}
+	}
+}

@@ -20,10 +20,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -477,10 +479,28 @@ func newDigestSalt() []byte {
 	if _, err := rand.Read(salt); err != nil {
 		// Degrade to an unsalted digest rather than failing: the digest's job is
 		// to keep raw arguments out of the chain, and it still does that.
+		//
+		// Say so, though. Silence here meant a property the chain is documented to
+		// have -- that a digest cannot be run through a dictionary -- could be gone
+		// with nothing to show for it. This runs at package init, before any logger
+		// exists, so it goes to the default logger and to the chain itself via the
+		// first entry appended after it (see AuditLog.Append).
+		digestUnsalted.Store(true)
+		slog.Error("could not generate an argument-digest salt; digests in the audit chain "+
+			"will be unsalted and therefore open to a dictionary attack over guessed arguments",
+			"error", err)
 		return nil
 	}
 	return salt
 }
+
+// digestUnsalted reports that newDigestSalt failed, so the first AuditLog can
+// record it in the chain rather than only on stderr.
+var digestUnsalted atomic.Bool
+
+// DigestIsUnsalted reports whether argument digests degraded to plain SHA-256.
+// Exported so startup can surface it alongside the other posture warnings.
+func DigestIsUnsalted() bool { return digestUnsalted.Load() }
 
 func digestBytes(b []byte) string {
 	if len(digestSalt) == 0 {

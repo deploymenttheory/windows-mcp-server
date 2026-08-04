@@ -68,6 +68,13 @@ func RegisterBuiltins(reg *Registry) {
 func checkRunContext(_ context.Context, env *Env) Result {
 	rc := env.Sys.RunContext()
 	switch {
+	case rc.TokenUnread:
+		// Error, not fail: the device may well be fine, but this check could not
+		// establish it. The engine scores an errored signal at the rule's severity,
+		// so a policy that says deny still denies -- which is the point. Reporting
+		// pass here, as a zero-valued RunContext used to, admitted the session on
+		// the strength of a read that did not happen.
+		return errf("run-context", "could not read the process token, so the run context is unknown")
 	case rc.IsInteractiveUser():
 		return pass("run-context", fmt.Sprintf("interactive user %q, session %d", rc.User, rc.SessionID))
 	case rc.IsSystem:
