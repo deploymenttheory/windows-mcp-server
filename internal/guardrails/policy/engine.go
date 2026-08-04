@@ -194,6 +194,12 @@ func StartupSubject() Subject { return Subject{Scope: ScopeStartup, Method: "sta
 // The planning tools themselves are never gated — you cannot require a plan to
 // make a plan — so a subject in the planning toolset is exempt regardless of the
 // selectors.
+// AuditOnly reports whether the active policy caps every severity at warn.
+//
+// Callers that refuse outside Evaluate — the require_plan gate is the only one —
+// need this, because that path never passes through the mode clamp.
+func (e *Engine) AuditOnly() bool { return e.policy.Mode == ModeAuditOnly }
+
 func (e *Engine) RequiresPlan(subj Subject) bool {
 	if subj.Scope != ScopeCall || subj.Facts.Toolset == "planning" {
 		return false

@@ -414,3 +414,25 @@ func TestSkippedRequiredSignalIsRecorded(t *testing.T) {
 			"silently satisfying the rule is how a control that is not in force reads as one that is")
 	}
 }
+
+// TestWildcardToolSelectorIsBroadNotNarrow pins the precedence of {tool: "*"}.
+//
+// specificity ranked any non-empty tool selector 3, the narrowest tier, including
+// the wildcard -- which matches every tool. So a later "and warn on everything
+// else" rule written {tool: "*", on_fail: "warn"} won attribution over an earlier
+// {tool: "PowerShell", on_fail: "deny"} and silently downgraded it. toolset: "*"
+// already carried the demotion; tool did not, and nothing covered it.
+func TestWildcardToolSelectorIsBroadNotNarrow(t *testing.T) {
+	specific := Rule{Match: Match{Tool: StringSet{"PowerShell"}}}
+	wildcard := Rule{Match: Match{Tool: StringSet{"*"}}}
+	annotation := Rule{Match: Match{Annotation: StringSet{"destructive"}}}
+
+	if specific.specificity() <= wildcard.specificity() {
+		t.Error("a named tool must outrank a wildcard tool selector, " +
+			"or a broad rule can downgrade the severity a specific one assigned")
+	}
+	if wildcard.specificity() >= annotation.specificity() {
+		t.Error("a wildcard tool selector matches everything, so it must rank below " +
+			"an annotation selector, not above it")
+	}
+}

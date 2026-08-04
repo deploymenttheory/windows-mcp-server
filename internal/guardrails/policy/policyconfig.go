@@ -393,7 +393,12 @@ func (r Rule) scope() string {
 // author can make and therefore wins; matching every toolset is the broadest.
 func (r Rule) specificity() int {
 	switch {
-	case len(r.Match.Tool) > 0:
+	// A wildcard tool selector matches everything, so it is the broadest rule
+	// there is, not the narrowest. Ranking it 3 let a later {tool: "*"} rule win
+	// attribution over an earlier {tool: "PowerShell"} one and quietly downgrade
+	// its severity — the opposite of what "adding a rule can never weaken another"
+	// promises. toolset: "*" already had this demotion; tool did not.
+	case len(r.Match.Tool) > 0 && !r.Match.Tool.Contains("*"):
 		return 3
 	case len(r.Match.Annotation) > 0:
 		return 2

@@ -82,11 +82,21 @@ func Middleware(engine *policy.Engine, deps EnforcerDeps) mcp.Middleware {
 			// matching call here is by definition a direct call — refuse it before it
 			// runs, and record that the plan requirement fired.
 			if method == methodCallTool && engine.RequiresPlan(subj) {
+				// Recorded whether or not it bites: audit mode exists to show what
+				// enforcing would have done.
+				enforcing := !engine.AuditOnly()
 				if deps.Audit != nil {
-					_, _ = deps.Audit.Append("plan.required", map[string]any{"subject": subj.String()})
+					_, _ = deps.Audit.Append("plan.required", map[string]any{
+						"subject": subj.String(), "enforced": enforcing,
+					})
 				}
-				logger.Warn("plan.required", "subject", subj.String())
-				return refusePlanRequired(subj)
+				logger.Warn("plan.required", "subject", subj.String(), "enforced", enforcing)
+				// This check runs before Evaluate, so it never met the mode clamp and
+				// refused calls in a document an operator was only trialling — the one
+				// thing audit mode promises will not happen.
+				if enforcing {
+					return refusePlanRequired(subj)
+				}
 			}
 
 			v := engine.Evaluate(ctx, subj)
