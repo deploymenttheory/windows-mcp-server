@@ -13,6 +13,8 @@ package audit
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -453,7 +455,39 @@ func promptArgsBytes(args map[string]string) []byte {
 	return b.Bytes()
 }
 
+// digestSalt is minted once per process. It is never written down, so the
+// digests it produces are comparable within a session — which is what
+// correlating a plan step with the call that ran it needs — and not attackable
+// once the chain leaves the machine.
+//
+// A bare SHA-256 of the arguments was not much of a redaction. Tool arguments
+// here are short and highly structured: {"text":"P@ssw0rd1"} from Type,
+// {"command":"..."} from Shell, a path from FileSystem. Anyone holding the audit
+// file could confirm a guessed value instantly or run a dictionary over it, and
+// the chain is designed to be handed to auditors and shipped inside evidence
+// bundles. The same digest also travels to an external approvals webhook.
+//
+// It is per process, not persisted, on purpose: a salt stored beside the log
+// would be readable by whoever holds the log, which is the position this is
+// defending against.
+var digestSalt = newDigestSalt()
+
+func newDigestSalt() []byte {
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		// Degrade to an unsalted digest rather than failing: the digest's job is
+		// to keep raw arguments out of the chain, and it still does that.
+		return nil
+	}
+	return salt
+}
+
 func digestBytes(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	if len(digestSalt) == 0 {
+		sum := sha256.Sum256(b)
+		return hex.EncodeToString(sum[:])
+	}
+	m := hmac.New(sha256.New, digestSalt)
+	m.Write(b)
+	return hex.EncodeToString(m.Sum(nil))
 }

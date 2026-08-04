@@ -2,6 +2,8 @@ package audit
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -268,5 +270,33 @@ func TestClientSuppliedFieldsAreBounded(t *testing.T) {
 	}
 	if subs["resource_subscriptions_dropped"] == nil {
 		t.Error("a truncated list must say so; a silent truncation reads as a complete record")
+	}
+}
+
+// TestArgumentDigestsAreNotGuessable pins that the digest is not a bare hash of
+// the arguments.
+//
+// The "never raw, always digested" discipline is applied everywhere, but the
+// digest was sha256.Sum256(rawJSON). Tool arguments here are short and highly
+// structured -- {"text":"P@ssw0rd1"} from Type, {"command":"..."} from Shell --
+// so anyone holding the audit file could confirm a guess instantly or run a
+// dictionary over it, and the chain is meant to be handed to auditors and shipped
+// in evidence bundles.
+func TestArgumentDigestsAreNotGuessable(t *testing.T) {
+	args := []byte(`{"text":"P@ssw0rd1"}`)
+
+	bare := sha256.Sum256(args)
+	if digestBytes(args) == hex.EncodeToString(bare[:]) {
+		t.Error("the digest is a plain SHA-256 of the arguments, so a guessed value " +
+			"can be confirmed offline by anyone holding the chain")
+	}
+
+	// Still deterministic within the process: correlating a plan step with the
+	// call that ran it depends on it.
+	if digestBytes(args) != digestBytes(args) {
+		t.Error("the same arguments must digest the same way within a session")
+	}
+	if digestBytes(args) == digestBytes([]byte(`{"text":"different"}`)) {
+		t.Error("different arguments must digest differently")
 	}
 }
