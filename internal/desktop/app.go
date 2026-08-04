@@ -14,7 +14,6 @@ import (
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/foundation"
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/system/threading"
 	wm "github.com/deploymenttheory/go-bindings-win32/bindings/win32/ui/windowsandmessaging"
-
 	"github.com/deploymenttheory/windows-mcp-server/internal/psdata"
 )
 

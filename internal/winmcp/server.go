@@ -456,6 +456,11 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		}
 	}
 
+	// Every environment secret has now been read into the component that needs it,
+	// so clear them from the process environment before any tool can run. This is
+	// the second half of the defence; see scrubSecretEnv.
+	scrubSecretEnv(devicePolicy, logger)
+
 	// Receiving middleware, outermost first, installed in one call so the order
 	// below is the order that actually runs (see installReceiving). Telemetry sits
 	// between audit and rug-pull: audit must see every request first, and a span

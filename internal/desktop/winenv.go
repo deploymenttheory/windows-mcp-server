@@ -157,9 +157,13 @@ func buildWindowsEnv() ([]string, string, string) {
 	}
 
 	// Preserve any host-provided variables not already set, so a good env is
-	// never diminished.
+	// never diminished — except this server's own, which are withheld. See
+	// isServerOwnVar.
 	for _, kv := range os.Environ() {
 		if i := strings.IndexByte(kv, '='); i > 0 {
+			if isServerOwnVar(kv[:i]) {
+				continue
+			}
 			if _, ok := env.get(kv[:i]); !ok {
 				env.set(kv[:i], kv[i+1:])
 			}
@@ -168,6 +172,29 @@ func buildWindowsEnv() ([]string, string, string) {
 
 	pathVal, _ := env.get("Path")
 	return env.slice(), pathVal, systemRoot
+}
+
+// serverVarPrefix is the prefix of this server's own configuration and secret
+// environment variables.
+const serverVarPrefix = "WINDOWS_MCP_"
+
+// isServerOwnVar reports whether name belongs to this server rather than to the
+// user's desktop session, and so must never be handed to a child process.
+//
+// Several of these are secrets — the audit-chain HMAC key, the approvals key, the
+// Graph client secret, the remote-policy token, the OTLP auth headers. They are
+// read from the environment precisely so they stay out of argv, which is
+// world-readable; inheriting them into a shell the model can drive would hand
+// them straight back, and one "Get-ChildItem Env:" would disclose the key whose
+// whole purpose is that the audited party cannot forge the chain.
+//
+// The non-secret WINDOWS_MCP_* variables are withheld too. A child process has no
+// business reading this server's configuration, and a prefix rule cannot be got
+// wrong the way a list of individual names can as new variables are added.
+// Comparison is case-insensitive because Windows environment names are.
+func isServerOwnVar(name string) bool {
+	return len(name) >= len(serverVarPrefix) &&
+		strings.EqualFold(name[:len(serverVarPrefix)], serverVarPrefix)
 }
 
 // envMap is a case-insensitive environment variable map (Windows env vars are
