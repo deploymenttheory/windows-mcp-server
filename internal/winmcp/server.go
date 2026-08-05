@@ -471,6 +471,12 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		return err
 	}
 
+	// The evidence export destination, for the same reason: the sink is not used
+	// until the seal fires from the audit-close defer, long after the scrub, so its
+	// credentials are read into it here. A nil sink means export is off or could
+	// not be configured — never a reason to fail the session.
+	exportSink := provisionExport(devicePolicy, audit, logger)
+
 	// Every environment secret has now been read into the component that needs it,
 	// so clear them from the process environment before any tool can run. This is
 	// the second half of the defence; see scrubSecretEnv.
@@ -512,7 +518,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// Guardrail tools registered unconditionally (present under any persona).
 	statusTool, statusHandler := status.StatusTool(
 		holder.get,
-		snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress),
+		snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress,
+			exportStatus(devicePolicy.Transparency.Export, exportSink)),
 		kill,
 	)
 	server.AddTool(statusTool, statusHandler)
@@ -594,12 +601,13 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// --- Status endpoint (always-on when an address is configured) ---
 	if devicePolicy.Transparency.StatusAddr != "" {
 		ss := &status.StatusServer{
-			Addr:     devicePolicy.Transparency.StatusAddr,
-			Token:    statusToken,
-			Current:  holder.get,
-			Snapshot: snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress),
-			Kill:     kill,
-			Logger:   logger,
+			Addr:    devicePolicy.Transparency.StatusAddr,
+			Token:   statusToken,
+			Current: holder.get,
+			Snapshot: snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress,
+				exportStatus(devicePolicy.Transparency.Export, exportSink)),
+			Kill:   kill,
+			Logger: logger,
 		}
 		if err := ss.Start(runCtx); err != nil {
 			logger.Warn("guardrails status endpoint disabled", "error", err)
@@ -622,13 +630,14 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	if devicePolicy.Transparency.EvidenceDir != "" {
 		var posture []byte
 		if b, mErr := json.Marshal(
-			snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress)(),
+			snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress,
+				exportStatus(devicePolicy.Transparency.Export, exportSink))(),
 		); mErr == nil {
 			posture = b
 		}
 		plans := sessionPlanner.StoredPlans()
 		sealAtExit = func() {
-			autoSealEvidence(devicePolicy.Transparency, sessionStamp, plans, posture, logger)
+			autoSealEvidence(devicePolicy.Transparency, sessionStamp, plans, posture, exportSink, logger)
 		}
 	}
 
@@ -657,6 +666,7 @@ func snapshotFn(
 	kill *contain.KillSwitch,
 	egressSvc *egress.Service,
 	egressCfg policy.EgressPolicy,
+	exportSt *status.ExportStatus,
 ) status.SnapshotProvider {
 	return func() status.ServerStatus {
 		beats, age := hb.Snapshot()
@@ -672,6 +682,7 @@ func snapshotFn(
 			Killed:           tripped,
 			KillReason:       reason,
 			Egress:           egressStatus(egressSvc, egressCfg),
+			EvidenceExport:   exportSt,
 		}
 	}
 }

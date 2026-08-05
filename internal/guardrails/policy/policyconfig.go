@@ -19,6 +19,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -148,6 +149,7 @@ var (
 	ErrInvalidRequirePlan = errors.New("invalid require_plan selector")
 	ErrInvalidTelemetry   = errors.New("invalid telemetry policy")
 	ErrInvalidApprovals   = errors.New("invalid approvals policy")
+	ErrInvalidExport      = errors.New("invalid evidence export policy")
 	// ErrNoStartupRule covers a posture-drift trigger with nothing to re-evaluate.
 	ErrNoStartupRule = errors.New("posture_drift is armed but no startup rule exists")
 	// ErrNotLoopback covers every address this server is willing to bind. Both
@@ -503,6 +505,9 @@ type TransparencyPolicy struct {
 	// Anchor periodically publishes the audit chain head off the box. Empty
 	// destination disables it (the default).
 	Anchor AnchorPolicy `json:"anchor,omitempty"`
+	// Export ships the sealed evidence bundle to cloud blob storage at session end.
+	// Empty provider disables it (the default).
+	Export ExportPolicy `json:"export,omitempty"`
 }
 
 // AnchorPolicy configures periodic off-box anchoring of the audit chain head.
@@ -524,6 +529,57 @@ type AnchorPolicy struct {
 // AnchorEventLog is the only anchor destination implemented today. "otlp" is
 // reserved for the telemetry exporter.
 const AnchorEventLog = "eventlog"
+
+// ExportPolicy ships the sealed evidence bundle off the device at session end.
+//
+// Anchoring publishes the chain *head* somewhere the session cannot reach back
+// into; this publishes the whole artifact, for the same reason — an on-box
+// adversary, a reimaged VM or a deleted directory otherwise takes the evidence
+// with it. It is the fourth transparency destination, alongside the audit
+// destination, the recording directory and the anchor.
+//
+// Every field here is routing. **No credential may ever be added to this struct.**
+// The document is registered as an agent-readable protected path and is meant to
+// be reviewable and checked in; the credentials come from fixed
+// WINDOWS_MCP_EXPORT_* environment variables, the way the Graph signal's do.
+// TestExportPolicyCarriesNoSecretFields asserts on the serialized keys.
+type ExportPolicy struct {
+	// Provider selects the backend. Empty disables export, which is the default:
+	// a server that began shipping evidence off-box on upgrade, with no operator
+	// action, is the same class of regression as one that began refusing calls.
+	//
+	// Only the providers ExportProviders() lists are accepted. A provider this
+	// build has no backend for is refused at load rather than at session end,
+	// where the failure would land in a shutdown defer with nobody watching.
+	Provider string `json:"provider,omitempty"`
+	// Timeout bounds the whole upload. It runs from a shutdown defer, so an
+	// unbounded one would hang the exit; empty means DefaultExportTimeout.
+	Timeout Duration `json:"timeout,omitempty"`
+}
+
+// ExportSignedURL is the unauthenticated destination: an operator-minted
+// pre-signed PUT URL, Azure SAS URL or GCS V4 signed URL, supplied in the
+// environment. The credential travels in the URL, so no principal is needed, and
+// the whole destination — host, bucket and object — is decided out of band.
+//
+// The credentialed s3/azblob/gcs providers land with their SDK backends; adding
+// a name here before there is a backend for it would mean a document that
+// validates and a server that cannot do what it says.
+const ExportSignedURL = "signed_url"
+
+// DefaultExportTimeout bounds an upload that names no timeout. The export runs
+// during process shutdown, where a hang is indistinguishable to the host from a
+// crash, so this is deliberately short enough to give up rather than wedge.
+const DefaultExportTimeout = 2 * time.Minute
+
+// ExportProviders lists the providers this build has a backend for, for
+// validation messages and the documentation.
+func ExportProviders() []string {
+	return []string{ExportSignedURL}
+}
+
+// Enabled reports whether any export is configured.
+func (e ExportPolicy) Enabled() bool { return e.Provider != "" }
 
 // EgressPolicy configures the device egress proxy: a loopback CONNECT/HTTP
 // proxy that admits only the declared domains.
@@ -678,6 +734,11 @@ func Parse(raw []byte) (*Policy, error) {
 		if len(p.Egress.AllowPorts) == 0 {
 			p.Egress.AllowPorts = DefaultEgressPorts()
 		}
+	}
+	// Same rule for export: an unconfigured block stays the zero value, so
+	// validation can tell a written-but-disabled destination from an absent one.
+	if p.Transparency.Export.Enabled() && p.Transparency.Export.Timeout <= 0 {
+		p.Transparency.Export.Timeout = Duration(DefaultExportTimeout)
 	}
 	// Fill approval timings whenever a webhook is named, so the defaults are visible
 	// to the engine and the round-trip, and an operator who set only the webhook
@@ -850,6 +911,7 @@ func (p *Policy) Validate(known []string) error {
 
 	p.validateApprovals(add)
 	p.validateEgress(add)
+	p.validateExport(add)
 
 	if len(problems) > 0 {
 		// Every problem is reported at once: an operator fixing a policy one error
@@ -952,6 +1014,48 @@ func (p *Policy) validateEgress(add func(string, ...any)) {
 				ErrInvalidEgress, app)
 		}
 	}
+}
+
+// validateExport checks the evidence export block. Like validateEgress it appends
+// to the collected problems rather than returning, so one run reports everything
+// wrong with the document.
+func (p *Policy) validateExport(add func(string, ...any)) {
+	e := p.Transparency.Export
+	if !e.Enabled() {
+		// Written but switched off is the same failure validateEgress refuses: the
+		// author believes evidence is leaving the device and it is not.
+		if e.Timeout != 0 {
+			add("%v: transparency.export is configured but names no provider, so nothing is "+
+				"shipped; set provider to one of %s", ErrInvalidExport,
+				strings.Join(ExportProviders(), ", "))
+		}
+		return
+	}
+
+	if !slices.Contains(ExportProviders(), e.Provider) {
+		add("%v: transparency.export.provider %q is not a provider this build implements (want %s)",
+			ErrInvalidExport, e.Provider, strings.Join(ExportProviders(), ", "))
+	}
+
+	// There is nothing to ship without the auto-seal: evidence_dir is what makes a
+	// bundle exist at session end. Refused rather than warned, because an operator
+	// who configured a destination has said they want the evidence off the box.
+	if p.Transparency.EvidenceDir == "" {
+		add("%v: transparency.export names a destination but transparency.evidence_dir is empty, "+
+			"so no bundle is ever sealed to ship", ErrInvalidExport)
+	}
+
+	if e.Timeout.Std() <= 0 {
+		add("%v: transparency.export.timeout must be positive", ErrInvalidExport)
+	}
+
+	// The egress allowlist and the export destination are both controls in this one
+	// document, and a destination the device's own proxy would refuse is a
+	// contradiction worth catching at load. A signed_url destination is the one
+	// shape that cannot be: the URL is an environment secret, so the document holds
+	// no host to match against. That is a warning at startup, where there is a
+	// logger and the operator is watching — see warnExportEgress in internal/winmcp
+	// — not a refusal here, because the combination is legitimate.
 }
 
 // validateLoopbackAddr refuses anything the network could reach. The egress
