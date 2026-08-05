@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Unattend answer file for the acceptance guest.
+
+  The load-bearing part is <AutoLogon>. UI automation cannot run without an
+  interactive desktop session, and an interactive session needs someone logged
+  on. Arming autologon *after* installation means writing DefaultPassword to the
+  Winlogon key on a live machine, which is a credential write into the registry
+  and is refused — so the previous lab needed a human to log in at the console
+  before any UIA test could run, every time the snapshot was reverted.
+
+  Setting it here moves it to install time, where it is ordinary unattended-setup
+  configuration rather than a credential being planted. It is the difference
+  between a suite an operator can run and one that needs babysitting.
+
+  This guest is disposable, is reverted to a snapshot before every run, and holds
+  nothing of value. The password below is deliberately not a secret; do not reuse
+  this file for anything that is.
+
+  Usage:
+    weave create acc --from-windows pro-25h2 --unattend-file acceptance/guest/autologon.xml
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>acc</Name>
+            <DisplayName>Acceptance</DisplayName>
+            <Group>Administrators</Group>
+            <Password>
+              <Value>acc</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+
+      <AutoLogon>
+        <Username>acc</Username>
+        <Enabled>true</Enabled>
+        <!-- Large enough that a long unattended run never falls off the end and
+             leaves the guest sitting at a lock screen with no desktop. -->
+        <LogonCount>100000</LogonCount>
+        <Password>
+          <Value>acc</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
+
+      <!-- No screen saver and no lock screen: a locked desktop cannot be
+           automated at all, and the secure desktop is a documented non-goal
+           rather than something to work around. -->
+      <TimeZone>UTC</TimeZone>
+    </component>
+  </settings>
+</unattend>
