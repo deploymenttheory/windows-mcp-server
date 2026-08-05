@@ -80,16 +80,29 @@ fails at step 1** and CI cannot tell. Three further gaps the design closes:
   because it bypasses the middleware — so Phase 3.3, 3.4 and 3.5 were never joined
   up.
 
-Implementation phases, one branch each: schema → compiler and target derivation →
-tool layer (`Assert` subject/operator schema, strict selector resolution,
-screenshot persistence) → evidence (OTLP/JSON recorder, bundle members, post-run
-`expected_evidence`) → **recorder** (pattern availability at the hit-test, verb
-inference, the selector ladder with a match count against the live tree,
-`enter_credential` in place of the empty placeholder, then the assertion
-workflows) → example.
+**Shipped in PR #78**: the schema, the compiler and target derivation, the tool
+layer (`Assert` subject/operator, strict selector resolution, screenshot
+persistence), the evidence phase (OTLP/JSON run record, bundle members, post-run
+`expected_evidence`, `journey.` in the verdict prefixes), and the first half of
+the recorder (the automation-id ladder, verb inference from control type,
+`enter_credential` in place of the empty placeholder).
 
-The recorder phase is the one to resist trimming. Every phase before it produces
-a format; that one produces the reason anybody writes in it.
+What remains, in rough order:
+
+- **The recorder's assertion workflows.** Mark-while-recording (hover + a
+  hotkey), propose-from-a-before/after-diff, and freeze-a-golden-run from an
+  observation baseline. This is the phase to resist trimming: every phase before
+  it produced a format, and this one produces the reason anybody writes in it.
+- **UIA pattern availability at the hit-test.** The recorder infers the verb from
+  the control type alone, which gets the common cases; reading which patterns the
+  clicked element actually supports would sharpen it, and it is a property read on
+  an element already in hand.
+- **The resolved-selector attributes** — `journey.selector.candidates`,
+  `.resolved.name`, `.resolved.control_type`. The resolver computes the match
+  count already; nothing reports it back out of the tool call.
+- **Live export of journey spans.** Written to disk today, sent nowhere.
+  Deliberately deferred: assertion observed values are screen content, so export
+  has to be separately configurable from the file artifact.
 
 ---
 

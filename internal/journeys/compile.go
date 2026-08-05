@@ -27,23 +27,84 @@ const (
 	toolCredentials     = "Credentials"
 )
 
-// Compile turns a validated journey into a plan.Document: each step becomes the
-// tool call its verb lowers to, preceded by a perception step where one is needed,
-// followed by one step per assertion and one per evidence capture.
+// OriginKind says what part of a journey a compiled plan step came from.
+type OriginKind string
+
+const (
+	// OriginAction is the step's verb.
+	OriginAction OriginKind = "action"
+	// OriginObserve is a compiler-inserted perception step.
+	OriginObserve OriginKind = "observe"
+	// OriginAssertion is one of the step's assertions.
+	OriginAssertion OriginKind = "assertion"
+	// OriginEvidence is one of the step's evidence captures.
+	OriginEvidence OriginKind = "evidence"
+)
+
+// Origin records which part of the journey one compiled plan step came from.
+// Compilation flattens a journey — an action, then its assertions, then its
+// captures — so without this the executor sees an undifferentiated list of tool
+// calls and cannot attribute a result back to what the author wrote.
+//
+// It is returned alongside the document rather than carried on it: a plan step's
+// fields are hashed into the plan id, and journey provenance is not part of what
+// an approval binds to.
+type Origin struct {
+	// StepIndex is the journey step this came from, or -1 for a step that belongs
+	// to no journey step.
+	StepIndex int
+	Kind      OriginKind
+	// Index is the position among the step's assertions or captures.
+	Index int
+
+	Verb     Verb
+	Selector *Selector
+
+	Subject  Subject
+	Operator Operator
+	Expected any
+	Message  string
+	Wait     *Wait
+
+	Label string
+}
+
+// Compile turns a validated journey into a plan.Document. It is CompileWithOrigins
+// without the provenance, for callers that only need to run the plan.
+func Compile(j Journey, sessionID string) (plan.Document, error) {
+	doc, _, err := CompileWithOrigins(j, sessionID)
+	return doc, err
+}
+
+// CompileWithOrigins turns a validated journey into a plan.Document and the
+// per-step provenance: each step becomes the tool call its verb lowers to,
+// preceded by a perception step where one is needed, followed by one step per
+// assertion and one per evidence capture.
 //
 // The result is an ordinary plan, so it runs through the same executor Apply uses:
 // every step is policy-evaluated, audited as plan.step, and fail-stopped on the
 // first failure. A failed assertion is an Assert tool error — a failed step — so
 // the journey stops there, which is exactly a test runner's behaviour.
 //
+// The origins slice is parallel to doc.Steps and is what lets the run record
+// attribute a span to the verb or assertion an author wrote.
+//
 // sessionID is stamped onto the document so its audit and any evidence bundle tie
 // back to the run; it does not affect the plan id, which is content-derived.
-func Compile(j Journey, sessionID string) (plan.Document, error) {
+func CompileWithOrigins(j Journey, sessionID string) (plan.Document, []Origin, error) {
 	if err := j.Validate(); err != nil {
-		return plan.Document{}, err
+		return plan.Document{}, nil, err
 	}
 
-	var steps []plan.Step
+	var (
+		steps   []plan.Step
+		origins []Origin
+	)
+	emit := func(s plan.Step, o Origin) {
+		steps = append(steps, s)
+		origins = append(origins, o)
+	}
+
 	for i, s := range j.Steps {
 		// Perception is per step, never ambient: a verb that names an element
 		// resolves against a snapshot taken as part of that step, so the same
@@ -51,24 +112,32 @@ func Compile(j Journey, sessionID string) (plan.Document, error) {
 		// Emitting it as a real step also puts the moment of observation on the
 		// audit chain and in the change manifest.
 		if needsPerception(s) && !lastIsSnapshot(steps) {
-			steps = append(steps, observeStep(s.Target.Scope))
+			emit(observeStep(s.Target.Scope), Origin{
+				StepIndex: i, Kind: OriginObserve, Verb: VerbObserve,
+			})
 		}
 
 		lowered, err := lowerStep(s, i)
 		if err != nil {
-			return plan.Document{}, err
+			return plan.Document{}, nil, err
 		}
-		steps = append(steps, lowered...)
+		for _, ls := range lowered {
+			emit(ls, Origin{StepIndex: i, Kind: OriginAction, Verb: s.Verb, Selector: s.Target})
+		}
 
 		for a, as := range s.Assertions {
-			steps = append(steps, assertStep(as, i, a))
+			emit(assertStep(as, i, a), Origin{
+				StepIndex: i, Kind: OriginAssertion, Index: a,
+				Subject: as.Subject, Operator: as.Operator, Expected: as.Expected,
+				Message: as.Message, Wait: as.Wait, Selector: as.Target,
+			})
 		}
-		for _, label := range s.Evidence {
-			steps = append(steps, plan.Step{
+		for e, label := range s.Evidence {
+			emit(plan.Step{
 				Name: "evidence: " + label,
 				Tool: toolCaptureEvidence,
 				Args: map[string]any{"label": label},
-			})
+			}, Origin{StepIndex: i, Kind: OriginEvidence, Index: e, Label: label})
 		}
 	}
 
@@ -79,9 +148,9 @@ func Compile(j Journey, sessionID string) (plan.Document, error) {
 	}
 	withID, err := doc.WithID()
 	if err != nil {
-		return plan.Document{}, fmt.Errorf("compute plan id: %w", err)
+		return plan.Document{}, nil, fmt.Errorf("compute plan id: %w", err)
 	}
-	return withID, nil
+	return withID, origins, nil
 }
 
 // needsPerception reports whether a step resolves a selector and therefore needs a

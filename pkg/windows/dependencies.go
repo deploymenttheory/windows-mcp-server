@@ -109,6 +109,36 @@ type ReadRegister interface {
 	SetLastRead(text string)
 }
 
+// AssertionRecord is what an assertion actually did: the comparison it made and
+// the value it read. It exists so a run record can carry the observed value —
+// the thing a text log never carried, and the difference between knowing a test
+// broke and knowing why.
+type AssertionRecord struct {
+	Subject  string
+	Operator string
+	Expected string
+	Observed string
+	Passed   bool
+	// Polls is how many times the condition was evaluated: 1 when not waited. A
+	// step that passed on its fifteenth poll of a fifteen-second budget is a
+	// different fact from one that passed immediately, and it is the one that
+	// predicts a suite about to become flaky.
+	Polls   int
+	Timeout float64
+}
+
+// AssertionRegister is the optional interface a dependency set implements to
+// carry the most recent assertion's outcome.
+//
+// It is a side channel rather than something on the tool result on purpose: the
+// alternative is putting it in the result's structured content or _meta, which
+// would change the Assert tool's wire output and put it under the protocol's
+// schema obligations, for information the model already has in the text.
+type AssertionRegister interface {
+	RecordAssertion(AssertionRecord)
+	LastAssertion() (AssertionRecord, bool)
+}
+
 // BaseDeps is the standard ToolDependencies implementation for the local
 // (stdio) server. It holds pre-created, process-lifetime services.
 type BaseDeps struct {
@@ -119,10 +149,29 @@ type BaseDeps struct {
 	enforceHTTPS   bool
 	protectedPaths []ProtectedPath
 	planner        Planner
+	evidence       *evidenceWriter
 
 	readMu   sync.Mutex
 	lastRead string
 	hasRead  bool
+
+	assertMu   sync.Mutex
+	lastAssert AssertionRecord
+	hasAssert  bool
+}
+
+// RecordAssertion implements AssertionRegister.
+func (d *BaseDeps) RecordAssertion(r AssertionRecord) {
+	d.assertMu.Lock()
+	defer d.assertMu.Unlock()
+	d.lastAssert, d.hasAssert = r, true
+}
+
+// LastAssertion implements AssertionRegister.
+func (d *BaseDeps) LastAssertion() (AssertionRecord, bool) {
+	d.assertMu.Lock()
+	defer d.assertMu.Unlock()
+	return d.lastAssert, d.hasAssert
 }
 
 // LastRead implements ReadRegister.

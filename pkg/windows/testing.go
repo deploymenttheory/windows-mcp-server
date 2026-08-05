@@ -107,12 +107,23 @@ func assertHandler(ctx context.Context, deps ToolDependencies, req *mcp.CallTool
 		return NewToolResultError(err.Error()), nil
 	}
 
-	pass, obs, err := runAssertion(ctx, deps, spec)
+	pass, obs, polls, err := runAssertion(ctx, deps, spec)
 	if err != nil {
 		// A malformed assertion is a broken document, not a failed test. Say so
 		// distinctly, or an author debugs the application instead of the journey.
 		return NewToolResultErrorFromErr("assert", err), nil
 	}
+
+	// Hand the comparison to the run record. This is what carries the observed
+	// value into the evidence; the model gets the same information as text.
+	if reg, ok := deps.(AssertionRegister); ok {
+		reg.RecordAssertion(AssertionRecord{
+			Subject: spec.subject, Operator: spec.operator,
+			Expected: spec.expectedText(), Observed: obs.Render(),
+			Passed: pass, Polls: polls, Timeout: spec.timeout.Seconds(),
+		})
+	}
+
 	if pass {
 		return NewToolResultTextf("PASS: %s (observed %s)", spec.description(), obs.Render()), nil
 	}
@@ -210,24 +221,27 @@ func parseAssertion(args map[string]any) (assertionSpec, error) {
 
 // runAssertion evaluates the assertion, polling while a timeout remains. It
 // returns the final observation either way, so a failure reports what was on
-// screen rather than only that the condition was not met.
-func runAssertion(ctx context.Context, deps ToolDependencies, s assertionSpec) (bool, Observation, error) {
+// screen rather than only that the condition was not met, and the poll count, so
+// "passed immediately" and "passed on the last poll" are distinguishable.
+func runAssertion(ctx context.Context, deps ToolDependencies, s assertionSpec) (bool, Observation, int, error) {
 	deadline := time.Now().Add(s.timeout)
+	polls := 0
 	for {
+		polls++
 		obs, err := observeSubject(deps, s)
 		if err != nil {
-			return false, obs, err
+			return false, obs, polls, err
 		}
 		pass, err := EvalAssertion(s.operator, obs, s.expected, s.opts)
 		if err != nil {
-			return false, obs, err
+			return false, obs, polls, err
 		}
 		if pass || time.Now().After(deadline) {
-			return pass, obs, nil
+			return pass, obs, polls, nil
 		}
 		select {
 		case <-ctx.Done():
-			return false, obs, ctx.Err()
+			return false, obs, polls, ctx.Err()
 		case <-time.After(s.interval):
 		}
 	}
@@ -409,6 +423,22 @@ func CaptureEvidence() inventory.ServerTool {
 			if denom > 1 {
 				fmt.Fprintf(&caption, " (downscaled %dx)", denom)
 			}
+
+			// Persist the image when the session has somewhere to put it. A capture
+			// that returns a picture to the model and writes nothing leaves the
+			// durable record of a run with no pictures of it.
+			if sink, ok := deps.(EvidenceSink); ok {
+				art, written, werr := sink.WriteEvidence(label, pngData, w, h)
+				switch {
+				case werr != nil:
+					// The evidence still reached the model; failing the step would turn a
+					// disk problem into a failed test.
+					deps.Logger(ctx).Warn("evidence capture not persisted", "label", label, "error", werr)
+				case written:
+					fmt.Fprintf(&caption, "\nSaved %s (sha256 %s)", art.Path, art.SHA256[:12])
+				}
+			}
+
 			caption.WriteString("\n\n")
 			caption.WriteString(formatSnapshot(state))
 

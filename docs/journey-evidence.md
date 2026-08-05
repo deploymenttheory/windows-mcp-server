@@ -1,11 +1,10 @@
 # Journey evidence
 
-> **Status: design.** Not yet implemented. What a run records today is a rendered
-> text log plus the `plan.*` entries on the audit chain; captures write no images
-> and a journey run emits no spans. This document is the target, and `roadmap.md`
-> tracks the phases. Statements below in the present tense describe the design;
-> where today's behaviour differs and the difference is the point, it is called
-> out.
+> **Status: implemented, with two gaps.** The span model, the attribute registry,
+> the OTLP/JSON artifact, screenshot persistence, the bundle members and the
+> post-run evidence check all ship. Not yet wired: **live export** of journey
+> spans to a collector (§7), and the three **resolved-selector** attributes
+> (§2) — both noted where they appear.
 
 What a [journey](journeys.md) run records, in what shape, and where it ends up.
 
@@ -98,25 +97,29 @@ which stays as it is.
 | `journey.step.name` | string | the author's step name, if any |
 | `journey.step.verb` | string | the verb |
 | `journey.step.tool` | string | the tool the verb lowered to |
+| `journey.step.outcome` | string | `ok` / `failed` / `refused` / `not_approved` |
+| `journey.step.verdict` | string | the policy severity the step was evaluated at |
 | `journey.step.synthetic` | bool | true for a compiler-inserted `observe` |
-| `journey.selector.name` | string | the selector's `name` |
+| `journey.selector.automation_id` | string | the selector's `automation_id` |
+| `journey.selector.name` | string | its `name` |
 | `journey.selector.control_type` | string | its `control_type` |
 | `journey.selector.name_match` | string | `exact` / `contains` / `matches` |
 | `journey.selector.occurrence` | string | `unique` / `first` / an index |
 | `journey.selector.scope` | string | `foreground` / `any_window` |
-| `journey.selector.candidates` | int | how many elements matched |
-| `journey.selector.resolved.name` | string | the accessible name of what was acted on |
-| `journey.selector.resolved.control_type` | string | its control type |
 | `journey.selector.durable` | bool | false for a `point` target |
 
-`journey.selector.candidates` and `.resolved.name` together answer the question a
-UI suite most often cannot: *which control did it actually press?* A step that
-matched three candidates and failed on ambiguity, and a step that matched one and
-resolved to a control with a name nobody expected, are both visible without
-re-running anything.
-
 `journey.selector.durable` makes coordinate fragility a queryable property of a
-suite rather than a suspicion.
+suite — "nine of our sixty steps target coordinates" — rather than a suspicion
+raised after the third mystery failure.
+
+**Not yet emitted:** `journey.selector.candidates`, `.resolved.name` and
+`.resolved.control_type` — how many elements the selector matched and which one
+was acted on. Together they answer the question a UI suite most often cannot:
+*which control did it actually press?* The resolver computes the count already
+(it is what makes ambiguity an error rather than a silent pick), but nothing
+reports it back out of the tool call, so wiring it needs the same kind of
+side-channel register the observed value uses. Until then an ambiguous selector
+is visible only as the failure it causes, whose message does name the candidates.
 
 ### On an assertion span
 
@@ -211,15 +214,15 @@ proto3 JSON mapping.
 **1 — Evidence must never be sampled.** The policy document's
 `telemetry.sample_ratio` governs what is *exported*; it must not govern what is
 *recorded*. A run record with a statistical subset of its own steps is not
-evidence. The file recorder therefore runs on an always-sample provider,
-independent of the exporter's sampler, and the two sinks are configured
-separately even though they carry the same spans.
+evidence. `internal/runrecord` is therefore wholly independent of the exporter
+and its sampler: it builds the spans itself and every one of them is kept.
 
-**2 — The OTel Go SDK has no file exporter.** Writing OTLP/JSON means a span
-processor that marshals `ReadOnlySpan` into `go.opentelemetry.io/proto/otlp` and
-encodes with `protojson`. That module is already present as an indirect
-dependency; this promotes it to a direct one. There is no existing serializer in
-this repo to reuse — everything written to disk today is the server's own format.
+**2 — The OTel Go SDK has no file exporter.** So the spans are built directly as
+OTLP protocol buffers (`go.opentelemetry.io/proto/otlp`, promoted from an
+indirect dependency) and encoded with `protojson`. Routing them through the SDK
+instead would mean a `TracerProvider`, which puts evidence behind a sampler —
+see rule 1. There was no existing serializer in this repo to reuse: everything
+written to disk before this was the server's own format.
 
 **3 — `protojson` output is deliberately unstable.** It injects randomised
 whitespace specifically to discourage byte comparison of its output. The artifact
@@ -309,24 +312,24 @@ satisfied at validate time by steps that never ran.
 
 ---
 
-## 7. Live export
+## 7. Live export — not yet wired
 
-The same spans go to a collector when `telemetry.endpoint` is configured. Nothing
-about the configuration changes: OTLP/HTTP, `https` required unless the endpoint
-is loopback, headers from `WINDOWS_MCP_OTLP_HEADERS` and never from the policy
-document, best-effort so a collector that is down never blocks a run.
+A journey run executes through the planner and never touches the MCP middleware
+chain, so it emits none of the per-request `tools/call` spans the
+[monitoring](monitoring.md) path produces. The run record is built by the journey
+runner's own recorder, and **written to disk only**: nothing is currently sent to
+a collector.
 
-One thing does change. A journey run executes through the planner and never
-touches the MCP middleware chain, so it currently emits **no spans at all** —
-`tools/call` spans exist only for calls arriving over the transport. The journey
-runner gets its own tracer for exactly this reason, which is also what makes the
-file artifact possible.
+Adding it is a small piece of work — the spans already exist in the right shape —
+but it is deliberately not free, and the reason is worth settling before it is
+done. Assertion *observed* values are screen content. Exporting them sends what
+was on a user's screen off the machine, which is the one thing the
+accessibility-tree-only design otherwise guarantees against. That is why the file
+artifact and any future export must stay **separately configurable**: a fleet
+should be able to seal full evidence locally and export nothing, or export the
+outcome without the observations.
 
-Arguments are still never exported, matching the audit chain. Assertion *observed*
-values are exported, for the reason given in §2 — but note that this is screen
-content leaving the machine, so an operator gating on data residency should weigh
-it. It is why the file artifact and the live export are separately configurable:
-a fleet can seal full evidence locally and export nothing.
+Tool arguments are never exported either way, matching the audit chain.
 
 ---
 

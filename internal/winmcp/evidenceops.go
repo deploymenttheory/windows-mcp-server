@@ -23,6 +23,10 @@ import (
 var verdictPrefixes = []string{
 	"policy.decided", "devicePolicy.decided", "plan.", "approval.",
 	"killswitch.", "credentials.exposure", "server.configured",
+	// A journey's own verdict. Without this a bundle sealed from a journey run
+	// carried the plan.* entry for each step and no record of whether the journey
+	// passed — the one line a reviewer opens the file to read.
+	"journey.",
 }
 
 // BundleEvidence gathers a session's evidence from an audit directory — its audit
@@ -58,6 +62,7 @@ func BundleEvidence(
 		sources = append(sources, evidence.Source{ArchivePath: "recording/" + filepath.Base(rec), FilePath: rec})
 	}
 	sources = append(sources, extra...)
+	sources = dedupeSources(sources)
 
 	var signer *evidence.Signer
 	if keyFile != "" {
@@ -123,6 +128,7 @@ func autoSealEvidence(
 	if len(posture) > 0 {
 		extra = append(extra, evidence.Source{ArchivePath: "posture-end.json", Bytes: posture})
 	}
+	extra = append(extra, journeySources(tp.EvidenceDir, session)...)
 
 	outPath := filepath.Join(tp.EvidenceDir, "session-"+session+".evidence.zip")
 	man, err := BundleEvidence(tp.AuditDestination, session, tp.RecordingDir, outPath,
@@ -180,6 +186,49 @@ func isVerdict(event string) bool {
 		}
 	}
 	return false
+}
+
+// journeySources collects a session's journey artifacts: the OTLP/JSON run
+// records and the images their captures wrote. Both are hashed into the bundle
+// manifest by the same sealer as everything else, so a journey's evidence is
+// covered by the same signature and the same audit-head cross-check — nothing new
+// is needed to verify it, because the members are files and the bundle already
+// proves files.
+//
+// Run records are matched by the session stamp so a directory holding several
+// sessions bundles only this one's. Images are not stamped — they are numbered in
+// capture order — so a shared evidence directory across sessions would over-collect;
+// the per-session subdirectory layout the runner writes avoids that.
+func journeySources(evidenceDir, session string) []evidence.Source {
+	if evidenceDir == "" {
+		return nil
+	}
+	var out []evidence.Source
+	records, _ := filepath.Glob(filepath.Join(evidenceDir, "journeys", "*-"+session+".otlp.json"))
+	for _, r := range records {
+		out = append(out, evidence.Source{ArchivePath: "journeys/" + filepath.Base(r), FilePath: r})
+	}
+	images, _ := filepath.Glob(filepath.Join(evidenceDir, "evidence", "*.png"))
+	for _, img := range images {
+		out = append(out, evidence.Source{ArchivePath: "evidence/" + filepath.Base(img), FilePath: img})
+	}
+	return out
+}
+
+// dedupeSources drops repeated archive paths, keeping the first. Sealing refuses
+// a duplicate member, and the journey artifacts can legitimately be offered twice
+// when an evidence directory is also the audit directory.
+func dedupeSources(in []evidence.Source) []evidence.Source {
+	seen := make(map[string]bool, len(in))
+	out := make([]evidence.Source, 0, len(in))
+	for _, s := range in {
+		if seen[s.ArchivePath] {
+			continue
+		}
+		seen[s.ArchivePath] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 func recordingFiles(dir, session string) []string {

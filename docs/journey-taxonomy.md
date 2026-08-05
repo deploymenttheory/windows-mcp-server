@@ -1,10 +1,10 @@
 # Journey taxonomy
 
-> **Status: design.** This specifies journey schema **version 2**, which is not yet
-> implemented. The shipped build accepts version 1 — a document naming MCP tools
-> with an untyped `args` map. [Journeys as code](journeys.md#version-2) explains
-> why there is no conversion between them, and `roadmap.md` tracks the
-> implementation phases.
+> **Status: implemented and normative.** This specifies journey schema **version
+> 2**, which is what the build accepts. The vocabularies below are expressed as
+> data in `internal/journeys/vocabulary.go` and pinned against this document by
+> the package's tests, so a table here and a table there cannot drift apart
+> silently.
 
 **This document is normative.** It defines the closed vocabularies a journey
 document is written in — verbs, selectors, subjects, operators — and the rules that

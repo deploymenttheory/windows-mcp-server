@@ -1,11 +1,9 @@
 # Journeys as code
 
-> **Status: design.** This describes journey schema **version 2**, which is not yet
-> implemented — the `verb` vocabulary, the selector rules and the
-> `subject`/`operator` assertions below are the target, not the shipped build. The
-> current build accepts version 1: a step names an MCP tool and carries an untyped
-> `args` map, and assertions are one of seven fixed `kind`s. `roadmap.md` tracks
-> the implementation phases.
+> **Status: implemented.** Schema version 2 is what the build accepts. Version 1
+> documents are rejected and there is no converter — see [Version 2](#version-2).
+> The one part still on the roadmap is the assertion-authoring workflow in
+> [recording a journey](journey-recording.md).
 
 A **journey** is a named sequence of user actions, each with assertions about the
 resulting screen and evidence to capture — a login smoke test, an expense-claim
