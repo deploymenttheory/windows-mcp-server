@@ -51,6 +51,8 @@ what you are trying to do.
 
 ## For contributors
 
+- [Acceptance testing](acceptance-testing.md) — driving the shipped binary
+  against a disposable Windows guest, for the things CI structurally cannot see.
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — build, test, lint and PR conventions.
 - [CLAUDE.md](../CLAUDE.md) — the load-bearing internal conventions: the COM STA
   thread rule, the tool-authoring checklist, parameter-coercion and result

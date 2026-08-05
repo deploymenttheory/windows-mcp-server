@@ -392,6 +392,40 @@ Design questions worth settling before implementation:
 
 ## Validation
 
+### Acceptance harness on a disposable guest
+
+**Shipped**, in [`docs/acceptance-testing.md`](docs/acceptance-testing.md):
+`internal/acceptance` reverts a weave guest to a golden snapshot, pushes the
+freshly built binary, and drives it. Gated behind `WINDOWS_MCP_ACC=1`; the
+scenarios kill processes and tamper with files, so they must not run unattended.
+
+It covers what a CI runner cannot: the desktop engine, which needs an interactive
+session; the guardrails that need elevation or change machine state; and the
+audit chain when a process is killed rather than shut down.
+
+The guest must be created **without** `--unattend-file`. weave's own answer file
+provides the permanent autologon that makes the console session available after
+every revert, plus OpenSSH and the static NIC the HCS backend needs; a supplied
+file replaces all of it.
+
+**Slice 1 covers the audit chain and the evidence bundle**: clean-session
+sealing, truncation detected on a sealed session and not on an unsealed one (S12,
+asserted as it stands so the test changes when the fix lands), a keyed chain's
+MACs, bundle round-trip with tampered, dropped and wrong-key negatives, and a
+journey run's OTLP/JSON record and screenshots reaching the sealed bundle.
+
+Next slices, on the same harness:
+
+- the elevation and machine-state guardrails (`WINDOWS_MCP_FIREWALL_TEST`,
+  `_GLOBAL_BLOCK_TEST`, `_SYSPROXY_TEST`);
+- the credentials never-read invariant against a real Credential Manager and a
+  real masked field;
+- **B.1.3** below, which this harness is the substrate for.
+
+Upstream: `weave` exposes no `cp` verb, so the binary is pushed as base64 over
+`weave ssh` stdin. `guestweave-windows` has the SFTP upload primitive that
+`weave agent install` uses; a `weave cp` verb over it would replace the stopgap.
+
 ### B. 1.3 — Adversarial prompt harness
 
 A scripted set of agent-side attacks against a throwaway VM, in CI where possible.
@@ -425,9 +459,16 @@ Now also worth confirming, since #73 changed both: that redaction fails **closed
 where UIA cannot report the focused element, and that keystrokes injected by a
 concurrent agent session are **not** captured.
 
-Sequence this **before** the recorder work in *Criterions for journey's-as-code*:
-verb and selector inference build directly on the hit-test path, and validating
-the path as it stands is cheaper than debugging it underneath new inference.
+**This stays manual.** The hook drops events carrying `LLKHF_INJECTED`, so
+synthetic input cannot drive the recorder — the filter is what keeps a recording
+made while an agent works from capturing the agent's credential injection.
+Driving the recorder from a test would require a switch to disable it.
+
+The acceptance harness does the machine half: `TestRecorderManualPrep` reverts,
+boots, starts the recorder in the console session and prints what to click;
+`TestRecorderManualVerify` checks the file — that the typed password appears
+nowhere in it, then the automation-id ladder, pattern-driven verb inference and
+F8 marking.
 
 ---
 
