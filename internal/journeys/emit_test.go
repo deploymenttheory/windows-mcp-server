@@ -61,6 +61,182 @@ func TestEmitInfersTheVerbFromTheControlType(t *testing.T) {
 	}
 }
 
+// TestVerbComesFromPatternsBeforeControlType: a checkbox and a button are the
+// same event to a mouse hook, and only the accessibility tree knows one has a
+// toggle state. Where the two disagree, the pattern wins — it says what the
+// control can actually do, and the control type is only a label.
+func TestVerbComesFromPatternsBeforeControlType(t *testing.T) {
+	cases := map[string]struct {
+		event Event
+		want  Verb
+	}{
+		"toggle beats a Button control type": {
+			Event{Kind: EventClick, Name: "Bold", ControlType: "Button",
+				Facts: ElementFacts{HasToggle: true}}, VerbToggle,
+		},
+		"selection item": {
+			Event{Kind: EventClick, Name: "Row 3", ControlType: "Custom",
+				Facts: ElementFacts{HasSelection: true, HasInvoke: true}}, VerbSelect,
+		},
+		"a closed expander expands": {
+			Event{Kind: EventClick, Name: "Advanced", ControlType: "Custom",
+				Facts: ElementFacts{HasExpandCollapse: true, HasValue: true}}, VerbExpand,
+		},
+		"an open expander collapses": {
+			Event{Kind: EventClick, Name: "Advanced", ControlType: "Custom",
+				Facts: ElementFacts{HasExpandCollapse: true, Expanded: true}}, VerbCollapse,
+		},
+		"invoke": {
+			Event{Kind: EventClick, Name: "Submit", ControlType: "Custom",
+				Facts: ElementFacts{HasInvoke: true}}, VerbInvoke,
+		},
+		"a text field is focused, not invoked": {
+			Event{Kind: EventClick, Name: "Amount", ControlType: "Edit",
+				Facts: ElementFacts{HasValue: true}}, VerbClick,
+		},
+		"no patterns falls back to the control type": {
+			Event{Kind: EventClick, Name: "OK", ControlType: "Button"}, VerbInvoke,
+		},
+		"no patterns and no useful control type": {
+			Event{Kind: EventClick, Name: "Thing", ControlType: "Custom"}, VerbClick,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Emit("x", []Event{tc.event}).Steps[0].Verb; got != tc.want {
+				t.Errorf("verb = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMarkedAssertionsAttachToTheStepBeingRecorded is the answer to "a recording
+// captures actions, not intent". Pointing at what matters and pressing the key is
+// the cheapest moment to say so, because it is the moment the author is looking
+// at it.
+func TestMarkedAssertionsAttachToTheStepBeingRecorded(t *testing.T) {
+	j := Emit("x", []Event{
+		{Kind: EventClick, AutomationID: "btnCalc", Facts: ElementFacts{HasInvoke: true}},
+		{
+			Kind: EventAssert, AutomationID: "lblTotal", Name: "Total",
+			Facts: ElementFacts{HasValue: true, Value: "£126.40"},
+		},
+	})
+
+	if len(j.Steps) != 1 {
+		t.Fatalf("a mark carries no action, so it should add no step: %+v", j.Steps)
+	}
+	if len(j.Steps[0].Assertions) != 1 {
+		t.Fatalf("the mark should become an assertion on the click: %+v", j.Steps[0])
+	}
+	as := j.Steps[0].Assertions[0]
+	if as.Subject != SubjectElementValue || as.Operator != OpIs || as.Expected != "£126.40" {
+		t.Errorf("the observed value should become the expected one: %+v", as)
+	}
+	if as.Target.AutomationID != "lblTotal" {
+		t.Errorf("the assertion should target what was pointed at: %+v", as.Target)
+	}
+	if err := j.Validate(); err != nil {
+		t.Errorf("a marked draft should validate: %v", err)
+	}
+}
+
+// TestProposedAssertionMatchesWhatTheElementExposes: the proposal is only useful
+// if it asserts something the control actually has.
+func TestProposedAssertionMatchesWhatTheElementExposes(t *testing.T) {
+	cases := map[string]struct {
+		event    Event
+		subject  Subject
+		operator Operator
+	}{
+		"a value field": {
+			Event{Kind: EventAssert, Name: "Total", Facts: ElementFacts{HasValue: true, Value: "9"}},
+			SubjectElementValue, OpIs,
+		},
+		"a ticked checkbox": {
+			Event{Kind: EventAssert, Name: "Agree", Facts: ElementFacts{HasToggle: true, Checked: true}},
+			SubjectElementChecked, OpIsTrue,
+		},
+		"an unticked checkbox": {
+			Event{Kind: EventAssert, Name: "Agree", Facts: ElementFacts{HasToggle: true}},
+			SubjectElementChecked, OpIsFalse,
+		},
+		"a selected row": {
+			Event{Kind: EventAssert, Name: "Row", Facts: ElementFacts{HasSelection: true, Selected: true}},
+			SubjectElementSelected, OpIsTrue,
+		},
+		"an empty value field falls through to existence": {
+			Event{Kind: EventAssert, Name: "Notes", Facts: ElementFacts{HasValue: true}},
+			SubjectElement, OpExists,
+		},
+		"a plain element": {
+			Event{Kind: EventAssert, Name: "Heading"},
+			SubjectElement, OpExists,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			as, ok := proposeAssertion(tc.event)
+			if !ok {
+				t.Fatal("want a proposal")
+			}
+			if as.Subject != tc.subject || as.Operator != tc.operator {
+				t.Errorf("proposed %s %s, want %s %s", as.Subject, as.Operator, tc.subject, tc.operator)
+			}
+			if as.Message == "" {
+				t.Error("a proposal should say what it is checking, for the human reading the draft")
+			}
+		})
+	}
+}
+
+// TestIDTargetedMarkAssertsTheName: when the selector is an automation id,
+// asserting the name is a real check rather than a restatement of the selector —
+// and a renamed control is exactly the regression an id-targeted suite would
+// otherwise sail past.
+func TestIDTargetedMarkAssertsTheName(t *testing.T) {
+	as, ok := proposeAssertion(Event{Kind: EventAssert, AutomationID: "lblStatus", Name: "Approved"})
+	if !ok {
+		t.Fatal("want a proposal")
+	}
+	if as.Subject != SubjectElementName || as.Expected != "Approved" {
+		t.Errorf("want the name asserted, got %+v", as)
+	}
+}
+
+// TestMarkBeforeAnyActionGetsSomethingToHangFrom: the assertion is still what the
+// author meant.
+func TestMarkBeforeAnyActionGetsSomethingToHangFrom(t *testing.T) {
+	j := Emit("x", []Event{{Kind: EventAssert, Name: "Welcome"}})
+	if len(j.Steps) != 1 || j.Steps[0].Verb != VerbObserve {
+		t.Fatalf("want a single observe step, got %+v", j.Steps)
+	}
+	if len(j.Steps[0].Assertions) != 1 {
+		t.Errorf("the assertion should be attached to it: %+v", j.Steps[0])
+	}
+	if err := j.Validate(); err != nil {
+		t.Errorf("it should validate: %v", err)
+	}
+}
+
+// TestMarkDoesNotInterruptATypedRun: a mark mid-typing must flush the run rather
+// than silently splitting or dropping characters.
+func TestMarkDoesNotInterruptATypedRun(t *testing.T) {
+	events := append(chars("hello", false), Event{Kind: EventAssert, Name: "Greeting"})
+	events = append(events, chars("world", false)...)
+	j := Emit("x", events)
+
+	if len(j.Steps) != 2 {
+		t.Fatalf("want two type_text steps around the mark, got %+v", j.Steps)
+	}
+	if j.Steps[0].Text != "hello" || j.Steps[1].Text != "world" {
+		t.Errorf("typed runs should survive the mark intact: %+v", j.Steps)
+	}
+	if len(j.Steps[0].Assertions) != 1 {
+		t.Errorf("the mark should attach to the run it followed: %+v", j.Steps[0])
+	}
+}
+
 // TestEmitPrefersTheAutomationID pins the selector ladder. The automation id is
 // the only identifier that survives translation, and the capture path already
 // reads it — a recording keyed on the accessible name when an id was available is

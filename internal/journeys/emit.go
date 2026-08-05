@@ -28,7 +28,30 @@ const (
 	// EventKey is a non-text key press (Enter, Tab, Escape, …) that does not
 	// coalesce into typed text.
 	EventKey EventKind = "key"
+	// EventAssert is the author pointing at something and saying it matters. It
+	// carries no action: it becomes an assertion on the step being recorded.
+	EventAssert EventKind = "assert"
 )
+
+// ElementFacts is what the accessibility tree reported about an element at the
+// moment of capture: which patterns it supports, and what they currently hold.
+//
+// Pattern availability is the difference between recording what was clicked and
+// recording what the click meant. A checkbox and a button look the same to a
+// mouse hook; only the tree knows one has a toggle state.
+type ElementFacts struct {
+	Value    string
+	Checked  bool
+	Selected bool
+	Enabled  bool
+	Expanded bool
+
+	HasValue          bool
+	HasToggle         bool
+	HasSelection      bool
+	HasInvoke         bool
+	HasExpandCollapse bool
+}
 
 // Event is one captured user action. The OS-side recorder fills the fields
 // relevant to its Kind; the emitter reads only those.
@@ -45,6 +68,9 @@ type Event struct {
 	ControlType  string // e.g. Button, Edit, ListItem
 	Button       string // left | right | middle (default left)
 	Double       bool   // a double-click
+	// Facts is what the element could do and held at capture time. Empty when the
+	// tree reported nothing, in which case inference falls back to the control type.
+	Facts ElementFacts
 
 	// Char fields.
 	Char rune // the typed rune
@@ -124,10 +150,95 @@ func Emit(name string, events []Event) Journey {
 			step := clickStep(e)
 			focused = step.Target
 			j.Steps = append(j.Steps, step)
+		case EventAssert:
+			flush(false)
+			j.Steps = attachAssertion(j.Steps, e)
 		}
 	}
 	flush(false)
 	return j
+}
+
+// attachAssertion hangs a marked assertion on the step being recorded.
+//
+// A mark with no preceding step gets an observe to hang from: the assertion is
+// still what the author meant, and an observe is the verb for "look at the screen
+// and check something" without performing an action.
+func attachAssertion(steps []Step, e Event) []Step {
+	as, ok := proposeAssertion(e)
+	if !ok {
+		return steps
+	}
+	if len(steps) == 0 {
+		steps = append(steps, Step{Name: "check the starting state", Verb: VerbObserve})
+	}
+	last := len(steps) - 1
+	steps[last].Assertions = append(steps[last].Assertions, as)
+	return steps
+}
+
+// proposeAssertion turns what the tree reported about the marked element into the
+// assertion the author most likely meant, with the observed value as the expected
+// one. It is a proposal: the recorder captures actions, not intent, and this is a
+// draft for a human to confirm — but confirming a filled-in comparison is a
+// different job from writing one.
+func proposeAssertion(e Event) (Assertion, bool) {
+	sel := selectorFor(e)
+	if sel == nil {
+		return Assertion{}, false
+	}
+	f := e.Facts
+	switch {
+	case f.HasValue && f.Value != "":
+		return Assertion{
+			Subject: SubjectElementValue, Target: sel, Operator: OpIs, Expected: f.Value,
+			Message: fmt.Sprintf("%s still reads %q", sel.Label(), f.Value),
+		}, true
+	case f.HasToggle:
+		return Assertion{
+			Subject: SubjectElementChecked, Target: sel, Operator: boolOperator(f.Checked),
+			Message: fmt.Sprintf("%s is %s", sel.Label(), checkedWord(f.Checked)),
+		}, true
+	case f.HasSelection:
+		return Assertion{
+			Subject: SubjectElementSelected, Target: sel, Operator: boolOperator(f.Selected),
+			Message: fmt.Sprintf("%s is %s", sel.Label(), selectedWord(f.Selected)),
+		}, true
+	case sel.AutomationID != "" && strings.TrimSpace(e.Name) != "":
+		// Targeted by id, so asserting the name is a real check rather than a
+		// restatement of the selector — and a renamed control is exactly the
+		// regression an id-targeted suite would otherwise sail past.
+		return Assertion{
+			Subject: SubjectElementName, Target: sel, Operator: OpIs, Expected: e.Name,
+			Message: fmt.Sprintf("%s is still labelled %q", sel.AutomationID, e.Name),
+		}, true
+	default:
+		return Assertion{
+			Subject: SubjectElement, Target: sel, Operator: OpExists,
+			Message: fmt.Sprintf("%s is present", sel.Label()),
+		}, true
+	}
+}
+
+func boolOperator(v bool) Operator {
+	if v {
+		return OpIsTrue
+	}
+	return OpIsFalse
+}
+
+func checkedWord(v bool) string {
+	if v {
+		return "checked"
+	}
+	return "unchecked"
+}
+
+func selectedWord(v bool) string {
+	if v {
+		return "selected"
+	}
+	return "not selected"
 }
 
 // clickStep builds the step for one click: the verb its control type implies,
@@ -142,13 +253,18 @@ func clickStep(e Event) Step {
 	}
 }
 
-// clickVerb infers what a click meant from the control type. A double or
-// non-left click is taken at face value — those are gestures, not patterns.
+// clickVerb infers what a click meant. A double or non-left click is taken at
+// face value — those are gestures, not patterns.
 //
-// The fallback is deliberately `click`: a general verb is recoverable, a wrong
-// verb changes what the run does. Reading the element's supported UIA patterns
-// would sharpen this — a Button that exposes no Invoke pattern is really a click —
-// and is the refinement the capture path is missing.
+// Otherwise the element's supported UIA patterns decide, because they say what
+// the control can actually do: a checkbox and a button are the same event to a
+// mouse hook, and only the tree knows one has a toggle state. The order is by
+// specificity — a combo box supports both ExpandCollapse and Value, and clicking
+// it opens it.
+//
+// The control type is the fallback for a tree that reports no patterns, and
+// `click` the fallback below that. A general verb is recoverable; a wrong verb
+// changes what the run does.
 func clickVerb(e Event) Verb {
 	switch {
 	case e.Double:
@@ -158,7 +274,34 @@ func clickVerb(e Event) Verb {
 	case e.Name == "" && e.AutomationID == "":
 		return VerbClick // a coordinate target cannot be pattern-driven
 	}
-	switch e.ControlType {
+
+	switch f := e.Facts; {
+	case f.HasToggle:
+		return VerbToggle
+	case f.HasSelection:
+		return VerbSelect
+	case f.HasExpandCollapse:
+		// Read the direction from where the control currently is, not from the
+		// click: recording expand for an already-open node produces a step that
+		// closes it on the next run.
+		if f.Expanded {
+			return VerbCollapse
+		}
+		return VerbExpand
+	case f.HasInvoke:
+		return VerbInvoke
+	case f.HasValue:
+		// A text field. The click focused it for the typing that follows, and
+		// recording that as invoke would activate rather than focus it.
+		return VerbClick
+	}
+	return verbFromControlType(e.ControlType)
+}
+
+// verbFromControlType is the fallback when the tree reported no patterns at all,
+// which happens with older frameworks and some custom controls.
+func verbFromControlType(controlType string) Verb {
+	switch controlType {
 	case "CheckBox", "RadioButton":
 		return VerbToggle
 	case "ListItem", "TreeItem", "TabItem", "DataItem":

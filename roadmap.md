@@ -87,16 +87,25 @@ persistence), the evidence phase (OTLP/JSON run record, bundle members, post-run
 the recorder (the automation-id ladder, verb inference from control type,
 `enter_credential` in place of the empty placeholder).
 
+**Also shipped**: UIA pattern availability at the hit-test, so the recorder infers
+the verb from what the clicked element can *do* rather than from its control type
+label; and **mark-while-recording** — F8 points at a control and proposes the
+assertion it can support, with the observed value already filled in.
+
 What remains, in rough order:
 
-- **The recorder's assertion workflows.** Mark-while-recording (hover + a
-  hotkey), propose-from-a-before/after-diff, and freeze-a-golden-run from an
-  observation baseline. This is the phase to resist trimming: every phase before
-  it produced a format, and this one produces the reason anybody writes in it.
-- **UIA pattern availability at the hit-test.** The recorder infers the verb from
-  the control type alone, which gets the common cases; reading which patterns the
-  clicked element actually supports would sharpen it, and it is a property read on
-  an element already in hand.
+- **Propose assertions from a before/after diff.** Snapshot around each action and
+  offer what changed as candidate assertions, ranked. Needs debouncing — taken
+  once the UI settles rather than once per keystroke, or typing a sentence costs a
+  hundred tree walks.
+- **Freeze a golden run.** Run a draft once against a known-good build, harvest a
+  full observation baseline, and promote the parts that matter into assertions.
+  The trap to design for: a baseline bakes in whatever was on screen, so freezing
+  must offer `matches` with a pattern where a value looks generated, not `is` with
+  a literal date or reference number.
+- **Wait inference.** An idle gap in the event stream is a signal that a wait
+  belongs there — paired with the diff, it becomes a waited assertion on the thing
+  that appeared, with a timeout derived from the observed delay plus headroom.
 - **The resolved-selector attributes** — `journey.selector.candidates`,
   `.resolved.name`, `.resolved.control_type`. The resolver computes the match
   count already; nothing reports it back out of the tool call.

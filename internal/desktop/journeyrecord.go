@@ -5,7 +5,9 @@ package desktop
 import (
 	"context"
 
+	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/foundation"
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/ui/accessibility"
+	wm "github.com/deploymenttheory/go-bindings-win32/bindings/win32/ui/windowsandmessaging"
 )
 
 // This file is the enrichment half of the journey recorder. It consumes the raw,
@@ -15,9 +17,13 @@ import (
 // named key. All UIA work happens on the engine STA thread via Do; the hook thread
 // never touches COM.
 
-// DefaultRecordStopKey is the virtual-key code that ends a recording (F9). It is
-// consumed, not recorded, so pressing it never appears in the journey.
-const DefaultRecordStopKey = 0x78 // VK_F9
+// DefaultRecordStopKey is the virtual-key code that ends a recording (F9), and
+// DefaultRecordMarkKey the one that marks an assertion (F8). Both are consumed,
+// not recorded, so pressing either never appears in the journey.
+const (
+	DefaultRecordStopKey = 0x78 // VK_F9
+	DefaultRecordMarkKey = 0x77 // VK_F8
+)
 
 // doubleClickWindowMS and doubleClickSlopPx are the thresholds for merging two
 // clicks into a double-click.
@@ -29,14 +35,19 @@ const (
 // RecordedInput is one enriched user action the recorder emits. It is engine-level
 // and holds no journey types; the caller maps it to a journey event.
 type RecordedInput struct {
-	Kind    string      // "click" | "char" | "key"
-	X, Y    int         // click point
-	Element ElementInfo // the element under a click (resolved via UIA)
-	Button  string      // left | right | middle
-	Double  bool        // a double-click
-	Char    rune        // a typed character
-	Secure  bool        // the char was typed into a password field → redact
-	Key     string      // a named non-text key (Enter, Tab, …)
+	Kind    string      // "click" | "char" | "key" | "assert"
+	X, Y    int         // click point, or the cursor position at a mark
+	Element ElementInfo // the element under a click or mark (resolved via UIA)
+	// State is what that element can do and what it currently holds. It is read at
+	// the same hit-test, which is the only moment both the element and its tree are
+	// in hand — and it is what lets a click be recorded as the verb it meant rather
+	// than as a click.
+	State  ElementState
+	Button string // left | right | middle
+	Double bool   // a double-click
+	Char   rune   // a typed character
+	Secure bool   // the char was typed into a password field → redact
+	Key    string // a named non-text key (Enter, Tab, …)
 }
 
 // RecordInput installs input hooks and streams enriched events to out until ctx is
@@ -47,6 +58,20 @@ type RecordedInput struct {
 // cannot host UIA the hit-test simply yields empty element info and clicks fall
 // back to coordinates.
 func (d *Desktop) RecordInput(ctx context.Context, stopVK uint32, out func(RecordedInput)) error {
+	return d.RecordInputWithMark(ctx, stopVK, DefaultRecordMarkKey, out)
+}
+
+// RecordInputWithMark is RecordInput with an explicit assertion-mark key.
+//
+// The mark key is what turns a recording into a test. A capture of a human doing
+// a task records the actions and notices nothing about whether they worked;
+// pointing at what matters and pressing the key is the cheapest moment to say so,
+// because it is the moment the author is already looking at it.
+func (d *Desktop) RecordInputWithMark(
+	ctx context.Context,
+	stopVK, markVK uint32,
+	out func(RecordedInput),
+) error {
 	hooks, err := startInputHooks()
 	if err != nil {
 		return err
@@ -63,18 +88,25 @@ func (d *Desktop) RecordInput(ctx context.Context, stopVK uint32, out func(Recor
 		case in := <-hooks.events:
 			switch in.kind {
 			case rawMouseDown:
-				var info ElementInfo
-				_ = d.Do(func() error {
-					info = d.elementAtPoint(in.x, in.y)
-					return nil
-				})
+				info, state := d.inspectPoint(in.x, in.y)
 				double := in.timeMS-lastMS <= doubleClickWindowMS &&
 					absInt(in.x-lastX) <= doubleClickSlopPx && absInt(in.y-lastY) <= doubleClickSlopPx
 				lastMS, lastX, lastY = in.timeMS, in.x, in.y
-				out(RecordedInput{Kind: "click", X: in.x, Y: in.y, Element: info, Button: in.button, Double: double})
+				out(RecordedInput{
+					Kind: "click", X: in.x, Y: in.y,
+					Element: info, State: state, Button: in.button, Double: double,
+				})
 			case rawKeyDown:
 				if stopVK != 0 && in.vk == stopVK {
 					return nil
+				}
+				if markVK != 0 && in.vk == markVK {
+					// Marked where the pointer is, not where focus is: the author is
+					// pointing at the thing they mean, which is rarely the focused control.
+					x, y := cursorPoint()
+					info, state := d.inspectPoint(x, y)
+					out(RecordedInput{Kind: "assert", X: x, Y: y, Element: info, State: state})
+					continue
 				}
 				if r, printable, key := translateKey(in.vk, in.shift, in.caps); printable {
 					// Fail closed: a keystroke whose destination cannot be
@@ -93,20 +125,36 @@ func (d *Desktop) RecordInput(ctx context.Context, stopVK uint32, out func(Recor
 	}
 }
 
+// inspectPoint resolves the element under a point and reads its state, both on
+// the STA thread and both from the same element.
+func (d *Desktop) inspectPoint(x, y int) (ElementInfo, ElementState) {
+	var (
+		info  ElementInfo
+		state ElementState
+	)
+	_ = d.Do(func() error {
+		info, state = d.elementAtPoint(x, y)
+		return nil
+	})
+	return info, state
+}
+
 // elementAtPoint returns the deepest UI element whose bounding rectangle contains
-// the point, descending the control view from the desktop root. STA-thread only.
-func (d *Desktop) elementAtPoint(x, y int) ElementInfo {
+// the point, descending the control view from the desktop root, together with its
+// state. Both are read from the same element before it is released, so they
+// describe one moment. STA-thread only.
+func (d *Desktop) elementAtPoint(x, y int) (ElementInfo, ElementState) {
 	if d.uia == nil || d.uia.automation == nil {
-		return ElementInfo{}
+		return ElementInfo{}, ElementState{}
 	}
 	root, err := d.uia.automation.GetRootElement()
 	if err != nil || root == nil {
-		return ElementInfo{}
+		return ElementInfo{}, ElementState{}
 	}
 	defer root.Release()
 	walker, err := d.uia.automation.Get_ControlViewWalker()
 	if err != nil || walker == nil {
-		return readElementInfo(root)
+		return readElementInfo(root), readElementState(root)
 	}
 	defer walker.Release()
 
@@ -123,11 +171,21 @@ func (d *Desktop) elementAtPoint(x, y int) ElementInfo {
 		owned = child
 		cur = child
 	}
-	info := readElementInfo(cur)
+	info, state := readElementInfo(cur), readElementState(cur)
 	if owned != nil {
 		owned.Release()
 	}
-	return info
+	return info, state
+}
+
+// cursorPoint reads the current pointer position in physical pixels. It is safe
+// off the STA thread: GetCursorPos touches no COM.
+func cursorPoint() (int, int) {
+	var pt foundation.POINT
+	if err := wm.GetCursorPos(&pt); err != nil {
+		return 0, 0
+	}
+	return int(pt.X), int(pt.Y)
 }
 
 // smallestChildContaining returns the child of parent with the smallest area whose

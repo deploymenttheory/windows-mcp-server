@@ -1,10 +1,10 @@
 # Recording a journey
 
-> **Status: design.** A recorder ships today (`journey record`) and captures
-> clicks and keystrokes into a version 1 draft with password redaction. What this
-> document adds — verb inference, the selector ladder, and the three ways a
-> recording acquires assertions — is not implemented. `roadmap.md` tracks the
-> phases.
+> **Status: mostly implemented.** The selector ladder (§4), verb inference from
+> supported patterns (§3), the credential placeholder (§7) and
+> **mark-while-recording** (§5.1) all ship. Still on the roadmap: proposing
+> assertions from a before/after diff (§5.2), freezing a golden run (§5.3), and
+> wait inference (§6) — each marked where it appears.
 
 **Nobody is going to hand-write forty steps of JSON.** A vocabulary that only a
 determined author can produce is a vocabulary that gets used twice and then
@@ -57,30 +57,31 @@ Two properties follow, and both should be preserved:
 At every click, the recorder hit-tests the point down the UIA control view and
 reads the element under it. What comes back is more than the current draft uses:
 
-| Property | Read today | Used today | Use in v2 |
-|---|:---:|:---:|---|
-| `Name` | ● | ● | selector rung 2 |
-| `ControlType` | ● | ● | verb inference, selector narrowing |
-| **`AutomationID`** | ● | — | **selector rung 1** |
-| `ClassName` | ● | — | window and app identification |
-| `IsPassword` | ● | ● | redaction |
-| `Enabled` | ● | — | assertion proposal |
-| `Rect` | ● | — | the `point` fallback |
-| `ProcessID` | ● | — | which application a step belongs to |
-| supported UIA patterns | — | — | **verb inference** |
+| Property | Used for |
+|---|---|
+| `AutomationID` | selector rung 1 |
+| `Name` | selector rung 2, and the assertion proposed for an id-targeted mark |
+| `ControlType` | selector narrowing, and the verb fallback when no patterns are reported |
+| `IsPassword` | redaction |
+| supported UIA patterns | **verb inference** (§3) and the proposed assertion (§5.1) |
+| pattern state — value, checked, selected, expanded | the expected value in a proposed assertion |
+| `Rect` | the `point` fallback |
+| `ClassName`, `ProcessID`, `Enabled` | read, not yet used |
 
-Two lines in that table are the whole of §3 and §4 below.
+Two of those lines were the original point of this document, and both were things
+the code already had and threw away:
 
-**`AutomationID` is read and thrown away.** The enrichment layer copies only the
-name and control type into the recorded event. It is the most stable identifier a
-Windows application offers — developer-assigned, and unlike the accessible name it
-survives translation — and today's recordings are keyed on the rung below it while
-it sits unused in the same struct.
+**`AutomationID` was read at every hit-test and discarded.** The enrichment layer
+copied only the name and control type into the recorded event, so recordings were
+keyed on the rung below the most stable identifier a Windows application offers —
+developer-assigned, and unlike the accessible name it survives translation — while
+it sat unused in the same struct.
 
-**Supported patterns are not read at all.** The recorder knows *what* was clicked
-but not *what it can do*, which is exactly the information verb inference needs.
-Reading pattern availability is a property read on the element already in hand, at
-the same hit-test, on the same thread.
+**Supported patterns were not read at all.** The recorder knew *what* was clicked
+but not *what it can do*, which is exactly what verb inference needs. It is a
+property read on the element already in hand, at the same hit-test, on the same
+thread — and it is now read there, in one pass with the pattern state, so the
+facts describe a single moment.
 
 ---
 
@@ -91,24 +92,34 @@ A click is not a verb. Clicking a checkbox is `toggle`; clicking a list item is
 throws away what the tree already knows, and produces a journey that drives the
 UI through synthetic input when a pattern was available.
 
-Inference reads the control type and the patterns the element supports:
+Inference reads the patterns the element supports, in order of specificity:
 
-| Clicked element | Supports | Verb |
-|---|---|---|
-| CheckBox, RadioButton, ToggleButton | Toggle | `toggle` |
-| ListItem, TreeItem, TabItem | SelectionItem | `select` |
-| TreeItem, ComboBox, Group with a chevron | ExpandCollapse | `expand` / `collapse`, by current state |
-| Button, MenuItem, Hyperlink | Invoke | `invoke` |
-| Edit, Document | Value | focus for the `type_text` that follows |
-| anything else | — | `click` |
+| Supports | Verb |
+|---|---|
+| Toggle | `toggle` |
+| SelectionItem | `select` |
+| ExpandCollapse | `expand` / `collapse`, by current state |
+| Invoke | `invoke` |
+| Value | `click` — focus, for the `type_text` that follows |
 
-Two rules keep this honest:
+The order matters because controls support more than one: a combo box exposes
+both ExpandCollapse and Value, and clicking it opens it rather than typing into
+it; a list item exposes both SelectionItem and Invoke, and clicking it selects.
 
+Three rules keep this honest:
+
+- **Patterns beat the control type.** A `Button` that exposes Toggle is a toggle
+  button, and recording it as `invoke` would produce a step that does the right
+  thing by accident and the wrong thing after a redesign. The control type is the
+  fallback for a tree that reports no patterns at all, which older frameworks and
+  some custom controls do.
 - **Fall back to `click`, never guess.** An element supporting no useful pattern
-  records as a coordinate-free `click`. A wrong verb is worse than a general one,
-  because a wrong verb changes what the run does.
+  and carrying no informative control type records as `click`. A wrong verb is
+  worse than a general one, because a wrong verb changes what the run does.
 - **`expand` versus `collapse` is read from the current state**, not from the
-  click. The recorder knows which way the control was pointing.
+  click — recording `expand` for an already-open node produces a step that closes
+  it on the next run. A leaf node reports the pattern but can never expand, so it
+  is not treated as expandable.
 
 Non-click verbs come from the same principle applied to other event sources:
 window creation and focus changes give `open_app` / `focus_window` /
@@ -164,23 +175,41 @@ compete.
 
 ### 5.1 Mark an assertion while recording
 
-The direct route: point at what matters and say so.
+The direct route, and the one that ships: point at what matters and press **F8**.
 
 ```
-hover the control → F8 → pick a subject → the observed value becomes the expected value
+point at the control → F8 → an assertion appears on the step being recorded,
+                            with the observed value already filled in
 ```
 
-Because the recorder is already hit-testing under the cursor, it can offer the
-subjects that element actually supports — `element.value` for a field,
-`element.checked` for a checkbox, `element.enabled` for a button — and fill
-`expected` with **what is on screen right now**. The author confirms rather than
-types.
+The recorder hit-tests under the **pointer**, not under focus — the author is
+pointing at the thing they mean, which is rarely the focused control — and
+proposes the assertion the element can actually support:
+
+| What the element exposes | Proposed assertion |
+|---|---|
+| a Value pattern with content | `element.value` `is` *what it currently reads* |
+| a Toggle state | `element.checked` `is_true` / `is_false`, as it currently is |
+| a SelectionItem state | `element.selected` `is_true` / `is_false` |
+| an automation id and a name | `element.name` `is` *the current name* |
+| anything else | `element` `exists` |
+
+The expected value is **what is on screen right now**, so the author confirms a
+filled-in comparison rather than writing one — a different job, and a much
+smaller one. The `element.name` case is worth noting: when the selector is an
+automation id, asserting the name is a real check rather than a restatement of
+the selector, and a renamed control is exactly the regression an id-targeted
+suite would otherwise sail past.
+
+The key is consumed, never recorded, so pressing it never appears as a step. A
+mark before any action gets an `observe` to hang from; a mark mid-typing flushes
+the typed run first, so characters are never split or dropped.
 
 This is the model Selenium IDE and Playwright's codegen use, and it works for the
 same reason: the moment you notice something matters is the moment you are looking
 at it.
 
-### 5.2 Propose from what changed
+### 5.2 Propose from what changed — *not yet implemented*
 
 The recorder can take a snapshot before and after each action and diff them. What
 changed is a strong candidate for what the step was *for*:
@@ -201,7 +230,7 @@ The cost is the snapshot: a bounded tree walk per action, which is real but
 affordable — and it must be **debounced**, taken once the UI settles rather than
 once per keystroke, or typing a sentence costs a hundred tree walks.
 
-### 5.3 Freeze a golden run
+### 5.3 Freeze a golden run — *not yet implemented*
 
 The most powerful of the three, and it costs almost nothing because the evidence
 work already did it.
@@ -228,7 +257,7 @@ literal. A baseline that pins today's date is a suite that fails tomorrow.
 
 ---
 
-## 6. Waits, not sleeps
+## 6. Waits, not sleeps — *not yet implemented*
 
 A human waiting for a slow screen produces an idle gap in the event stream. The
 naive reading of that gap is a `pause` step, which is exactly the flakiness the
@@ -252,14 +281,14 @@ slow one, from a recording that only ever saw 4.1.
 
 ## 7. Credentials
 
-Redaction currently emits a placeholder step with empty text — the keystrokes are
-correctly never written, but what is left behind is a `type_text` that types
-nothing, and a journey that cannot run until a human works out what belonged
+Redaction used to emit a placeholder step with empty text — the keystrokes were
+correctly never written, but what was left behind was a `type_text` that types
+nothing, and a journey that could not run until a human worked out what belonged
 there.
 
-Under v2 the same detection produces something better. The recorder knows the
-field masked its input, so the draft carries an `enter_credential` step with the
-target already selected and the credential name left blank:
+The same detection now produces something better. The recorder knows the field
+masked its input, so the draft carries an `enter_credential` step with the target
+already selected and the credential name left blank:
 
 ```jsonc
 { "name": "sign in — supply the credential name before running",

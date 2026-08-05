@@ -185,7 +185,8 @@ the vocabulary has drifted away from the tool that is supposed to write it.
 | **Inferred from window events** | `open_app`, `focus_window`, `close_window`, `navigate` |
 | **Inferred from a gesture** | `scroll` |
 | **Proposed, confirmed by a human** | `enter_credential` (from a redacted run), `pause` (from an idle gap — usually rewritten as a wait) |
-| **Human-only** | `set_value`, `read`, `capture`, `observe`, `resize_window` |
+| **Emitted only to carry a marked assertion** | `observe` |
+| **Human-only** | `set_value`, `read`, `capture`, `resize_window` |
 
 `set_value` is the interesting one. It is the *preferred* way to fill a field —
 UIA patterns do not depend on focus and cannot be stolen by a notification — but a
@@ -194,9 +195,11 @@ That is a legitimate upgrade for a reviewer to make, and the recorder should
 suggest it where the field supports the Value pattern rather than silently
 rewriting history.
 
-`read`, `capture` and `observe` are not actions a person performs, so there is
-nothing to observe. They come from the assertion and evidence workflow in
-[journey recording](journey-recording.md), not from watching the desktop.
+`read` and `capture` are not actions a person performs, so there is nothing to
+observe. `observe` is emitted only as the step a marked assertion hangs from when
+a recording opens with one; otherwise the compiler inserts it. Both come from the
+assertion and evidence workflow in [journey recording](journey-recording.md), not
+from watching the desktop.
 
 ---
 
