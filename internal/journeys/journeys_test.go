@@ -409,6 +409,68 @@ func TestCompileRejectsAnInvalidJourney(t *testing.T) {
 	}
 }
 
+// TestOriginsAreParallelToSteps is the invariant the run record depends on: an
+// origin at index i describes the plan step at index i. If the two ever desync,
+// spans are attributed to the wrong verb and the evidence quietly lies.
+func TestOriginsAreParallelToSteps(t *testing.T) {
+	j := Journey{Version: SchemaVersion, Name: "x", Steps: []Step{
+		// close_window lowers to two plan steps, which is where a naive
+		// one-origin-per-journey-step mapping would slip.
+		{Verb: VerbCloseWindow, Window: "Notepad"},
+		{
+			Verb: VerbClick, Target: &Selector{Name: "OK"},
+			Assertions: []Assertion{{Subject: SubjectScreenText, Operator: OpContains, Expected: "done"}},
+			Evidence:   []string{"clicked"},
+		},
+	}}
+
+	doc, origins, err := CompileWithOrigins(j, "")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if len(origins) != len(doc.Steps) {
+		t.Fatalf("%d origins for %d steps", len(origins), len(doc.Steps))
+	}
+
+	type want struct {
+		tool string
+		kind OriginKind
+		step int
+	}
+	wants := []want{
+		{"App", OriginAction, 0},      // close_window focuses first
+		{"Shortcut", OriginAction, 0}, // ...then sends the chord
+		{"Snapshot", OriginObserve, 1},
+		{"Click", OriginAction, 1},
+		{"Assert", OriginAssertion, 1},
+		{"CaptureEvidence", OriginEvidence, 1},
+	}
+	if len(doc.Steps) != len(wants) {
+		t.Fatalf("compiled to %v, want %d steps", toolNames(doc), len(wants))
+	}
+	for i, w := range wants {
+		if doc.Steps[i].Tool != w.tool {
+			t.Errorf("step %d tool = %s, want %s", i, doc.Steps[i].Tool, w.tool)
+		}
+		if origins[i].Kind != w.kind {
+			t.Errorf("origin %d kind = %s, want %s", i, origins[i].Kind, w.kind)
+		}
+		if origins[i].StepIndex != w.step {
+			t.Errorf("origin %d journey step = %d, want %d", i, origins[i].StepIndex, w.step)
+		}
+	}
+
+	// The assertion's origin must carry enough to describe it without re-reading
+	// the journey, which is what the span attributes are built from.
+	a := origins[4]
+	if a.Subject != SubjectScreenText || a.Operator != OpContains || a.Expected != "done" {
+		t.Errorf("assertion origin lost its comparison: %+v", a)
+	}
+	if origins[5].Label != "clicked" {
+		t.Errorf("evidence origin lost its label: %+v", origins[5])
+	}
+}
+
 // --- the vocabulary against the taxonomy ---------------------------------
 
 // TestEveryVerbLowers is the exhaustiveness tripwire: adding a verb to the
