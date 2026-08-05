@@ -368,6 +368,7 @@ checked in. The suffix says how the value is delivered:
 | `WINDOWS_MCP_OTLP_HEADERS` | value | `k=v,k=v` auth headers for the OTLP collector |
 | `WINDOWS_MCP_GRAPH_TENANT` / `_CLIENT_ID` / `_CLIENT_SECRET` | value | Graph/Intune tier-2 signal credentials |
 | `WINDOWS_MCP_REMOTE_POLICY_TOKEN` | value | bearer token for the remote may-run endpoint |
+| `WINDOWS_MCP_EXPORT_SIGNED_URL` (`…_MANIFEST`, `…_SIGNATURE`) | value | pre-signed PUT / SAS / signed URL the sealed [evidence bundle is shipped to](docs/evidence-export.md). A documented exception to the suffix rule: it is a write credential whose only sensible shape is a URL |
 | whatever `egress.auth_token_env` names | value | `Proxy-Authorization` secret the egress proxy requires |
 
 **Everything the security subsystem does** — which signals are read and how

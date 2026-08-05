@@ -58,7 +58,7 @@ func TestAutoSealEvidenceBundlesPlansAndPosture(t *testing.T) {
 	posture := []byte(`{"admit":true,"killed":false}`)
 
 	tp := policy.TransparencyPolicy{AuditDestination: auditDir, EvidenceDir: evDir}
-	autoSealEvidence(tp, "20260803-120000", []plan.Document{doc}, posture, discardLogger())
+	autoSealEvidence(tp, "20260803-120000", []plan.Document{doc}, posture, nil, discardLogger())
 
 	bundle := filepath.Join(evDir, "session-20260803-120000.evidence.zip")
 	rep, err := evidence.Verify(bundle, "")
@@ -80,7 +80,7 @@ func TestAutoSealEvidenceBundlesPlansAndPosture(t *testing.T) {
 func TestAutoSealSkipsWhenAuditSinkNotDirectory(t *testing.T) {
 	evDir := t.TempDir()
 	tp := policy.TransparencyPolicy{AuditDestination: "stderr", EvidenceDir: evDir}
-	autoSealEvidence(tp, "x", nil, nil, discardLogger())
+	autoSealEvidence(tp, "x", nil, nil, nil, discardLogger())
 
 	if entries, _ := os.ReadDir(evDir); len(entries) != 0 {
 		t.Error("no bundle should be written when the audit dest is not a directory")

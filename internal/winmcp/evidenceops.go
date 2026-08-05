@@ -3,16 +3,19 @@
 package winmcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/evidence"
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/export"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/plan"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
 )
@@ -99,6 +102,7 @@ func autoSealEvidence(
 	session string,
 	plans []plan.Document,
 	posture []byte,
+	sink export.Sink,
 	logger *slog.Logger,
 ) {
 	defer func() {
@@ -138,6 +142,143 @@ func autoSealEvidence(
 		return
 	}
 	logger.Info("session evidence sealed", "path", outPath, "files", len(man.Files), "signed", man.Signed)
+
+	// This is the single point where a finished bundle exists on disk with its
+	// manifest in hand, which is why the upload hangs off it rather than off the
+	// caller. It is inside the same recover() as the seal, for the same reason.
+	exportBundle(tp, session, outPath, man, sink, logger)
+}
+
+// exportBundle ships the sealed bundle and its manifest sidecars off the device
+// and writes the receipt beside them.
+//
+// The manifest and signature are written out as loose files first. They already
+// exist inside the archive — the sidecars are a convenience so a reviewer can
+// check provenance from an object listing without downloading the bundle — so
+// failing to write one is not a reason to skip the upload.
+//
+// Three shapes of failure are all recorded rather than raised: no sink, a partial
+// upload, and nothing shipped at all. The receipt is the record, because by this
+// point the audit chain is closed inside the artifact being shipped.
+func exportBundle(
+	tp policy.TransparencyPolicy,
+	session, bundlePath string,
+	man evidence.Manifest,
+	sink export.Sink,
+	logger *slog.Logger,
+) {
+	if sink == nil {
+		return
+	}
+	defer func() { _ = sink.Close() }()
+
+	// The bundle, then at most two sidecars.
+	base := "session-" + session
+	objects := make([]export.Object, 0, 3)
+	objects = append(objects, export.Object{
+		Name:        base + ".evidence.zip",
+		Path:        bundlePath,
+		ContentType: "application/zip",
+		Metadata: map[string]string{
+			"session":    session,
+			"audit_head": man.AuditHead,
+			"signed":     strconv.FormatBool(man.Signed),
+		},
+	})
+	objects = append(objects, sidecarObjects(tp.EvidenceDir, base, bundlePath, man, logger)...)
+
+	// The session's context is already cancelled — this runs from a shutdown defer
+	// — so the upload gets a fresh budget rather than a context that is done before
+	// the first byte. Bounded, because a hang here is indistinguishable to the host
+	// from a crash.
+	ctx, cancel := context.WithTimeout(context.Background(), exportTimeout(tp.Export))
+	defer cancel()
+
+	results := export.Ship(ctx, sink, objects)
+	receipt := export.Receipt{
+		Session:     session,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		Provider:    tp.Export.Provider,
+		Destination: sink.Describe(),
+		AuditHead:   man.AuditHead,
+		Objects:     results,
+	}
+
+	receiptPath := filepath.Join(tp.EvidenceDir, base+".export.json")
+	if err := export.WriteReceipt(receiptPath, receipt); err != nil {
+		logger.Error("could not write the evidence export receipt", "error", err)
+	}
+	if receipt.Shipped() {
+		logger.Info("session evidence exported",
+			"provider", tp.Export.Provider, "destination", sink.Describe(),
+			"objects", len(results), "receipt", receiptPath)
+		return
+	}
+	// Loud, and with the receipt path: the bundle is still on disk, and this is the
+	// line that says the off-box copy does not exist.
+	logger.Error("session evidence was not fully exported; the bundle remains on this device only",
+		"provider", tp.Export.Provider, "destination", sink.Describe(),
+		"receipt", receiptPath, "failures", failedNames(results))
+}
+
+// sidecarObjects writes manifest.json and manifest.sig out of the sealed archive
+// as loose files and returns them as objects to ship. A member that cannot be
+// extracted or written is logged and skipped: it is a listing convenience, and
+// the authoritative copy is inside the bundle either way.
+func sidecarObjects(
+	evidenceDir, base, bundlePath string,
+	man evidence.Manifest,
+	logger *slog.Logger,
+) []export.Object {
+	wanted := []struct{ member, suffix, contentType string }{
+		{evidence.ManifestName, ".manifest.json", "application/json"},
+	}
+	if man.Signed {
+		wanted = append(wanted, struct{ member, suffix, contentType string }{
+			evidence.SignatureName, ".manifest.sig", "application/octet-stream",
+		})
+	}
+
+	out := make([]export.Object, 0, len(wanted))
+	for _, w := range wanted {
+		blob, err := evidence.ReadBundleMember(bundlePath, w.member)
+		if err != nil {
+			logger.Warn("could not read a bundle member to ship as a sidecar",
+				"member", w.member, "error", err)
+			continue
+		}
+		path := filepath.Join(evidenceDir, base+w.suffix)
+		if err := os.WriteFile(path, blob, 0o600); err != nil {
+			logger.Warn("could not write a sidecar for export", "path", path, "error", err)
+			continue
+		}
+		out = append(out, export.Object{
+			Name: base + w.suffix, Path: path, ContentType: w.contentType,
+			Metadata: map[string]string{"session": strings.TrimPrefix(base, "session-")},
+		})
+	}
+	return out
+}
+
+// exportTimeout falls back to the package default for a policy built in code that
+// never went through Parse. A zero timeout would otherwise make the upload
+// context expire immediately, which reads in the receipt as an unreachable
+// destination rather than a missing setting.
+func exportTimeout(e policy.ExportPolicy) time.Duration {
+	if d := e.Timeout.Std(); d > 0 {
+		return d
+	}
+	return policy.DefaultExportTimeout
+}
+
+func failedNames(results []export.Result) []string {
+	var out []string
+	for _, r := range results {
+		if !r.Shipped {
+			out = append(out, r.Name)
+		}
+	}
+	return out
 }
 
 func shortPlanID(id string) string {

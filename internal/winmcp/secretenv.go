@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/export"
 	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
 )
 
@@ -20,6 +21,15 @@ var secretEnvVars = []string{
 	"WINDOWS_MCP_REMOTE_POLICY_TOKEN", // impersonating the device to the PDP
 	"WINDOWS_MCP_OTLP_HEADERS",        // collector credentials
 	"WINDOWS_MCP_EVIDENCE_KEY_FILE",   // path to the evidence signing key
+	// The evidence export destinations. A pre-signed URL carries its signature in
+	// the query string, so the whole URL is a write credential for the evidence
+	// bucket -- which is why these are WINDOWS_MCP_-prefixed rather than named the
+	// way each vendor's SDK expects. The prefix is what internal/desktop withholds
+	// from every child process; a bare AWS_SECRET_ACCESS_KEY or AZURE_CLIENT_SECRET
+	// would be readable by any PowerShell the agent runs.
+	export.EnvSignedURL,
+	export.EnvSignedURLManifest,
+	export.EnvSignedURLSignature,
 }
 
 // scrubSecretEnv removes the startup secrets from this process's environment,

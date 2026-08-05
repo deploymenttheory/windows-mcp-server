@@ -87,3 +87,12 @@ Auto-sealing requires a **directory-mode `audit_destination`** — there is othe
 per-session file to bundle — and it never crashes shutdown: a seal failure is
 logged and the session still exits cleanly. Point
 `WINDOWS_MCP_EVIDENCE_KEY_FILE` at a signing key to sign the automatic bundles too.
+
+## Getting it off the device
+
+A bundle sealed into `evidence_dir` is still on the machine the session ran on.
+Adding `transparency.export` ships it to cloud blob storage as the session exits,
+along with its manifest and signature as separate objects — see
+[shipping evidence off the device](evidence-export.md) for destinations,
+credentials, the create-only rule that stops an upload overwriting an existing
+record, and the receipt that says what left and what did not.

@@ -111,6 +111,11 @@ is what keeps audit mode observe-only.
     "anchor": {                    // off-box publication of the audit chain head (default: off)
       "destination": "",           // "eventlog" writes the head to the Windows Application log
       "cadence": ""                // required when destination is set, e.g. "5m"
+    },
+    "export": {                    // ship the sealed evidence bundle off the device (default: off)
+      "provider": "",              // "signed_url"; needs evidence_dir. Credentials come from
+                                   // WINDOWS_MCP_EXPORT_* env vars, never from this document
+      "timeout": ""                // upload budget, default "2m" -- it runs during shutdown
     }
   },
 
@@ -634,7 +639,7 @@ channel: this is a policy control, not a data-exfiltration control.
 
 ## Examples
 
-`policy/examples/` holds six starting points, each validated by the test suite:
+`policy/examples/` holds seven starting points, each validated by the test suite:
 
 | File | For |
 |---|---|
@@ -642,7 +647,9 @@ channel: this is a policy control, not a data-exfiltration control.
 | `secure.json` | A managed device: MDM plus hardware posture for destructive tools. |
 | `enterprise.json` | Entra-joined Enterprise fleet with VBS/HVCI and Credential Guard. |
 | `locked-down.json` | Allowlisted, attested devices; drifting out of bounds kills the session. |
+| `dual-control.json` | The riskiest calls held for a human to approve or refuse. |
 | `egress.json` | A domain allowlist: the device may reach only the named destinations. |
+| `evidence-export.json` | Sealed evidence shipped off the device at session end. |
 
 ## Migrating from the flags
 

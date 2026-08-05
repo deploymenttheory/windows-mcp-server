@@ -44,6 +44,21 @@ type ServerStatus struct {
 	// Egress is nil when the device egress proxy is off, so an operator polling
 	// this cannot read "no traffic denied" as "the proxy is running".
 	Egress *EgressStatus `json:"egress,omitempty"`
+	// EvidenceExport is nil when no export destination is configured, for the same
+	// reason Egress is: absent must not read as "configured and idle". Whether the
+	// session's evidence leaves this device is posture an operator polling the
+	// endpoint is entitled to see.
+	EvidenceExport *ExportStatus `json:"evidence_export,omitempty"`
+}
+
+// ExportStatus reports where a sealed evidence bundle is shipped at session end.
+//
+// Destination is the sink's own description, which never contains a credential —
+// in particular a signed-URL destination reports its host and path, never the
+// query string the signature travels in.
+type ExportStatus struct {
+	Provider    string `json:"provider"`
+	Destination string `json:"destination"`
 }
 
 // EgressStatus reports what the device egress proxy is doing.

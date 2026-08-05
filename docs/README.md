@@ -27,6 +27,7 @@ what you are trying to do.
 | [Remote signals](remote-signals.md) | Microsoft Graph compliance and an external may-run endpoint — the signals a local admin cannot spoof |
 | [Monitoring](monitoring.md) | The loopback status endpoint and the hash-chained audit log |
 | [Evidence bundles](evidence-bundles.md) | Sealing a session's audit chain, verdicts and recording into one signed, self-verifying archive |
+| [Shipping evidence off the device](evidence-export.md) | Uploading the sealed bundle to cloud blob storage at session end — destinations, credentials, the create-only rule, and the export receipt |
 | [Deployment](deployment.md) | Putting this on a managed machine: layout, ACLs, running at logon, pairing with WDAC |
 | [Deciding to deploy this](deployment-decision.md) | For the approver: what you are allowing, the threat model, non-goals, choosing a posture, and the residual risk to sign off |
 | [VM isolation](vm-isolation.md) | **Design/research note.** Why a disposable VM is stronger containment than in-process controls, comparing Windows Sandbox, Hyper-V VMMS and the HCS API |
@@ -57,5 +58,5 @@ what you are trying to do.
   AI agents alike.
 - [SECURITY.md](../SECURITY.md) — how to report a vulnerability, and what falls
   outside scope given the project's deliberate no-sandboxing design.
-- `../policy/examples/` — six starting-point policy documents, validated by the
+- `../policy/examples/` — seven starting-point policy documents, validated by the
   test suite.

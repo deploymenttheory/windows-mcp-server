@@ -23,6 +23,22 @@ apply them.
 ### Allow the export of evidence to cloud blob destinations
 This includes GCP, AWS and Azure.
 
+**The seam has shipped**, in [`docs/evidence-export.md`](docs/evidence-export.md):
+`transparency.export` ships the sealed bundle plus its manifest and signature at
+session end, over a hardened dialer, create-only so an existing record is never
+overwritten, with credentials from `WINDOWS_MCP_EXPORT_*` and an on-disk receipt
+recording what left and what did not. The `signed_url` destination — an S3
+pre-signed PUT, an Azure SAS URL or a GCS V4 signed URL — works today and needs no
+principal on the device.
+
+What remains is the three credentialed backends: `s3`, `azblob` and `gcs`,
+addressed by bucket and authenticated by a **service principal** whose values come
+from the environment. Their SDKs are the only new dependencies. Deliberately out
+of scope for them: ambient credential chains (`config.LoadDefaultConfig`,
+`DefaultAzureCredential`, Google ADC), which read the vendors' bare environment
+names — not withheld from child processes — and reach IMDS, which the dialer
+refuses.
+
 ### Criterions for journey's-as-code
 
 Define clear verbs and actions for the journey's as code to align with and be

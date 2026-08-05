@@ -23,10 +23,20 @@ var (
 	ErrMemberNotFound = errors.New("bundle member not found")
 )
 
-// Reserved archive members: the manifest and its detached signature.
+// Reserved archive members: the manifest and its detached signature. They are
+// exported because a caller shipping a bundle off the device writes them out
+// alongside it, so a reviewer can check provenance from an object listing without
+// downloading the archive.
 const (
-	manifestName = "manifest.json"
-	sigName      = "manifest.sig"
+	ManifestName  = "manifest.json"
+	SignatureName = "manifest.sig"
+)
+
+// Unexported aliases, so the body of this package reads as it did before the two
+// names above were exported for the evidence-export path.
+const (
+	manifestName = ManifestName
+	sigName      = SignatureName
 )
 
 // Manifest is the index of a bundle: every member and its hash, so the archive
@@ -153,6 +163,22 @@ func writeZip(zw *zip.Writer, name string, content []byte) error {
 		return fmt.Errorf("write %s: %w", name, err)
 	}
 	return nil
+}
+
+// ReadBundleMember reads one member out of a sealed bundle by name.
+//
+// It exists for the export path, which writes manifest.json and manifest.sig out
+// as loose objects beside the archive. Reading them back out of the bundle rather
+// than keeping the bytes from Seal is deliberate: the sidecars are then provably
+// the same bytes the manifest was hashed and signed over, not a second rendering
+// of the same struct that could drift from it.
+func ReadBundleMember(zipPath, name string) ([]byte, error) {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return nil, fmt.Errorf("open bundle: %w", err)
+	}
+	defer func() { _ = zr.Close() }()
+	return readZipFile(&zr.Reader, name)
 }
 
 // readZipFile reads one member of an open zip reader.
