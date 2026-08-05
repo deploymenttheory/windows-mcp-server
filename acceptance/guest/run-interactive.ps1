@@ -3,17 +3,14 @@
   Run a command in the guest's interactive console session and return its output.
 
 .DESCRIPTION
-  Windows has two worlds, and this script is the bridge between them.
-
-  A command sent over SSH runs in session 0, a service context with no desktop.
-  UI Automation needs a real desktop: no window station, no accessibility tree,
-  and every UIA call fails or returns nothing. So anything that drives the UI —
-  a journey run, a Snapshot, credential injection into a live field — has to be
-  handed to the session the auto-logged-on user owns.
+  A command sent over SSH runs in session 0, a service context with no window
+  station. UI Automation needs a desktop, so every UIA call there fails or
+  returns nothing. Anything that drives the UI — a journey run, a Snapshot,
+  credential injection — has to run in the logged-on user's console session.
 
   The handover is a scheduled task with an Interactive logon type, which the task
-  scheduler runs in that user's console session. Output is captured to a file the
-  caller can read back, because a task's stdout goes nowhere by default.
+  scheduler runs in that session. Output and exit code are written to files,
+  because a task's stdout is not returned to whoever started it.
 
 .PARAMETER Command
   The PowerShell command to run in the console session.
@@ -36,10 +33,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# The user whose console session we hand the command to. weave's unattended
-# install creates this account and makes its autologon permanent — its answer
-# file deletes AutoLogonCount rather than merely setting it — which is the whole
-# reason an interactive session exists to hand anything to.
+# The account whose console session receives the command. weave's unattended
+# install creates it and sets permanent autologon, so the session is present
+# after every boot and every snapshot revert.
 $targetUser = $env:ACC_INTERACTIVE_USER
 if ([string]::IsNullOrWhiteSpace($targetUser)) { $targetUser = 'weave' }
 
@@ -51,8 +47,8 @@ $scriptPath = Join-Path $stateDir "$taskName.ps1"
 $outPath    = Join-Path $stateDir "$taskName.out"
 $codePath   = Join-Path $stateDir "$taskName.code"
 
-# Wrap the command so its output and exit code both land on disk. Without this
-# the task runs, succeeds, and tells the caller nothing about what it did.
+# Wrap the command so its output and exit code both land on disk, which is the
+# only channel back to the caller.
 @"
 Set-Location -LiteralPath '$WorkDir'
 try {
@@ -68,8 +64,8 @@ try {
 try {
   $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$scriptPath`""
-  # Interactive is the load-bearing word: it puts the task in the logged-on
-  # user's session rather than in session 0 alongside this script.
+  # LogonType Interactive puts the task in the logged-on user's session rather
+  # than in session 0 alongside this script.
   $principal = New-ScheduledTaskPrincipal -UserId $targetUser -LogonType Interactive -RunLevel Limited
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::FromSeconds($TimeoutSec + 60))

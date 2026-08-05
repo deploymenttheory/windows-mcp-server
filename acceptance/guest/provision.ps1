@@ -6,28 +6,25 @@
   Run this once inside a guest created by `weave create --from-windows`, then
   take the golden snapshot.
 
-  It is deliberately small, because weave's unattended install has already done
-  the hard parts at first logon:
+  weave's unattended install has already done the following at first logon, so
+  this script does not repeat them:
 
-    - the local admin account (weave/weave) and permanent autologon — its answer
-      file sets AutoAdminLogon and *deletes* AutoLogonCount, so the console
-      session survives every reboot and every snapshot revert. That is the thing
-      that made the previous Hyper-V lab expensive, and weave already solved it.
-    - OpenSSH server, installed and started, with a converge-across-reboots
-      retry because the capability pull takes ~9 minutes.
-    - the static NIC configuration the HCS backend needs (it has no DHCP).
+    - the local admin account (weave/weave) and permanent autologon: its answer
+      file sets AutoAdminLogon and deletes AutoLogonCount, so the console session
+      is present after every boot and every snapshot revert;
+    - OpenSSH server, installed and started, retried across reboots because the
+      capability pull takes about nine minutes;
+    - the static NIC configuration the HCS backend needs, as it has no DHCP.
 
-  So do not pass --unattend-file when creating the guest: it replaces weave's
-  answer file, and with it the SSH enablement and the setup-complete signal that
-  `weave run` waits on.
+  Do not pass --unattend-file when creating the guest. It replaces weave's answer
+  file, and with it the SSH enablement and the setup-complete signal `weave run`
+  waits on.
 
-  This script installs no Go toolchain: the binary under test is built on the
-  host and pushed in per run, so the guest never has to match the host toolchain
-  and a run cannot accidentally test a stale in-guest build.
+  No Go toolchain is installed: the binary under test is built on the host and
+  pushed in per run, so the guest cannot serve a stale build.
 
-  Snapshot AFTER running this. Reverting removes everything below along with
-  everything else, which is the isolation the suite relies on — and the reason a
-  snapshot taken before provisioning is useless.
+  Snapshot after running this, not before. A revert removes everything below,
+  which is the isolation the suite relies on.
 #>
 [CmdletBinding()]
 param(
@@ -44,8 +41,8 @@ Step "work directory at $WorkDir"
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 
 Step 'the interactive runner'
-# The suite looks for this and skips the UI scenarios when it is missing, rather
-# than running them in session 0 and failing for the wrong reason.
+# The suite skips its UI scenarios when this is missing, rather than running them
+# in session 0 where there is no desktop.
 $src = Join-Path $PSScriptRoot 'run-interactive.ps1'
 if (Test-Path -LiteralPath $src) {
   Copy-Item -LiteralPath $src -Destination (Join-Path $WorkDir 'run-interactive.ps1') -Force
@@ -54,17 +51,15 @@ if (Test-Path -LiteralPath $src) {
 }
 [Environment]::SetEnvironmentVariable('ACC_INTERACTIVE_USER', $InteractiveUser, 'Machine')
 
-Step 'turn off what makes a desktop unpredictable'
-# Each of these is a source of a UI test failing for a reason that has nothing to
-# do with the code under test.
+Step 'fix the parts of the desktop that would otherwise vary between runs'
 $explorer = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
 New-ItemProperty -Path $explorer -Name 'HideFileExt' -Value 0 -PropertyType DWord -Force | Out-Null
-# No screen saver and no sleep: a locked desktop cannot be automated at all, and
-# the secure desktop is a documented non-goal rather than something to work around.
+# No screen saver and no sleep: the lock screen runs on the secure desktop, which
+# cannot be automated at all.
 Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'ScreenSaveActive' -Value '0'
 powercfg /change monitor-timeout-ac 0
 powercfg /change standby-timeout-ac 0
-# Windows Update deciding to reboot mid-suite is the classic overnight failure.
+# Automatic updates can reboot the guest mid-run.
 $au = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
 New-Item -Path $au -Force | Out-Null
 New-ItemProperty -Path $au -Name 'NoAutoUpdate' -Value 1 -PropertyType DWord -Force | Out-Null
@@ -78,20 +73,19 @@ Step 'verify'
 $problems = @()
 $sshd = Get-Service sshd -ErrorAction SilentlyContinue
 if (-not $sshd) {
-  $problems += "sshd is not installed. weave's first-logon setup installs it and " +
-               "logs to C:\Windows\Temp\weave-setup.log — read that before doing it by hand."
+  $problems += "sshd is not installed. weave's first-logon setup installs it and logs to " +
+               "C:\Windows\Temp\weave-setup.log."
 } elseif ($sshd.Status -ne 'Running') {
   $problems += "sshd is $($sshd.Status); see C:\Windows\Temp\weave-setup.log"
 }
 if (-not (Test-Path (Join-Path $WorkDir 'run-interactive.ps1'))) {
   $problems += 'the interactive runner is missing'
 }
-# The console session weave's autologon should already have established. If this
-# fails, the guest was created with a --unattend-file that replaced weave's.
+# weave's autologon establishes this session. Its absence usually means the guest
+# was created with a --unattend-file that replaced weave's answer file.
 if (-not ((query user 2>$null) -match $InteractiveUser)) {
-  $problems += "no console session for '$InteractiveUser'. weave's answer file makes " +
-               "autologon permanent, so this usually means the guest was created with " +
-               "--unattend-file, which replaces it."
+  $problems += "no console session for '$InteractiveUser'; check whether the guest was " +
+               "created with --unattend-file."
 }
 
 if ($problems) {

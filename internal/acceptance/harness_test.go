@@ -1,25 +1,17 @@
 //go:build windows && (amd64 || arm64)
 
 // Package acceptance drives the shipped binary against a disposable Windows
-// guest, to test the things CI structurally cannot see.
-//
-// The Windows runner compiles everything and runs the pure-logic suites, and
-// then skips: "cannot start desktop engine in this environment", "no displays
-// reported (headless)", "set WINDOWS_MCP_GLOBAL_BLOCK_TEST=1 to run the tests
-// that make this machine default-deny". The desktop engine, the guardrails that
-// need elevation, and the audit chain's behaviour under a hard kill are verified
-// today only by reading them — and the last time this server was driven against a
-// real guest, it confirmed every fix from a code review and found four things the
-// review had not.
+// guest. It covers what a CI runner cannot: the desktop engine, which needs an
+// interactive session; the guardrails that need elevation; and the audit chain's
+// behaviour when a process is killed rather than shut down.
 //
 // The guest is managed by weave (github.com/deploymenttheory/guestweave-windows),
 // which runs VMs on the Host Compute Service. The dependency is the CLI, not the
-// module: weave is pre-alpha and its internals are not importable, so the contract
-// here is `weave.exe` on PATH and nothing else.
+// module: weave's internals are not importable, so the contract is `weave.exe` on
+// PATH.
 //
-// Gated: set WINDOWS_MCP_ACC=1 to run. Everything below skips otherwise, on every
-// machine including CI — a harness that runs by accident is worse than none,
-// because these tests revert snapshots and hard-kill processes.
+// Gated on WINDOWS_MCP_ACC=1. These tests revert snapshots and kill processes, so
+// they must never run unattended.
 //
 // See docs/acceptance-testing.md for building the golden image.
 package acceptance
@@ -70,12 +62,12 @@ type harness struct {
 	snapshot string
 }
 
-// newHarness gates the suite, builds the binary under test, and returns the guest
-// to its golden snapshot so every run starts from the same machine.
+// newHarness gates the suite, builds the binary under test, and reverts the guest
+// to its golden snapshot.
 //
-// Reverting rather than cleaning up is deliberate: these tests hard-kill a
-// process and tamper with files on disk, and a test that fails halfway would
-// otherwise leave the next one running against wreckage.
+// Isolation is by revert rather than by cleanup because the scenarios kill
+// processes and tamper with files: a test that fails partway through cannot be
+// relied on to undo its own damage.
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	if os.Getenv(gateEnv) != "1" {
@@ -170,11 +162,9 @@ func (h *harness) guestExec(script string) string {
 // tryGuestExec runs a PowerShell script in the guest and returns its combined
 // output and error.
 //
-// The script goes over as -EncodedCommand, the same base64 UTF-16LE trick the
-// server uses for its own PowerShell invocations: it removes every layer of
-// quoting between here, the SSH command line, and the guest's shell, which is
-// otherwise a reliable source of tests that fail for reasons unrelated to the
-// thing under test.
+// The script travels as -EncodedCommand (base64 UTF-16LE), as the server's own
+// PowerShell invocations do, so no quoting has to survive the Go string, the SSH
+// command line and the guest's shell.
 func (h *harness) tryGuestExec(script string) (string, error) {
 	return h.tryWeave("ssh", h.guest, "powershell", "-NoProfile", "-NonInteractive",
 		"-EncodedCommand", encodePowerShell(script))
@@ -195,11 +185,10 @@ func (h *harness) guestServer(args ...string) (string, error) {
 
 // push copies a local file into the guest.
 //
-// weave has no cp verb, but it already has the primitive — internal/ssh has an
-// SFTP upload that `weave agent install` uses — so exposing `weave cp` is the
-// clean fix and this is the stopgap until it exists. The payload is streamed as
-// base64 on standard input rather than embedded in the command, because a ~20 MB
-// binary does not fit on a command line.
+// weave exposes no cp verb, so the payload goes as base64 on standard input: a
+// binary of this size does not fit on a command line. weave's internal/ssh has
+// the SFTP upload `weave agent install` uses; a `weave cp` verb over it would
+// replace this.
 func (h *harness) push(localPath, remotePath string) {
 	h.t.Helper()
 	raw, err := os.ReadFile(localPath) //nolint:gosec // a test-controlled path

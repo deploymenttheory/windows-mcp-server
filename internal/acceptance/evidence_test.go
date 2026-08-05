@@ -8,14 +8,14 @@ import (
 	"testing"
 )
 
-// The evidence bundle is the artifact handed to an auditor, and its documented
-// promise has two halves that are easy to conflate: every member is checked
-// against the manifest (integrity), and the manifest is signed by a key published
-// out of band (provenance). A bundle with no key is still hash-verifiable; a
-// bundle verified against the wrong key proves nothing about who made it.
+// The evidence bundle makes two separate promises: every member matches its
+// manifest hash (integrity), and the manifest is signed by a key published out of
+// band (provenance). They are independent — a bundle with no key is still
+// hash-verifiable, and an intact bundle signed by the wrong key says nothing
+// about who produced it.
 //
-// These tests exercise both halves, and the three ways a bundle can be wrong,
-// against a real archive on a real machine.
+// These tests exercise both, and the three ways a bundle can be wrong, against a
+// real archive.
 
 const (
 	keyDir     = remoteDir + `\keys`
@@ -62,7 +62,7 @@ func TestEvidenceBundleRoundTrip(t *testing.T) {
 }
 
 // TestTamperedMemberFailsVerification: the manifest records a SHA-256 per member,
-// so editing one is caught whether or not the bundle is signed.
+// so an edited member no longer matches, signed or not.
 func TestTamperedMemberFailsVerification(t *testing.T) {
 	h := newHarness(t)
 	policy := h.writePolicy("audit-policy.json", auditPolicy())
@@ -77,8 +77,8 @@ func TestTamperedMemberFailsVerification(t *testing.T) {
 	}
 }
 
-// TestDroppedMemberFailsVerification: removing a member is as much a lie as
-// editing one, and the manifest enumerates what should be there.
+// TestDroppedMemberFailsVerification: the manifest enumerates every member, so a
+// missing one is detected as well as an altered one.
 func TestDroppedMemberFailsVerification(t *testing.T) {
 	h := newHarness(t)
 	policy := h.writePolicy("audit-policy.json", auditPolicy())
@@ -93,9 +93,9 @@ func TestDroppedMemberFailsVerification(t *testing.T) {
 	}
 }
 
-// TestWrongKeyFailsWhileTheBundleStillHashVerifies is the integrity/provenance
-// distinction made concrete: the archive is intact, and it is still not the
-// archive you were promised.
+// TestWrongKeyFailsWhileTheBundleStillHashVerifies separates the two promises:
+// the same intact archive passes an unsigned verify and fails against a key that
+// did not sign it.
 func TestWrongKeyFailsWhileTheBundleStillHashVerifies(t *testing.T) {
 	h := newHarness(t)
 	policy := h.writePolicy("audit-policy.json", auditPolicy())
@@ -113,20 +113,18 @@ func TestWrongKeyFailsWhileTheBundleStillHashVerifies(t *testing.T) {
 		t.Errorf("verifying against a key that did not sign the bundle must fail, got:\n%s", out)
 	}
 
-	// Without a key the same archive still verifies: every member matches the
-	// manifest. That is integrity without provenance, exactly as documented.
+	// Without a key the same archive verifies: every member matches the manifest.
+	// Integrity holds; provenance is what the key adds.
 	if out, err := h.guestServer("evidence", "verify", bundlePath); err != nil {
 		t.Errorf("an untampered bundle should still hash-verify with no key: %v\n%s", err, out)
 	}
 }
 
-// TestJourneyArtifactsReachTheBundle is the end-to-end proof of the evidence work:
-// a journey run writes an OTLP/JSON record and real screenshots, and both are
-// sealed and hash-covered alongside the chain.
+// TestJourneyArtifactsReachTheBundle: a journey run writes an OTLP/JSON record
+// and screenshots, and both are sealed and hash-covered alongside the chain.
 //
-// It is the one scenario here that needs the desktop engine, so it needs the
-// console session — a journey cannot run in session 0, where there is no desktop
-// to automate.
+// This is the one scenario that drives the desktop engine, so it runs in the
+// console session. A journey cannot run in session 0, which has no desktop.
 func TestJourneyArtifactsReachTheBundle(t *testing.T) {
 	h := newHarness(t)
 	h.requireInteractive(t)
@@ -192,8 +190,8 @@ func TestJourneyArtifactsReachTheBundle(t *testing.T) {
 // --- guest-side helpers ---------------------------------------------------
 
 // requireInteractive skips unless the golden image's console-session runner is
-// present. Without it there is no way to reach a desktop, and a journey test that
-// silently ran in session 0 would fail for the wrong reason.
+// present. Without it there is no route to a desktop, and the test would fail on
+// the absence of UIA rather than on the behaviour under test.
 func (h *harness) requireInteractive(t *testing.T) {
 	t.Helper()
 	if !h.guestFileExists(interactiveRunner) {
@@ -242,7 +240,7 @@ func (h *harness) zipEntryText(remotePath, entry string) string {
 }
 
 // rewriteZipEntry replaces a member's contents in place, leaving the manifest
-// untouched — which is exactly what a tamperer would do.
+// untouched, so the recorded hash no longer describes the member.
 func (h *harness) rewriteZipEntry(remotePath, entry, content string) {
 	h.t.Helper()
 	h.guestExec(fmt.Sprintf(

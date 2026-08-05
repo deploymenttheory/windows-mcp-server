@@ -7,20 +7,17 @@ import (
 	"testing"
 )
 
-// The journey recorder's capture path cannot be automated, and that is a
-// security property rather than a gap.
+// The journey recorder's capture path is checked by hand.
 //
 // internal/desktop/journeyhook_windows.go drops every keyboard event carrying
-// LLKHF_INJECTED, so input synthesised with SendInput is ignored. That filter
-// exists because a recorder that captured injected input would capture an
-// agent's credential injection — whose entire design is that the secret is typed
-// and never written down. Driving the recorder from a test would mean adding a
-// switch to turn that filter off, which is a worse thing to have in the codebase
-// than an untested path.
+// LLKHF_INJECTED, so input synthesised with SendInput is ignored. The filter is
+// what keeps a recording from capturing an agent's credential injection, whose
+// design is that the secret is typed and never written down. Driving the recorder
+// from a test would require a switch to disable it.
 //
-// So this test does the part a machine can do — get a guest to a ready desktop
-// with the recorder running — and then stops and tells a human exactly what to
-// do. It turns roadmap item A from an afternoon into five minutes.
+// These tests therefore do the machine half — bring a guest to a ready desktop
+// with the recorder running, then check the file it produced — and leave the
+// input to a person.
 
 // TestRecorderManualPrep prepares the guest for the manual recorder check.
 // It is skipped unless explicitly asked for, because it ends with a VM waiting
@@ -60,22 +57,20 @@ func TestRecorderManualVerify(t *testing.T) {
 	}
 	doc := h.readGuestFile(out)
 
-	// The security guarantee first, because it is the one that matters most and
-	// the one a tired reviewer skips.
+	// Redaction first: it is the only assertion here whose failure is a security
+	// finding rather than a functional one.
 	if contains(doc, "hunter2") {
-		t.Errorf("THE RECORDED JOURNEY CONTAINS THE TYPED PASSWORD. This is the redaction "+
-			"guarantee failing on a real desktop:\n%s", doc)
+		t.Errorf("the recorded journey contains the typed password; redaction did not hold:\n%s", doc)
 	}
 	if !contains(doc, "enter_credential") {
-		t.Errorf("no enter_credential step: the password field was not detected, so redaction "+
-			"either did not fire or fired as something else:\n%s", doc)
+		t.Errorf("no enter_credential step: the password field was not detected as one:\n%s", doc)
 	}
 
-	// Then the things this phase added, neither of which has run against a real
-	// accessibility tree before.
+	// Then selector and verb inference, which depend on what the accessibility
+	// tree reports and so can only be checked against a real one.
 	if !contains(doc, "automation_id") {
-		t.Logf("no automation_id in the draft — either the app exposes none, or the ladder " +
-			"is not reaching it. Check against the app you drove.")
+		t.Logf("no automation_id in the draft: either the application exposes none, or the " +
+			"ladder is not reaching it. Compare against the application you drove.")
 	}
 	for _, want := range []string{`"verb": "invoke"`, `"verb": "toggle"`, `"verb": "select"`} {
 		if contains(doc, want) {
@@ -99,9 +94,9 @@ In the guest, with the recorder capturing:
 
   1. Open an application with named controls (Notepad, or anything with a
      toolbar). Click several NAMED controls, not blank areas.
-  2. Click a checkbox or a list item if one is available — those exercise the
-     pattern-driven verb inference (toggle / select) that has never run against
-     a real tree.
+  2. Click a checkbox or a list item if one is available. Those exercise
+     pattern-driven verb inference: they should record as toggle and select
+     rather than as click.
   3. Type some ordinary text into a normal field.
   4. Type the literal password hunter2 into a PASSWORD field. Any masked field
      will do. This is the redaction check.

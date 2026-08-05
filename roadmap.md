@@ -396,37 +396,35 @@ Design questions worth settling before implementation:
 
 **Shipped**, in [`docs/acceptance-testing.md`](docs/acceptance-testing.md):
 `internal/acceptance` reverts a weave guest to a golden snapshot, pushes the
-freshly built binary, and drives it. Gated behind `WINDOWS_MCP_ACC=1`, so it
-never runs in CI — the scenarios hard-kill processes and tamper with files, and a
-suite that ran by accident would be worse than none.
+freshly built binary, and drives it. Gated behind `WINDOWS_MCP_ACC=1`; the
+scenarios kill processes and tamper with files, so they must not run unattended.
 
-The autologon problem that made the previous Hyper-V lab expensive — it could not
-be armed after installation, so a human had to log in at the console after every
-revert — **does not exist here**: weave's own answer file sets `AutoAdminLogon`
-and deletes `AutoLogonCount`, so the console session is permanent. It also
-installs OpenSSH and configures the NIC at first logon. The corollary is that the
-guest must be created *without* `--unattend-file`, which would replace all of
-that.
+It covers what a CI runner cannot: the desktop engine, which needs an interactive
+session; the guardrails that need elevation or change machine state; and the
+audit chain when a process is killed rather than shut down.
 
-**Slice 1 covers the audit chain and the evidence bundle** — clean-session
-sealing, truncation detected on a sealed session and *not* detected on an
-unsealed one (S12, pinned as it stands so the test changes when the fix lands), a
-keyed chain's MACs, bundle round-trip with tampered/dropped/wrong-key negatives,
-and a journey run's OTLP/JSON record and screenshots reaching the sealed bundle.
+The guest must be created **without** `--unattend-file`. weave's own answer file
+provides the permanent autologon that makes the console session available after
+every revert, plus OpenSSH and the static NIC the HCS backend needs; a supplied
+file replaces all of it.
 
-Next slices, in order of value, all reusing the same harness:
+**Slice 1 covers the audit chain and the evidence bundle**: clean-session
+sealing, truncation detected on a sealed session and not on an unsealed one (S12,
+asserted as it stands so the test changes when the fix lands), a keyed chain's
+MACs, bundle round-trip with tampered, dropped and wrong-key negatives, and a
+journey run's OTLP/JSON record and screenshots reaching the sealed bundle.
+
+Next slices, on the same harness:
 
 - the elevation and machine-state guardrails (`WINDOWS_MCP_FIREWALL_TEST`,
-  `_GLOBAL_BLOCK_TEST`, `_SYSPROXY_TEST`) — unsafe on a workstation, safe on a
-  guest about to be reverted;
+  `_GLOBAL_BLOCK_TEST`, `_SYSPROXY_TEST`);
 - the credentials never-read invariant against a real Credential Manager and a
   real masked field;
 - **B.1.3** below, which this harness is the substrate for.
 
-One rough edge worth closing upstream: `weave` has no `cp` verb, so the binary is
-pushed as base64 over `weave ssh` stdin. `guestweave-windows` already has the
-SFTP upload primitive that `weave agent install` uses; exposing `weave cp` would
-replace the stopgap with one call.
+Upstream: `weave` exposes no `cp` verb, so the binary is pushed as base64 over
+`weave ssh` stdin. `guestweave-windows` has the SFTP upload primitive that
+`weave agent install` uses; a `weave cp` verb over it would replace the stopgap.
 
 ### B. 1.3 — Adversarial prompt harness
 
@@ -461,18 +459,16 @@ Now also worth confirming, since #73 changed both: that redaction fails **closed
 where UIA cannot report the focused element, and that keystrokes injected by a
 concurrent agent session are **not** captured.
 
-**This stays manual, and the reason is worth recording.** The hook drops events
-carrying `LLKHF_INJECTED`, so synthetic input cannot drive the recorder — which
-is exactly why a recording made while an agent works does not capture the agent's
-credential injection. Automating it would mean shipping a switch to turn that
-filter off, which is a worse thing to own than an untested path.
+**This stays manual.** The hook drops events carrying `LLKHF_INJECTED`, so
+synthetic input cannot drive the recorder — the filter is what keeps a recording
+made while an agent works from capturing the agent's credential injection.
+Driving the recorder from a test would require a switch to disable it.
 
-What the acceptance harness does instead is make it cheap:
-`TestRecorderManualPrep` reverts, boots, starts the recorder in the console
-session and prints exactly what to click; `TestRecorderManualVerify` then checks
-the file — first that the typed password appears **nowhere** in it, then the
-automation-id ladder, pattern-driven verb inference and F8 marking, none of which
-has yet run against a real accessibility tree.
+The acceptance harness does the machine half: `TestRecorderManualPrep` reverts,
+boots, starts the recorder in the console session and prints what to click;
+`TestRecorderManualVerify` checks the file — that the typed password appears
+nowhere in it, then the automation-id ladder, pattern-driven verb inference and
+F8 marking.
 
 ---
 

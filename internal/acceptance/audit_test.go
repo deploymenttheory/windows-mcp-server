@@ -8,23 +8,19 @@ import (
 	"testing"
 )
 
-// Slice 1 of the acceptance suite: the audit chain and the evidence bundle, on a
-// real machine.
+// The audit chain on a real machine: a chain that seals on a clean exit, a sealed
+// chain that catches a removed tail, an unsealed chain that cannot, and a keyed
+// chain that carries its MACs.
 //
-// These are the claims the threat model rests on, and the ones a unit test can
-// only partially reach: a chain that seals on a clean exit, a sealed chain that
-// catches a removed tail, an unsealed chain that cannot, and a bundle whose
-// signature means what the documentation says it means. The last lab session
-// found that an unsealed truncated chain verified clean *and silent* — the
-// behaviour pinned in TestUnsealedSessionIsLoudButUndetected is the fix for the
-// silence, not for the detection, and that distinction is the point of the test.
+// A unit test reaches the chain logic but not the conditions that produce these
+// states — a process killed rather than shut down, and a file edited underneath a
+// verifier that has already run.
 
 const auditDir = remoteDir + `\audit`
 
-// auditPolicy is a policy document that puts the chain in a directory, which is
-// what gives each session its own file and a cross-session manifest to check
-// against. Everything else stays at its default: this suite is about the record,
-// not about enforcement.
+// auditPolicy puts the chain in a directory, which is what gives each session its
+// own file and a cross-session manifest to check against. Everything else stays
+// at its default: these tests are about the record, not about enforcement.
 func auditPolicy() map[string]any {
 	return map[string]any{
 		"version": 1,
@@ -53,8 +49,8 @@ func runSealedSession(t *testing.T, h *harness, policyPath string) string {
 	return stamps[len(stamps)-1]
 }
 
-// TestCleanSessionSeals is the baseline every other test in this file depends on:
-// if this fails, the guest is wrong, not the code.
+// TestCleanSessionSeals is the baseline the rest of this file depends on. It runs
+// first so that a broken guest is distinguishable from a broken chain.
 func TestCleanSessionSeals(t *testing.T) {
 	h := newHarness(t)
 	policy := h.writePolicy("audit-policy.json", auditPolicy())
@@ -77,9 +73,9 @@ func TestCleanSessionSeals(t *testing.T) {
 	}
 }
 
-// TestSealedSessionDetectsTruncation is the property the keyed manifest bought:
-// once a session is sealed, its head is recorded somewhere the session file
-// cannot rewrite, so removing the tail is caught.
+// TestSealedSessionDetectsTruncation: a sealed session's head is recorded in the
+// manifest, which the session file cannot rewrite, so removing the tail leaves
+// the two inconsistent and verification fails.
 func TestSealedSessionDetectsTruncation(t *testing.T) {
 	h := newHarness(t)
 	policy := h.writePolicy("audit-policy.json", auditPolicy())
@@ -101,15 +97,17 @@ func TestSealedSessionDetectsTruncation(t *testing.T) {
 	}
 }
 
-// TestUnsealedSessionIsLoudButUndetected pins today's honest behaviour, and is
-// written to fail when S12 lands.
+// TestUnsealedSessionIsLoudButUndetected pins the current behaviour of an
+// unsealed session, which is reported but not detected.
 //
-// A hard kill leaves no seal, so there is no recorded head to compare a truncated
-// chain against — any prefix of a valid chain is itself valid. The lab found this
-// verifying "ok" and saying nothing; the fix made it loud (an UNSEALED marker, a
-// warning explaining what a missing seal does not prove, and --strict failing on
-// it) without making it detected. When a checkpointed head arrives, plain verify
-// will start failing here and this test is what should change.
+// A killed process writes no seal, so there is no recorded head to compare a
+// truncated chain against, and any prefix of a valid chain is itself valid. The
+// verifier therefore marks the session UNSEALED, warns what a missing seal does
+// not prove, and fails only under --strict.
+//
+// This is asserted as it stands rather than as it should be. Detection is open as
+// S12; when a checkpointed head lands, plain verify starts failing here and this
+// test is what changes.
 func TestUnsealedSessionIsLoudButUndetected(t *testing.T) {
 	h := newHarness(t)
 	policy := h.writePolicy("audit-policy.json", auditPolicy())
@@ -189,8 +187,8 @@ func (h *harness) countLines(remotePath string) int {
 	return n
 }
 
-// truncateLines rewrites an in-guest file with only its first n lines — the
-// cheapest edit an attacker can make, and the one the chain is meant to resist.
+// truncateLines rewrites an in-guest file with only its first n lines: dropping
+// the tail, which is the edit the chain is meant to resist.
 func (h *harness) truncateLines(remotePath string, n int) {
 	h.t.Helper()
 	h.guestExec(fmt.Sprintf(
@@ -199,8 +197,8 @@ func (h *harness) truncateLines(remotePath string, n int) {
 }
 
 // hardKilledSession starts a session and terminates it without letting it run its
-// shutdown path, which is how a session comes to have no seal — the state the
-// kill ladder's Shutdown rung produces by construction.
+// shutdown path, which is how a session comes to have no seal. The kill ladder's
+// Shutdown rung produces the same state by construction.
 func (h *harness) hardKilledSession(t *testing.T, policyPath string) string {
 	t.Helper()
 	before := h.sessionStamps(auditDir)
