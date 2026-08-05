@@ -412,7 +412,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// remaining steps when containment trips; deps is a pointer the surface's
 	// middleware already captured, so setting the planner now reaches the handlers.
 	sessionPlanner := newPlanner(engine, audit, inventoryRegistry{inv: inv, deps: deps},
-		func() bool { tripped, _ := kill.Tripped(); return tripped })
+		func() bool { tripped, _ := kill.Tripped(); return tripped }).
+		withReadRegister(deps)
 	if approver != nil {
 		sessionPlanner.withApprovals(approver, sessionStamp, devicePolicy.Approvals.Timeout.Std())
 	}

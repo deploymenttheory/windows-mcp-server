@@ -50,15 +50,23 @@ Take a fresh `Snapshot` after the UI changes; do not act on a stale tree.
   loop and the evidence capture, building their text from the persona's own
   instructions so they cannot drift from it.
 
-## Where it is going
+## Writing the journey down
 
-Journeys-as-code — a declarative journey file, versioned in git, run in CI, with a
-recorder that writes the file from watching a human do the task once — is on the
-[roadmap](../roadmap.md). The persona and the observe-act-verify loop above are the
-foundation it builds on, and they work today.
+Everything above is the loop an agent drives interactively. When a journey is one
+you want to run the same way every time, write it as a document instead:
+[journeys as code](journeys.md) is a JSON file, versioned in git, validated
+offline in CI and run against the desktop on demand — with a recorder that drafts
+the file from watching you do the task once.
+
+The vocabulary it is written in is closed and typed
+([taxonomy](journey-taxonomy.md)), which is what makes a run repeatable rather
+than merely scripted: selectors are exact and ambiguity is a failure, waiting is
+expressed as a condition rather than a sleep, and every run emits a
+[record](journey-evidence.md) of what it asserted and what it actually observed.
 
 ## Related
 
+- [Journeys as code](journeys.md) — the same journey as a checked-in document.
 - [Toolsets and personas](toolsets-and-personas.md) — what each tool does and how
   to trim or extend the persona.
 - [User-journey testing (RPA)](../README.md#user-journey-testing-rpa) — the same

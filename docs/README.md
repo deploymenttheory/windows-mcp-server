@@ -22,6 +22,7 @@ what you are trying to do.
 | [Egress setup](egress.md) | Restricting which domains the device may reach — proxy, scoped firewall rules, machine-wide default-deny, and how to verify each tier |
 | [Credentials](credentials.md) | Letting the agent sign in without ever seeing a secret |
 | [Plan and apply](plan-and-apply.md) | Proposing a whole sequence of tool calls, adjudicated up front and executed verbatim — the opt-in `planning` toolset |
+| [Journeys as code](journeys.md) | **Design.** Writing a user journey as a JSON document, running it in CI, and recording one by doing the task once — schema version 2, not yet implemented |
 | [Session recording](recording.md) | Recording sessions for audit and playback; codecs, ffmpeg, markers, retention |
 | [Remote signals](remote-signals.md) | Microsoft Graph compliance and an external may-run endpoint — the signals a local admin cannot spoof |
 | [Monitoring](monitoring.md) | The loopback status endpoint and the hash-chained audit log |
@@ -41,6 +42,9 @@ what you are trying to do.
 
 | Document | Contents |
 |---|---|
+| [Recording a journey](journey-recording.md) | **Design.** How a journey gets written without writing it: verb and selector inference from the accessibility tree, the three ways a recording acquires assertions, and why the recorder is a CLI verb and never a tool |
+| [Journey taxonomy](journey-taxonomy.md) | **Design/normative.** The closed vocabularies a journey is written in — verbs, selectors, subjects, operators — the rules that make a run deterministic, and how a journey's reach is derived rather than declared |
+| [Journey evidence](journey-evidence.md) | **Design.** What a journey run records: the OpenTelemetry span model, the `journey.*` attribute registry, the OTLP/JSON artifact and how it is sealed into a bundle |
 | [Security architecture](security-architecture.md) | How the policy engine, audit chain, rug-pull detection, kill switch, credentials and egress fit together — with diagrams, the containment ladder, the privilege-degrade model, a threat-model mapping, the trust model and a component/file map |
 | [MCP compliance](mcp-compliance.md) | Per-scenario results from the official conformance suite at protocol revision `2026-07-28`. **Generated** by `.github/workflows/mcp-spec-compliance.yml`; do not edit by hand |
 

@@ -116,3 +116,17 @@ bundle, which is the artifact a reviewer opens to compare intent against what ra
 
 A plan may not contain `Plan` or `Apply` steps, and every step's tool must be one
 the current surface serves — both checked when the plan is proposed.
+
+## Journeys are plans
+
+A [journey](journeys.md) is a pre-authored plan with assertions and evidence
+interleaved, compiled from a closed verb vocabulary rather than written as tool
+calls. It runs through this same executor and inherits everything above.
+
+The division is worth keeping in mind when choosing between them. A plan is
+general: any served tool, an untyped `args` map, usually composed by the agent,
+and reach that is derived where it can be derived — `PowerShell` being the case
+where it cannot. A journey is narrow: a closed set of UI verbs with typed
+parameters, usually written by a person or drafted by the recorder, and reach
+that is **always** derivable because the vocabulary is closed. Anything needing a
+shell, the registry or the filesystem is a plan.

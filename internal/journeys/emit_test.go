@@ -23,16 +23,61 @@ func TestEmitCoalescesTypedRuns(t *testing.T) {
 		t.Fatalf("unexpected header: %+v", j)
 	}
 	if len(j.Steps) != 2 {
-		t.Fatalf("want a Type then a Click, got %d steps: %+v", len(j.Steps), j.Steps)
+		t.Fatalf("want a type_text then a click, got %d steps: %+v", len(j.Steps), j.Steps)
 	}
-	if j.Steps[0].Tool != "Type" || j.Steps[0].Args["text"] != "hello" {
+	if j.Steps[0].Verb != VerbTypeText || j.Steps[0].Text != "hello" {
 		t.Errorf("first step should type the coalesced run, got %+v", j.Steps[0])
 	}
-	if j.Steps[1].Tool != "Click" || j.Steps[1].Args["name"] != "Submit" {
-		t.Errorf("second step should click the named element, got %+v", j.Steps[1])
+	if j.Steps[1].Target.Name != "Submit" || j.Steps[1].Target.ControlType != "Button" {
+		t.Errorf("second step should target the named element, got %+v", j.Steps[1].Target)
 	}
-	if j.Steps[1].Args["control_type"] != "Button" {
-		t.Errorf("click should carry the control type, got %+v", j.Steps[1].Args)
+}
+
+// TestEmitInfersTheVerbFromTheControlType: a click is not a verb. Recording every
+// one of them as `click` throws away what the tree already knows and drives the UI
+// through synthetic input where a pattern was available.
+func TestEmitInfersTheVerbFromTheControlType(t *testing.T) {
+	cases := map[string]struct {
+		event Event
+		want  Verb
+	}{
+		"button":       {Event{Kind: EventClick, Name: "OK", ControlType: "Button"}, VerbInvoke},
+		"checkbox":     {Event{Kind: EventClick, Name: "Remember me", ControlType: "CheckBox"}, VerbToggle},
+		"radio":        {Event{Kind: EventClick, Name: "Monthly", ControlType: "RadioButton"}, VerbToggle},
+		"list item":    {Event{Kind: EventClick, Name: "Row 3", ControlType: "ListItem"}, VerbSelect},
+		"tab":          {Event{Kind: EventClick, Name: "Details", ControlType: "TabItem"}, VerbSelect},
+		"edit field":   {Event{Kind: EventClick, Name: "Amount", ControlType: "Edit"}, VerbClick},
+		"double click": {Event{Kind: EventClick, Name: "File", ControlType: "ListItem", Double: true}, VerbDoubleClick},
+		"right click":  {Event{Kind: EventClick, Name: "File", ControlType: "ListItem", Button: "right"}, VerbRightClick},
+		"unnamed":      {Event{Kind: EventClick, X: 10, Y: 20}, VerbClick},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			j := Emit("x", []Event{tc.event})
+			if got := j.Steps[0].Verb; got != tc.want {
+				t.Errorf("verb = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEmitPrefersTheAutomationID pins the selector ladder. The automation id is
+// the only identifier that survives translation, and the capture path already
+// reads it — a recording keyed on the accessible name when an id was available is
+// a suite that breaks on a localised build.
+func TestEmitPrefersTheAutomationID(t *testing.T) {
+	j := Emit("x", []Event{{
+		Kind: EventClick, AutomationID: "btnSubmit", Name: "Submit", ControlType: "Button",
+	}})
+	sel := j.Steps[0].Target
+	if sel.AutomationID != "btnSubmit" {
+		t.Errorf("want the automation id, got %+v", sel)
+	}
+	if sel.Name != "" {
+		t.Errorf("the name should not also be set, or the selector has two identifiers: %+v", sel)
+	}
+	if err := j.Validate(); err != nil {
+		t.Errorf("the emitted selector should validate: %v", err)
 	}
 }
 
@@ -41,30 +86,46 @@ func TestEmitClickFallsBackToCoordinates(t *testing.T) {
 	if len(j.Steps) != 1 {
 		t.Fatalf("want one step, got %d", len(j.Steps))
 	}
-	loc, ok := j.Steps[0].Args["loc"].([]any)
-	if !ok || len(loc) != 2 || loc[0] != 10 || loc[1] != 20 {
-		t.Errorf("an unnamed click should fall back to coordinates, got %+v", j.Steps[0].Args)
+	sel := j.Steps[0].Target
+	if len(sel.Point) != 2 || sel.Point[0] != 10 || sel.Point[1] != 20 {
+		t.Errorf("an unnamed click should fall back to coordinates, got %+v", sel)
 	}
-	if _, named := j.Steps[0].Args["name"]; named {
-		t.Error("an unnamed click must not carry a name")
+	if sel.Name != "" || sel.AutomationID != "" {
+		t.Error("an unnamed click must not invent an identifier")
 	}
 }
 
-func TestEmitFoldsTrailingEnterIntoType(t *testing.T) {
+func TestEmitFoldsTrailingEnterIntoTheTextStep(t *testing.T) {
 	events := append(chars("query", false), Event{Kind: EventKey, Key: "Enter"})
 	j := Emit("search", events)
 	if len(j.Steps) != 1 {
-		t.Fatalf("Enter should fold into the Type step, got %d steps", len(j.Steps))
+		t.Fatalf("Enter should fold into the type_text step, got %d steps", len(j.Steps))
 	}
-	if j.Steps[0].Tool != "Type" || j.Steps[0].Args["press_enter"] != true {
-		t.Errorf("want a Type with press_enter, got %+v", j.Steps[0])
+	if j.Steps[0].Verb != VerbTypeText || !j.Steps[0].Submit {
+		t.Errorf("want a type_text with submit, got %+v", j.Steps[0])
 	}
 }
 
-func TestEmitNonTextKeyBecomesShortcut(t *testing.T) {
+func TestEmitNonTextKeyBecomesPressKeys(t *testing.T) {
 	j := Emit("x", []Event{{Kind: EventKey, Key: "Tab"}})
-	if len(j.Steps) != 1 || j.Steps[0].Tool != "Shortcut" || j.Steps[0].Args["shortcut"] != "Tab" {
-		t.Fatalf("a bare Tab should be a Shortcut, got %+v", j.Steps)
+	if len(j.Steps) != 1 || j.Steps[0].Verb != VerbPressKeys || j.Steps[0].Keys != "Tab" {
+		t.Fatalf("a bare Tab should be press_keys, got %+v", j.Steps)
+	}
+}
+
+// TestEmitTypedTextTargetsTheFocusedField: the click that focused a field is what
+// the typing went into, so the step records it rather than relying on whatever
+// holds focus at run time.
+func TestEmitTypedTextTargetsTheFocusedField(t *testing.T) {
+	events := []Event{{Kind: EventClick, AutomationID: "txtSearch", ControlType: "Edit"}}
+	events = append(events, chars("hello", false)...)
+	j := Emit("x", events)
+
+	if len(j.Steps) != 2 {
+		t.Fatalf("want a click then a type_text, got %+v", j.Steps)
+	}
+	if j.Steps[1].Target == nil || j.Steps[1].Target.AutomationID != "txtSearch" {
+		t.Errorf("the type_text should target the field just clicked, got %+v", j.Steps[1].Target)
 	}
 }
 
@@ -98,19 +159,42 @@ func TestEmitNeverWritesSecretKeystrokes(t *testing.T) {
 	if !strings.Contains(string(blob), "alice") {
 		t.Error("non-secure typed text should be preserved")
 	}
-	// There must still be a placeholder Type step where the password went, so the
-	// journey stays runnable and a human knows to fill it in.
-	var redacted bool
+	// Where the password went there must be a credential step, targeting the field
+	// it was typed into, naming no secret.
+	var found bool
 	for _, s := range j.Steps {
-		if s.Tool == "Type" && s.Name == RedactedPlaceholder {
-			redacted = true
-			if s.Args["text"] != "" {
-				t.Errorf("the redacted step must carry empty text, got %q", s.Args["text"])
-			}
+		if s.Verb != VerbEnterCredential {
+			continue
+		}
+		found = true
+		if s.Credential != "" {
+			t.Errorf("the redacted step must name no credential, got %q", s.Credential)
+		}
+		if s.Target == nil || s.Target.Name != "Password" {
+			t.Errorf("the credential step should target the password field, got %+v", s.Target)
 		}
 	}
-	if !redacted {
-		t.Error("a redacted placeholder step should mark where the password was typed")
+	if !found {
+		t.Error("an enter_credential step should mark where the password was typed")
+	}
+}
+
+// TestRedactedDraftDoesNotValidateUntilCompleted: the recorded placeholder names
+// no credential, so `journey validate` refuses the draft and says what to supply —
+// rather than the journey running and typing nothing into a sign-in form.
+func TestRedactedDraftDoesNotValidateUntilCompleted(t *testing.T) {
+	j := Emit("sign-in", chars("secret", true))
+	err := j.Validate()
+	if err == nil {
+		t.Fatal("a draft with an unfilled credential should not validate")
+	}
+	if !strings.Contains(err.Error(), "credential") {
+		t.Errorf("the message should say what to fill in, got: %v", err)
+	}
+
+	j.Steps[0].Credential = "lab-sso"
+	if err := j.Validate(); err != nil {
+		t.Errorf("naming the credential should complete the draft: %v", err)
 	}
 }
 
@@ -124,11 +208,11 @@ func TestEmitSplitsSecureAndVisibleRuns(t *testing.T) {
 	if len(j.Steps) != 3 {
 		t.Fatalf("want visible/redacted/visible = 3 steps, got %d: %+v", len(j.Steps), j.Steps)
 	}
-	if j.Steps[0].Args["text"] != "ab" || j.Steps[2].Args["text"] != "cd" {
+	if j.Steps[0].Text != "ab" || j.Steps[2].Text != "cd" {
 		t.Errorf("visible runs should be preserved on both sides, got %+v", j.Steps)
 	}
-	if j.Steps[1].Name != RedactedPlaceholder || j.Steps[1].Args["text"] != "" {
-		t.Errorf("the middle run should be a redacted placeholder, got %+v", j.Steps[1])
+	if j.Steps[1].Verb != VerbEnterCredential || j.Steps[1].Text != "" {
+		t.Errorf("the middle run should be a credential placeholder, got %+v", j.Steps[1])
 	}
 }
 
@@ -142,5 +226,29 @@ func TestEmittedJourneyValidatesAndCompiles(t *testing.T) {
 	}
 	if _, err := Compile(j, "sess"); err != nil {
 		t.Fatalf("an emitted journey should compile: %v", err)
+	}
+}
+
+// TestEmittedJourneyRoundTripsThroughJSON: the recorder writes a file, so the
+// document it produces must parse back — including the selector union, which has
+// custom marshalling.
+func TestEmittedJourneyRoundTripsThroughJSON(t *testing.T) {
+	j := Emit("x", []Event{
+		{Kind: EventClick, AutomationID: "btnGo", ControlType: "Button"},
+		{Kind: EventClick, X: 4, Y: 5},
+	})
+	blob, err := json.Marshal(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(blob)
+	if err != nil {
+		t.Fatalf("a recorded journey should parse back: %v\n%s", err, blob)
+	}
+	if err := back.Validate(); err != nil {
+		t.Errorf("and validate: %v", err)
+	}
+	if len(back.Steps) != len(j.Steps) {
+		t.Errorf("round trip changed the step count: %d -> %d", len(j.Steps), len(back.Steps))
 	}
 }

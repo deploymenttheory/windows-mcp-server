@@ -102,7 +102,7 @@ func RunJourney(ctx context.Context, cfg Config, path string) (JourneyReport, er
 		WithEnforceHTTPS(enforceHTTPS(cfg)).
 		WithProtectedPaths(protectedPaths(cfg, devicePolicy))
 	runner := inventoryRegistry{inv: inv, deps: deps}
-	sessionPlanner := newPlanner(engine, auditLog, runner, nil)
+	sessionPlanner := newPlanner(engine, auditLog, runner, nil).withReadRegister(deps)
 	deps.WithPlanner(sessionPlanner)
 
 	doc, err := journeys.Compile(j, sessionStamp)

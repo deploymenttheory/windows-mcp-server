@@ -104,6 +104,12 @@ type planner struct {
 	sessionID       string
 	approvalTimeout time.Duration
 
+	// reader is the run-scoped result register a read step fills and a result.text
+	// assertion reads. It is nil when the session has none, in which case such an
+	// assertion reports that nothing has been read rather than comparing against a
+	// stale value.
+	reader windows.ReadRegister
+
 	mu    sync.Mutex
 	store map[string]plan.Document
 }
@@ -116,6 +122,32 @@ func newPlanner(engine *policy.Engine, auditLog *audit.AuditLog, runner toolRunn
 		killed: killed,
 		store:  map[string]plan.Document{},
 	}
+}
+
+// withReadRegister wires the run-scoped result register, so a read step's output
+// is available to a later result.text assertion.
+//
+// The register is passed to the assertion as environment, never spliced into its
+// arguments: a plan runs verbatim from the stored document and its argument
+// digest is what the audit chain records, so rewriting arguments at execution
+// time would break the binding between what was approved and what ran.
+func (p *planner) withReadRegister(r windows.ReadRegister) *planner {
+	p.reader = r
+	return p
+}
+
+// recordRead fills the register after a successful read step.
+func (p *planner) recordRead(s plan.Step, res *mcp.CallToolResult, err error) {
+	if p.reader == nil || err != nil || res == nil || res.IsError || s.Tool != "GetText" {
+		return
+	}
+	var b strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	p.reader.SetLastRead(b.String())
 }
 
 // withApprovals wires the out-of-band authoriser used for approve-disposition
@@ -263,6 +295,7 @@ func (p *planner) Apply(ctx context.Context, planID string) (windows.PlanApplica
 		}
 
 		res, err := p.runner.Invoke(ctx, s.Tool, rawArgs)
+		p.recordRead(s, res, err)
 		if err != nil || (res != nil && res.IsError) {
 			failed++
 			skipped = len(doc.Steps) - i - 1

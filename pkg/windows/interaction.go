@@ -5,17 +5,25 @@ package windows
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
 )
 
 // resolveLabel resolves a target to an interactive-element label, from an
-// explicit "label" or by "name" (+ optional "control_type" / "nth") against the
-// most recent Snapshot. Returns ok=false when no target key is present.
+// explicit "label", or from a selector — "automation_id", or "name" with an
+// optional "control_type", "name_match" and "occurrence" — against the most
+// recent Snapshot. Returns ok=false when no target key is present.
+//
+// Resolution is strict (see desktop.Resolve): an exact name match by default
+// rather than a silent fall back to a substring, and more than one match is an
+// error naming the candidates rather than a silent pick of the first. The legacy
+// "nth" argument still works and means the same as occurrence: <n>.
 func resolveLabel(deps ToolDependencies, args map[string]any) (label int, ok bool, err error) {
 	if v, present := args["label"]; present && v != nil {
 		l, e := OptionalInt(args, "label", -1)
@@ -24,19 +32,41 @@ func resolveLabel(deps ToolDependencies, args map[string]any) (label int, ok boo
 		}
 		return l, true, nil
 	}
-	if name := OptionalString(args, "name", ""); name != "" {
-		ct := OptionalString(args, "control_type", "")
-		nth, e := OptionalInt(args, "nth", 0)
-		if e != nil {
-			return 0, false, e
-		}
-		l, found := deps.Desktop().LabelForName(name, ct, nth)
-		if !found {
-			return 0, false, fmt.Errorf("no element named %q found in the last Snapshot; take a fresh Snapshot", name)
-		}
-		return l, true, nil
+
+	spec, err := selectorFromArgs(args)
+	if err != nil {
+		return 0, false, err
 	}
-	return 0, false, nil
+	if spec.Empty() {
+		return 0, false, nil
+	}
+	l, _, err := deps.Desktop().Resolve(spec)
+	if err != nil {
+		return 0, false, err
+	}
+	return l, true, nil
+}
+
+// selectorFromArgs builds a selector from a tool call's arguments, accepting the
+// legacy nth as an occurrence index so an existing caller keeps working.
+func selectorFromArgs(args map[string]any) (desktop.SelectorSpec, error) {
+	spec := desktop.SelectorSpec{
+		AutomationID: OptionalString(args, "automation_id", ""),
+		Name:         OptionalString(args, "name", ""),
+		ControlType:  OptionalString(args, "control_type", ""),
+		NameMatch:    OptionalString(args, "name_match", ""),
+		Occurrence:   OptionalString(args, "occurrence", ""),
+	}
+	if spec.Occurrence == "" {
+		if _, present := args["nth"]; present {
+			nth, err := OptionalInt(args, "nth", 0)
+			if err != nil {
+				return spec, err
+			}
+			spec.Occurrence = strconv.Itoa(nth)
+		}
+	}
+	return spec, nil
 }
 
 // resolveTarget resolves a click point from an explicit "loc" [x,y], a "label",
@@ -71,6 +101,11 @@ func targetSchema(extra map[string]*jsonschema.Schema) *jsonschema.Schema {
 			Type:        "integer",
 			Description: "Interactive element label from the most recent Snapshot.",
 		},
+		"automation_id": {
+			Type: "string",
+			Description: "Target an element by its developer-assigned automation id. The most stable " +
+				"identifier: unlike the accessible name it survives translation and relabelling.",
+		},
 		"name": {
 			Type:        "string",
 			Description: "Target an element by its accessible name from the most recent Snapshot (alternative to 'label').",
@@ -79,9 +114,19 @@ func targetSchema(extra map[string]*jsonschema.Schema) *jsonschema.Schema {
 			Type:        "string",
 			Description: "Optional control type to disambiguate a 'name' match (e.g. Button, Edit, ListItem, TabItem).",
 		},
+		"name_match": {
+			Type: "string", Enum: []any{"exact", "contains", "matches"},
+			Description: "How 'name' is matched. Default exact — a substring or regex match must be " +
+				"asked for, so a name never silently widens to another control.",
+		},
+		"occurrence": {
+			Type: "string",
+			Description: "What to do when several elements match: 'unique' (default — ambiguity is an " +
+				"error naming the candidates), 'first', or a 0-based index.",
+		},
 		"nth": {
 			Type:        "integer",
-			Description: "Optional 0-based index to pick among multiple 'name' matches (default 0).",
+			Description: "Deprecated alias for occurrence: a 0-based index among multiple matches.",
 		},
 	}
 	for k, v := range extra {

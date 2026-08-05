@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -34,9 +35,91 @@ func DeriveTargets(s Step) (targets []Target, undeclarable bool) {
 		return scheduledTaskTargets(s.Args, mode), false
 	case "Package":
 		return packageTargets(s.Args, mode), false
+
+	// The UI tools. Without these a plan built out of desktop interaction derived
+	// nothing at all, so its manifest showed an empty change list and every step
+	// rendered as non-destructive — not merely uninformative but wrong, since a
+	// click is what presses "Delete" and a key chord is arbitrary execution.
+	case "Click", "Move":
+		return []Target{{KindUI, uiTargetName(s.Args, "pointer"), clickVerb(s.Args)}}, false
+	case "Type", "MultiEdit":
+		return []Target{{KindUI, uiTargetName(s.Args, "focused field"), VerbWrite}}, false
+	case "Invoke":
+		return []Target{{KindUI, uiTargetName(s.Args, "element"), invokeVerb(s.Args)}}, false
+	case "MultiSelect":
+		return []Target{{KindUI, uiTargetName(s.Args, "selection"), VerbWrite}}, false
+	case "Shortcut":
+		// A chord is reach into the shell, not a click: win+r is arbitrary
+		// execution, which is why Shortcut is annotated destructive.
+		return []Target{{KindUI, "keyboard: " + strArg(s.Args, "shortcut"), VerbExecute}}, false
+	case "Scroll", "GetText", "Assert":
+		return []Target{{KindUI, uiTargetName(s.Args, "screen"), VerbRead}}, false
+	case "Snapshot", "Screenshot", "CaptureEvidence":
+		return []Target{{KindUI, "screen", VerbRead}}, false
+	case "Credentials":
+		return credentialTargets(s.Args, mode), false
+
 	default:
 		return nil, false
 	}
+}
+
+// uiTargetName names the element a UI step acts on, reading the selector keys in
+// stability order — the automation id, then the accessible name, then the raw
+// coordinate. fallback names the target when the step carries no selector at all,
+// which is legitimate: typing goes to whatever holds focus.
+func uiTargetName(args map[string]any, fallback string) string {
+	if id := strArg(args, "automation_id"); id != "" {
+		return id
+	}
+	if name := strArg(args, "name"); name != "" {
+		return name
+	}
+	if loc, ok := args["loc"].([]any); ok && len(loc) == 2 {
+		return fmt.Sprintf("(%v,%v)", loc[0], loc[1])
+	}
+	if loc, ok := args["loc"].([]int); ok && len(loc) == 2 {
+		return fmt.Sprintf("(%d,%d)", loc[0], loc[1])
+	}
+	return fallback
+}
+
+// clickVerb reads how far a pointer step reaches. Zero clicks is a hover: the
+// pointer moves over a control and nothing is pressed, so it observes rather than
+// acts.
+func clickVerb(args map[string]any) TargetVerb {
+	if n := strArg(args, "clicks"); n == "0" {
+		return VerbRead
+	}
+	return VerbInvoke
+}
+
+// invokeVerb reads how far an Invoke step reaches from its action: setting a
+// value or changing a selection writes, while activating or expanding does not.
+func invokeVerb(args map[string]any) TargetVerb {
+	switch strArg(args, "action") {
+	case "set_value", "toggle", "select":
+		return VerbWrite
+	default: // invoke, expand, collapse
+		return VerbInvoke
+	}
+}
+
+// credentialTargets derives the reach of a Credentials step. Only inject touches
+// the UI — it types a secret into a field; list and verify report on what is
+// installed and name no element.
+func credentialTargets(args map[string]any, mode string) []Target {
+	if mode != "inject" {
+		return nil
+	}
+	name := strArg(args, "automation_id")
+	if name == "" {
+		name = strArg(args, "name_target")
+	}
+	if name == "" {
+		name = "focused field"
+	}
+	return []Target{{KindUI, name, VerbWrite}}
 }
 
 // packageTargets derives the reach of a Package step: install creates a package,

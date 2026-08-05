@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -91,6 +92,23 @@ func (p ProtectedPath) covers(target string) bool {
 	return target == p.path
 }
 
+// ReadRegister is the optional interface a dependency set implements to carry the
+// run-scoped result register: what the most recent read returned, which a
+// result.text assertion compares against.
+//
+// It is an optional interface rather than a method on ToolDependencies for the
+// reason ProtectedPathViolation is: adding to the interface would break every
+// other implementation, including the fakes the tool tests are built on.
+//
+// The register is supplied to an assertion as *environment*. It is deliberately
+// never spliced into the assertion's arguments: a plan runs verbatim from the
+// stored, approved document and its argument digest is what the audit chain
+// records, so rewriting arguments at execution time would break both.
+type ReadRegister interface {
+	LastRead() (string, bool)
+	SetLastRead(text string)
+}
+
 // BaseDeps is the standard ToolDependencies implementation for the local
 // (stdio) server. It holds pre-created, process-lifetime services.
 type BaseDeps struct {
@@ -101,6 +119,24 @@ type BaseDeps struct {
 	enforceHTTPS   bool
 	protectedPaths []ProtectedPath
 	planner        Planner
+
+	readMu   sync.Mutex
+	lastRead string
+	hasRead  bool
+}
+
+// LastRead implements ReadRegister.
+func (d *BaseDeps) LastRead() (string, bool) {
+	d.readMu.Lock()
+	defer d.readMu.Unlock()
+	return d.lastRead, d.hasRead
+}
+
+// SetLastRead implements ReadRegister, recording what a read step returned.
+func (d *BaseDeps) SetLastRead(text string) {
+	d.readMu.Lock()
+	defer d.readMu.Unlock()
+	d.lastRead, d.hasRead = text, true
 }
 
 // Compile-time assertion that BaseDeps satisfies ToolDependencies.

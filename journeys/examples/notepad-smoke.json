@@ -1,25 +1,34 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "notepad-smoke",
   "description": "Open Notepad, type a line, and verify it appears — a minimal UI smoke test.",
   "steps": [
     {
       "name": "open Notepad",
-      "tool": "App",
-      "args": { "name": "notepad" },
+      "verb": "open_app",
+      "app": "notepad",
       "assertions": [
-        { "kind": "wait_window_active", "target": "Notepad", "timeout": 15,
-          "message": "Notepad window is in the foreground" }
+        {
+          "subject": "window.title",
+          "operator": "contains",
+          "expected": "Notepad",
+          "message": "the Notepad window is in the foreground",
+          "wait": { "timeout": 15 }
+        }
       ],
       "evidence": [ "notepad opened" ]
     },
     {
       "name": "type a line",
-      "tool": "Type",
-      "args": { "text": "hello from a windows-mcp journey" },
+      "verb": "type_text",
+      "text": "hello from a windows-mcp journey",
       "assertions": [
-        { "kind": "text_present", "target": "hello from a windows-mcp journey",
-          "message": "the typed text is present in the document" }
+        {
+          "subject": "screen.text",
+          "operator": "contains",
+          "expected": "hello from a windows-mcp journey",
+          "message": "the typed text is present in the document"
+        }
       ],
       "evidence": [ "text typed" ]
     }

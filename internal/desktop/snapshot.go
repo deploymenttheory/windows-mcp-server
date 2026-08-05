@@ -176,49 +176,13 @@ func (d *Desktop) LastState() *DesktopState {
 	return d.lastState
 }
 
-// LabelForName resolves an element name to its label from the most recent
-// Snapshot. controlType (optional, e.g. "Button") narrows the match; nth (0-based)
-// selects among multiple matches. An exact name match is preferred over a
-// substring match. Returns the label and whether one was found.
-func (d *Desktop) LabelForName(name, controlType string, nth int) (int, bool) {
-	d.stateMu.Lock()
-	defer d.stateMu.Unlock()
-	if d.lastState == nil {
-		return 0, false
-	}
-	needle := strings.ToLower(strings.TrimSpace(name))
-	if needle == "" {
-		return 0, false
-	}
-	if nth < 0 {
-		nth = 0
-	}
-
-	typeOK := func(e *LabeledElement) bool {
-		return controlType == "" || strings.EqualFold(e.Info.ControlType, controlType)
-	}
-
-	// Pass 1: exact (case-insensitive) name matches.
-	seen := 0
-	for i := range d.lastState.Interactive {
-		e := &d.lastState.Interactive[i]
-		if typeOK(e) && strings.ToLower(e.Info.Name) == needle {
-			if seen == nth {
-				return e.Label, true
-			}
-			seen++
-		}
-	}
-	// Pass 2: substring matches.
-	seen = 0
-	for i := range d.lastState.Interactive {
-		e := &d.lastState.Interactive[i]
-		if typeOK(e) && strings.Contains(strings.ToLower(e.Info.Name), needle) {
-			if seen == nth {
-				return e.Label, true
-			}
-			seen++
-		}
-	}
-	return 0, false
-}
+// Element resolution by name lives in selector.go (Matches and Resolve).
+//
+// It replaced LabelForName, which tried an exact pass and then fell back to a
+// substring pass, silently taking match nth (default 0) from whichever pass first
+// produced one. Two behaviours made that unusable as the basis of a repeatable
+// journey: a selector for "Save" resolved to "Save As…" on any screen with no
+// exact "Save", and a selector matching several controls picked one according to
+// tree order, which changes when a developer adds a control nobody thought was
+// related. Both are now explicit — name_match and occurrence — and both default
+// to the strict reading.
