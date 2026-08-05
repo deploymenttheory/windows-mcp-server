@@ -400,10 +400,13 @@ freshly built binary, and drives it. Gated behind `WINDOWS_MCP_ACC=1`, so it
 never runs in CI — the scenarios hard-kill processes and tamper with files, and a
 suite that ran by accident would be worse than none.
 
-The autologon problem is solved at the root rather than worked around: it goes in
-the unattend answer file at install time, so a revert no longer leaves the guest
-at a lock screen waiting for a human. That was what made the previous lab
-expensive to use.
+The autologon problem that made the previous Hyper-V lab expensive — it could not
+be armed after installation, so a human had to log in at the console after every
+revert — **does not exist here**: weave's own answer file sets `AutoAdminLogon`
+and deletes `AutoLogonCount`, so the console session is permanent. It also
+installs OpenSSH and configures the NIC at first logon. The corollary is that the
+guest must be created *without* `--unattend-file`, which would replace all of
+that.
 
 **Slice 1 covers the audit chain and the evidence bundle** — clean-session
 sealing, truncation detected on a sealed session and *not* detected on an

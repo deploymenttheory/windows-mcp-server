@@ -36,11 +36,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# The user whose console session we hand the command to. The golden image
-# auto-logs this account on, which is the whole reason an interactive session
-# exists to hand anything to.
+# The user whose console session we hand the command to. weave's unattended
+# install creates this account and makes its autologon permanent — its answer
+# file deletes AutoLogonCount rather than merely setting it — which is the whole
+# reason an interactive session exists to hand anything to.
 $targetUser = $env:ACC_INTERACTIVE_USER
-if ([string]::IsNullOrWhiteSpace($targetUser)) { $targetUser = 'acc' }
+if ([string]::IsNullOrWhiteSpace($targetUser)) { $targetUser = 'weave' }
 
 $taskName = "windows-mcp-acc-$([guid]::NewGuid().ToString('N').Substring(0,8))"
 $stateDir = Join-Path $WorkDir 'interactive'

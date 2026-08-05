@@ -31,29 +31,40 @@ processes, so a suite that ran by accident would be worse than no suite.
   internals are not importable.
 - A guest built once from the recipe below, with a `golden` snapshot.
 
+You do **not** need to source Windows media. `--from-windows pro-25h2` is a media
+spec, and weave downloads and caches Microsoft's retail media itself.
+
 ## Building the golden image, once
 
 ```powershell
-# 1. Install Windows unattended, with autologon baked into the answer file.
-weave create acc --from-windows pro-25h2 --unattend-file acceptance/guest/autologon.xml
+# 1. Install Windows, unattended. weave fetches the media and runs the install.
+weave create acc --from-windows pro-25h2
 weave run acc
 
-# 2. Provision it: sshd, the interactive runner, and a predictable desktop.
+# 2. Provision it: the interactive runner and a predictable desktop.
 #    Copy acceptance/guest/ into the guest and run provision.ps1 there.
-#    It refuses to finish if there is no console session, which is the one thing
-#    it cannot arrange for itself.
 
 # 3. Snapshot AFTER provisioning.
 weave snapshot create acc golden -d "windows-mcp acceptance baseline"
 ```
 
-**Autologon belongs in the answer file, and that is the whole trick.** UI
-automation needs an interactive desktop session, and an interactive session needs
-someone logged on. Arming autologon *after* installation means writing
-`DefaultPassword` into the Winlogon registry key on a live machine — a credential
-write, correctly refused — so the previous lab needed a human to log in at the
-console before any UIA test could run, **every time the snapshot was reverted**.
-Setting it at install time makes it ordinary unattended-setup configuration.
+**Do not pass `--unattend-file`.** weave generates its own answer file, and it
+already does the three things this suite depends on:
+
+- **Permanent autologon** for the `weave` account. It sets `AutoAdminLogon` and
+  *deletes* `AutoLogonCount` rather than merely setting it, so the console
+  session survives every reboot and every snapshot revert. This is the thing that
+  made the previous Hyper-V lab expensive — autologon could not be armed after
+  installation, because writing `DefaultPassword` into Winlogon on a live machine
+  is a credential write and is refused, so a human had to log in at the console
+  after every revert. weave already solved it.
+- **OpenSSH server**, installed and started at first logon, with a
+  converge-across-reboots retry because the capability pull takes about nine
+  minutes.
+- **The static NIC configuration** the HCS backend needs, since it has no DHCP.
+
+Supplying your own answer file replaces all of that — including the
+setup-complete signal `weave run` waits on.
 
 **Snapshot after provisioning, never before.** Reverting removes the whole
 customisation along with everything else. That is exactly the isolation the suite
@@ -79,10 +90,11 @@ leave the next one running against wreckage.
 | Console session | `C:\acc\run-interactive.ps1` | anything touching UIA — a journey run |
 
 A command sent over SSH lands in session 0, which has no desktop: UIA calls fail
-or return nothing. The interactive runner hands work to the auto-logged-on user's
-session through a scheduled task with an `Interactive` logon type. Scenarios
-needing it **skip** when it is absent, rather than running in session 0 and
-failing for the wrong reason.
+or return nothing. The interactive runner hands work to the `weave` user's
+console session — the one weave's permanent autologon establishes — through a
+scheduled task with an `Interactive` logon type. Scenarios needing it **skip**
+when it is absent, rather than running in session 0 and failing for the wrong
+reason.
 
 ## Knobs
 
