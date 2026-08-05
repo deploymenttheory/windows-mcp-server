@@ -253,13 +253,55 @@ recorded, or a sealed session whose head no longer matches. When the destination
 `stderr` there is nothing to verify against later; strip the `AUDIT ` prefix from
 each line if you want to feed captured stderr into the same check.
 
+#### Read the per-session marker
+
+Each session line carries one of three markers, and the middle one is the one to
+understand:
+
+| Marker | Meaning |
+|---|---|
+| `ok` | Sealed, and its head matches the manifest record that sealed it. |
+| `UNSEALED` | The chain is internally consistent, but no seal exists to compare its head against. |
+| `BROKEN` | The chain itself failed — an edit, a gap, a reorder, or a head that contradicts its seal. |
+
+`UNSEALED` is not a lesser `ok`. **A session with no seal has nothing to check its
+head against, so any prefix of its chain verifies — removing the tail is
+undetectable.** The chain's own integrity is intact either way, which is exactly
+why the chain cannot help here.
+
+A session is unsealed for one of two reasons: the process is still running, or it
+died without sealing. The second case includes the kill ladder's `shutdown` rung
+and any crash — so **the sessions most worth tampering with are precisely the ones
+that carry no seal**. A truncated open session is reported like this, and exits 0:
+
+```
+UNSEALED open       5 entries  session-20260804-123546.audit.jsonl
+verified: 1 session(s), manifest chain intact
+warning: 1 session(s) carry no seal. …
+```
+
+Pass `--strict` when you are collecting evidence rather than checking a live
+server. It fails on any unsealed session:
+
+```powershell
+windows-mcp-server audit verify C:\ProgramData\windows-mcpudit\ --strict
+```
+
+The split is deliberate. A running server always has one session open, so a health
+check that treated that as a failure would be useless; an evidence bundle
+containing an unsealed session is a different matter, because nobody can say
+whether its tail is complete. Detecting truncation *within* an open session needs
+a periodically checkpointed head in the manifest, which is not implemented — see
+`roadmap.md` S12.
+
 **What the manifest does and does not guarantee.** The manifest makes a *restart*
 unable to silently drop history: every run writes an open record before its first
 entry, so a session that crashed or was killed still leaves a chained trace where
 its seal should be. What it cannot do on its own is defend against an on-box
 adversary who deletes the most recent session's trailing seal — that is
-indistinguishable from a session still running or just killed. Closing that gap is
-what [keying the chain](#keying-the-chain) and [anchoring the
+indistinguishable from a session still running or just killed, which is what the
+`UNSEALED` marker exists to make visible rather than to resolve. Closing that gap
+is what [keying the chain](#keying-the-chain) and [anchoring the
 head](#anchoring-the-head-off-box) are for: the MAC stops an attacker forging a
 replacement chain without the key, and anchoring stops one quietly rewriting what
 was already published. Unkeyed and un-anchored — the default — the chain is
@@ -299,6 +341,13 @@ What it emits:
   **arguments are never exported**, only the fact of the call.
 - **`policy_decisions_total`** — a counter of every verdict, tagged with `severity`
   and `mode`, recorded at the enforcement point.
+
+A journey run is traced separately and more richly — a span per step and per
+assertion, carrying what each assertion expected *and what it observed* — and the
+same spans are written to disk as the run's sealed record. See
+[journey evidence](journey-evidence.md); note that a journey run executes through
+the planner rather than the transport, so it emits none of the per-request spans
+above.
 
 Authentication headers come from **`WINDOWS_MCP_OTLP_HEADERS`** (`"k1=v1,k2=v2"`) in
 the environment, never the policy document — they are secrets. A collector that is

@@ -18,6 +18,9 @@ edited since.*
   of the chain for a reviewer to read first.
 - `recording/session-<stamp>.*` — the session video and its markers, when a
   recording directory is given.
+- `journeys/<name>-<stamp>.otlp.json` and `evidence/*.png` — a
+  [journey](journeys.md) run's record and the images it captured, when the session
+  ran one. See [journey evidence](journey-evidence.md).
 - `manifest.json` — every member with its SHA-256 and size, plus the session
   stamp, the audit chain head, and whether the bundle is signed.
 - `manifest.sig` — a detached ed25519 signature over the manifest, when signed.
@@ -49,12 +52,17 @@ key proves *provenance* on top of that. `verify` exits non-zero on any problem.
 
 ## Composing with the rest
 
-The bundle correlates with the [session recording](recording.md) by the shared
-`session-<stamp>` name, and with [plan-and-apply](plan-and-apply.md): the
+The bundle correlates with the [session recording](recording.md) and with a
+[journey](journeys.md) run by the shared `session-<stamp>` name, and with
+[plan-and-apply](plan-and-apply.md): the
 `plan.proposed` / `plan.applied` records in the audit chain are what let a reviewer
 compare what was **approved** against what **ran**. The chain in the bundle can be
 re-checked independently with `audit verify`, and if it was keyed
-([monitoring](monitoring.md)), its own HMAC still holds.
+([monitoring](monitoring.md)), its own HMAC still holds. Use `audit verify
+--strict` on a bundle's chain: an *unsealed* session verifies clean even if its
+tail was removed, because there is no sealed head to compare against, and that is
+worth failing on in evidence you intend to rely on. See [reading the per-session
+marker](monitoring.md#read-the-per-session-marker).
 
 ## On demand, or automatically
 

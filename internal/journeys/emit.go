@@ -2,6 +2,7 @@ package journeys
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -9,6 +10,12 @@ import (
 // events into a Journey document. It is deliberately pure — it holds no Windows or
 // hook types, only the neutral Event vocabulary the OS-side recorder produces — so
 // the coalescing and, crucially, the redaction are unit-testable without a desktop.
+//
+// The recorder is the primary author of a journey: nobody hand-writes forty steps
+// of JSON. So this file does more than transcribe. It infers the verb from what
+// was clicked, and picks the most stable selector the element offers, because the
+// moment of capture is the only moment at which either can be decided with the
+// element and its tree both in hand.
 
 // EventKind is the class of a captured input event.
 type EventKind string
@@ -16,7 +23,7 @@ type EventKind string
 const (
 	// EventClick is a mouse click resolved to a UI element (or bare coordinates).
 	EventClick EventKind = "click"
-	// EventChar is one typed character. Consecutive chars coalesce into a Type step.
+	// EventChar is one typed character. Consecutive chars coalesce into a type_text.
 	EventChar EventKind = "char"
 	// EventKey is a non-text key press (Enter, Tab, Escape, …) that does not
 	// coalesce into typed text.
@@ -29,11 +36,15 @@ type Event struct {
 	Kind EventKind
 
 	// Click fields.
-	X, Y        int    // physical-pixel screen coordinates of the click
-	Name        string // resolved accessible name of the clicked element ("" if none)
-	ControlType string // e.g. Button, Edit, ListItem
-	Button      string // left | right | middle (default left)
-	Double      bool   // a double-click
+	X, Y int // physical-pixel screen coordinates of the click
+	// AutomationID is the developer-assigned id of the clicked element, when the
+	// application sets one. It is the top rung of the selector ladder: unlike the
+	// accessible name it survives translation.
+	AutomationID string
+	Name         string // resolved accessible name of the clicked element ("" if none)
+	ControlType  string // e.g. Button, Edit, ListItem
+	Button       string // left | right | middle (default left)
+	Double       bool   // a double-click
 
 	// Char fields.
 	Char rune // the typed rune
@@ -47,20 +58,21 @@ type Event struct {
 }
 
 // RedactedPlaceholder is the step name used where a secure typed run was dropped.
-// The step is emitted with empty text so the journey stays runnable — a human
-// fills in the secret before running it — while the captured keystrokes never
-// reach the file.
-const RedactedPlaceholder = "type into a password field (redacted — fill in before running)"
+// The step is emitted as an enter_credential carrying no credential name, so the
+// captured keystrokes never reach the file and the draft says what to supply
+// instead — a stored credential the agent can use but never read.
+const RedactedPlaceholder = "sign in (redacted — name the stored credential before running)"
 
 // Emit compiles a captured event stream into a Journey. Consecutive typed
-// characters coalesce into one Type step; a secure run becomes a single redacted
-// Type step carrying no text. Clicks become Click steps targeting the element by
-// accessible name (falling back to coordinates when it has none). A named key
-// becomes a Shortcut step, except a trailing Enter, which folds into the preceding
-// Type step as press_enter.
+// characters coalesce into one type_text step; a secure run becomes a single
+// enter_credential step carrying no secret. Clicks become the verb their control
+// type implies, targeting the element by the most stable key it offers. A named
+// key becomes press_keys, except a trailing Enter, which folds into the preceding
+// text step as submit.
 //
-// The result is a reviewable draft: the human who recorded it confirms or edits
-// the steps and adds assertions before checking it in.
+// The result is a reviewable draft: the recorder captures actions, not intent, so
+// the human who recorded it confirms the steps and adds the assertions that make
+// it a test.
 func Emit(name string, events []Event) Journey {
 	j := Journey{
 		Version:     SchemaVersion,
@@ -69,16 +81,17 @@ func Emit(name string, events []Event) Journey {
 	}
 
 	var (
-		run     []rune // buffered non-secure typed characters (empty for a secure run)
-		pending bool   // a typed run is being built
-		secure  bool   // the pending run is into a password-class field
+		run     []rune    // buffered non-secure typed characters (empty for a secure run)
+		pending bool      // a typed run is being built
+		secure  bool      // the pending run is into a password-class field
+		focused *Selector // the last clicked element, which is what typing goes into
 	)
 
-	flush := func() {
+	flush := func(submit bool) {
 		if !pending {
 			return
 		}
-		j.Steps = append(j.Steps, typeStep(string(run), secure))
+		j.Steps = append(j.Steps, textStep(string(run), secure, submit, focused))
 		run, pending, secure = nil, false, false
 	}
 
@@ -87,9 +100,9 @@ func Emit(name string, events []Event) Journey {
 		case EventChar:
 			// A change in the secure flag ends the current run: a redacted run and a
 			// visible run must never merge into one step, or a password character
-			// could be carried out on a visible Type step.
+			// could be carried out on a visible text step.
 			if pending && e.Secure != secure {
-				flush()
+				flush(false)
 			}
 			pending, secure = true, e.Secure
 			if !e.Secure {
@@ -97,65 +110,109 @@ func Emit(name string, events []Event) Journey {
 			}
 		case EventKey:
 			if e.Key == "Enter" && pending {
-				// Fold a trailing Enter into the text step being built.
-				j.Steps = append(j.Steps, typeStepWithEnter(string(run), secure))
-				run, pending, secure = nil, false, false
+				flush(true) // fold a trailing Enter into the text step being built
 				continue
 			}
-			flush()
-			j.Steps = append(j.Steps, shortcutStep(e.Key))
+			flush(false)
+			j.Steps = append(j.Steps, Step{
+				Name: "press " + e.Key,
+				Verb: VerbPressKeys,
+				Keys: e.Key,
+			})
 		case EventClick:
-			flush()
-			j.Steps = append(j.Steps, clickStep(e))
+			flush(false)
+			step := clickStep(e)
+			focused = step.Target
+			j.Steps = append(j.Steps, step)
 		}
 	}
-	flush()
+	flush(false)
 	return j
 }
 
-// clickStep builds a Click step. It targets the element by accessible name when it
-// has one — durable across coordinate changes — and falls back to raw coordinates
-// only when the element is unnamed.
+// clickStep builds the step for one click: the verb its control type implies,
+// targeting the element by the highest rung of the selector ladder it offers.
 func clickStep(e Event) Step {
-	args := map[string]any{}
-	var label string
-	if strings.TrimSpace(e.Name) != "" {
-		args["name"] = e.Name
+	sel := selectorFor(e)
+	verb := clickVerb(e)
+	return Step{
+		Name:   fmt.Sprintf("%s %s", verb, strconv.Quote(sel.Label())),
+		Verb:   verb,
+		Target: sel,
+	}
+}
+
+// clickVerb infers what a click meant from the control type. A double or
+// non-left click is taken at face value — those are gestures, not patterns.
+//
+// The fallback is deliberately `click`: a general verb is recoverable, a wrong
+// verb changes what the run does. Reading the element's supported UIA patterns
+// would sharpen this — a Button that exposes no Invoke pattern is really a click —
+// and is the refinement the capture path is missing.
+func clickVerb(e Event) Verb {
+	switch {
+	case e.Double:
+		return VerbDoubleClick
+	case e.Button == "right":
+		return VerbRightClick
+	case e.Name == "" && e.AutomationID == "":
+		return VerbClick // a coordinate target cannot be pattern-driven
+	}
+	switch e.ControlType {
+	case "CheckBox", "RadioButton":
+		return VerbToggle
+	case "ListItem", "TreeItem", "TabItem", "DataItem":
+		return VerbSelect
+	case "Button", "SplitButton", "Hyperlink", "MenuItem":
+		return VerbInvoke
+	default:
+		return VerbClick
+	}
+}
+
+// selectorFor picks the most stable selector the clicked element offers:
+// automation id, then accessible name, then the raw coordinate.
+func selectorFor(e Event) *Selector {
+	switch {
+	case strings.TrimSpace(e.AutomationID) != "":
+		sel := &Selector{AutomationID: e.AutomationID}
 		if e.ControlType != "" {
-			args["control_type"] = e.ControlType
+			sel.ControlType = e.ControlType
 		}
-		label = "click " + e.Name
-	} else {
-		args["loc"] = []any{e.X, e.Y}
-		label = fmt.Sprintf("click at (%d,%d)", e.X, e.Y)
+		return sel
+	case strings.TrimSpace(e.Name) != "":
+		sel := &Selector{Name: e.Name}
+		if e.ControlType != "" {
+			sel.ControlType = e.ControlType
+		}
+		return sel
+	default:
+		return &Selector{Point: []int{e.X, e.Y}}
 	}
-	if e.Button != "" && e.Button != "left" {
-		args["button"] = e.Button
-	}
-	if e.Double {
-		args["clicks"] = 2
-	}
-	return Step{Name: label, Tool: "Click", Args: args}
 }
 
-// typeStep builds a Type step, redacting a secure run to empty text.
-func typeStep(text string, secure bool) Step {
+// textStep builds the step for a typed run: a type_text, or — where the run went
+// into a password-class field — an enter_credential carrying no secret.
+//
+// The redacted step names no credential on purpose. It does not validate, so
+// `journey validate` refuses the draft with a message saying what to supply,
+// rather than the draft running and typing nothing into a sign-in form.
+func textStep(text string, secure, submit bool, focused *Selector) Step {
 	if secure {
-		return Step{Name: RedactedPlaceholder, Tool: "Type", Args: map[string]any{"text": ""}}
+		return Step{
+			Name:   RedactedPlaceholder,
+			Verb:   VerbEnterCredential,
+			Target: focused,
+			Submit: submit,
+		}
 	}
-	return Step{Name: "type " + shorten(text), Tool: "Type", Args: map[string]any{"text": text}}
-}
-
-// typeStepWithEnter is typeStep plus press_enter, for a run terminated by Enter.
-func typeStepWithEnter(text string, secure bool) Step {
-	s := typeStep(text, secure)
-	s.Args["press_enter"] = true
-	return s
-}
-
-// shortcutStep builds a Shortcut step for a named key.
-func shortcutStep(key string) Step {
-	return Step{Name: "press " + key, Tool: "Shortcut", Args: map[string]any{"shortcut": key}}
+	return Step{
+		Name:   "type " + shorten(text),
+		Verb:   VerbTypeText,
+		Target: focused,
+		Text:   text,
+		Submit: submit,
+	}
 }
 
 // shorten renders a compact label for a typed run.

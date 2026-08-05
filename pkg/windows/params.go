@@ -85,6 +85,42 @@ func OptionalInt(args map[string]any, key string, fallback int) (int, error) {
 	}
 }
 
+// OptionalFloat returns a float argument or the fallback. It accepts JSON
+// numbers and numeric strings, for the same reason OptionalInt does: some MCP
+// clients stringify numbers.
+//
+// Timeouts are fractional (a 0.4-second poll interval is the default), so they
+// cannot go through OptionalInt without silently truncating to zero.
+func OptionalFloat(args map[string]any, key string, fallback float64) (float64, error) {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return fallback, nil
+	}
+	switch n := v.(type) {
+	case float64:
+		return n, nil
+	case int:
+		return float64(n), nil
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return fallback, fmt.Errorf("parameter %s must be a number", key)
+		}
+		return f, nil
+	case string:
+		if strings.TrimSpace(n) == "" {
+			return fallback, nil
+		}
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		if err != nil {
+			return fallback, fmt.Errorf("parameter %s must be a number", key)
+		}
+		return f, nil
+	default:
+		return fallback, fmt.Errorf("parameter %s must be a number", key)
+	}
+}
+
 // clampInt bounds v to the inclusive range [lo, hi]. It is how tools keep a
 // caller-supplied count or window from becoming an absurd query.
 func clampInt(v, lo, hi int) int {

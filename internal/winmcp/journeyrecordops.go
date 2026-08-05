@@ -79,10 +79,14 @@ func mapRecordedInput(in desktop.RecordedInput) (journeys.Event, bool) {
 		return journeys.Event{
 			Kind: journeys.EventClick,
 			X:    in.X, Y: in.Y,
-			Name:        in.Element.Name,
-			ControlType: in.Element.ControlType,
-			Button:      in.Button,
-			Double:      in.Double,
+			// The automation id is read at every hit-test and used to be dropped
+			// here, so recordings were keyed on the accessible name while the one
+			// identifier that survives translation sat unused in the same struct.
+			AutomationID: in.Element.AutomationID,
+			Name:         in.Element.Name,
+			ControlType:  in.Element.ControlType,
+			Button:       in.Button,
+			Double:       in.Double,
 		}, true
 	case "char":
 		return journeys.Event{Kind: journeys.EventChar, Char: in.Char, Secure: in.Secure}, true

@@ -24,8 +24,85 @@ apply them.
 This includes GCP, AWS and Azure.
 
 ### Criterions for journey's-as-code
+
 Define clear verbs and actions for the journey's as code to align with and be
 attested to.
+
+**The design is written and the taxonomy is settled**, in
+[`docs/journey-taxonomy.md`](docs/journey-taxonomy.md) (normative — verbs,
+selectors, subjects, operators, and the derivation table),
+[`docs/journeys.md`](docs/journeys.md) (authoring),
+[`docs/journey-recording.md`](docs/journey-recording.md) (how a journey gets
+written without writing it) and
+[`docs/journey-evidence.md`](docs/journey-evidence.md) (the OTel-shaped run
+record). What remains is implementation, as a schema version 2 with a clean break
+and no conversion.
+
+The taxonomy is written under a constraint that is easy to leave implicit and
+fatal to get wrong: **nobody will hand-write forty steps of JSON**, so the
+recorder is the primary author and the vocabulary has to be one it can generate.
+Reading the capture path against that constraint found two things sitting unused
+in the code:
+
+- `readElementInfo` reads **`AutomationID`** at every click and `mapRecordedInput`
+  discards it, keeping only name and control type. It is the only identifier that
+  survives translation, and recordings are currently keyed on the rung below it.
+- The hit-test reads **no UIA pattern availability**, so the recorder knows what
+  was clicked but not what it can do — which is exactly what distinguishes a
+  `toggle` from a `select` from a `click`. It is a property read on an element
+  already in hand.
+
+The harder half is that a recording captures actions and not intent, so it
+asserts nothing. Three composing mechanisms are designed for it — mark while
+recording, propose from a before/after diff, and freeze a golden run from the
+observation baseline the evidence work already produces.
+
+The reason this was worth doing before writing code: almost nothing in a v1
+document was closed, typed or checked. A step named an MCP tool and carried an
+untyped `args` map, and `internal/journeys` is platform-agnostic while the tool
+definitions are Windows-only — so `journey validate` could not see a tool schema
+and could check neither the tool name nor its arguments. The shipped example
+demonstrates it: `journeys/examples/notepad-smoke.json` calls `App` with no
+`mode`, which the tool marks required, so **the only example journey in the repo
+fails at step 1** and CI cannot tell. Three further gaps the design closes:
+
+- **Element targeting is non-deterministic.** `LabelForName` falls back from exact
+  to substring matching and silently takes `nth=0` among matches, so `"Save"`
+  resolves to `"Save As…"` and the journey passes having pressed the wrong
+  control. Selectors are now exact by default and ambiguity is a failure.
+- **The change manifest is empty for every journey.** `DeriveTargets` covers eight
+  tools, none of them UI ones, so every journey step rendered as touching nothing
+  and as non-destructive. A closed verb set makes derivation total, which is the
+  "attested to" half of this item.
+- **Evidence is a text blob.** Captures write no images, `expected_evidence` is
+  checked against the document and never against the run, `journey.*` is absent
+  from the bundle's verdict prefixes, and a journey run emits no OTel spans at all
+  because it bypasses the middleware — so Phase 3.3, 3.4 and 3.5 were never joined
+  up.
+
+**Shipped in PR #78**: the schema, the compiler and target derivation, the tool
+layer (`Assert` subject/operator, strict selector resolution, screenshot
+persistence), the evidence phase (OTLP/JSON run record, bundle members, post-run
+`expected_evidence`, `journey.` in the verdict prefixes), and the first half of
+the recorder (the automation-id ladder, verb inference from control type,
+`enter_credential` in place of the empty placeholder).
+
+What remains, in rough order:
+
+- **The recorder's assertion workflows.** Mark-while-recording (hover + a
+  hotkey), propose-from-a-before/after-diff, and freeze-a-golden-run from an
+  observation baseline. This is the phase to resist trimming: every phase before
+  it produced a format, and this one produces the reason anybody writes in it.
+- **UIA pattern availability at the hit-test.** The recorder infers the verb from
+  the control type alone, which gets the common cases; reading which patterns the
+  clicked element actually supports would sharpen it, and it is a property read on
+  an element already in hand.
+- **The resolved-selector attributes** — `journey.selector.candidates`,
+  `.resolved.name`, `.resolved.control_type`. The resolver computes the match
+  count already; nothing reports it back out of the tool call.
+- **Live export of journey spans.** Written to disk today, sent nowhere.
+  Deliberately deferred: assertion observed values are screen content, so export
+  has to be separately configurable from the file artifact.
 
 ---
 
@@ -322,6 +399,10 @@ manual smoke test on a real desktop:
 Now also worth confirming, since #73 changed both: that redaction fails **closed**
 where UIA cannot report the focused element, and that keystrokes injected by a
 concurrent agent session are **not** captured.
+
+Sequence this **before** the recorder work in *Criterions for journey's-as-code*:
+verb and selector inference build directly on the hit-test path, and validating
+the path as it stands is cheaper than debugging it underneath new inference.
 
 ---
 

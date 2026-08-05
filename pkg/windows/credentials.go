@@ -60,6 +60,11 @@ func Credentials() inventory.ServerTool {
 						Type:        "integer",
 						Description: "Optional: click this Snapshot label (e.g. the password field) before typing.",
 					},
+					"automation_id": {
+						Type: "string",
+						Description: "Optional: click the element with this automation id before typing. " +
+							"The most stable way to name a password field.",
+					},
 					"name_target": {
 						Type:        "string",
 						Description: "Optional: click the element with this UIA name before typing (alternative to label).",
@@ -68,9 +73,18 @@ func Credentials() inventory.ServerTool {
 						Type:        "string",
 						Description: "Optional: narrow name_target to this control type (e.g. Edit).",
 					},
+					"name_match": {
+						Type: "string", Enum: []any{"exact", "contains", "matches"},
+						Description: "Optional: how name_target is matched. Default exact.",
+					},
+					"occurrence": {
+						Type: "string",
+						Description: "Optional: which match to use when several share a name — 'unique' " +
+							"(default, ambiguity fails), 'first', or a 0-based index.",
+					},
 					"nth": {
 						Type:        "integer",
-						Description: "Optional: which name_target match to use when several share a name (0-based).",
+						Description: "Deprecated alias for occurrence: a 0-based index among name_target matches.",
 					},
 					"loc": {
 						Type:        "array",
