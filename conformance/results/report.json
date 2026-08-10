@@ -1,8 +1,8 @@
 {
   "server_version": "dev",
-  "commit": "a8ab59ef8ae160c5dd14da01bce308db9cc8ed3d",
-  "generated_at": "2026-08-03T07:31:43Z",
-  "run_url": "https://github.com/deploymenttheory/windows-mcp-server/actions/runs/30793807866",
+  "commit": "43e39eb8236b22df139742b1dd9a443bfee0582c",
+  "generated_at": "2026-08-10T06:52:11Z",
+  "run_url": "https://github.com/deploymenttheory/windows-mcp-server/actions/runs/31363295698",
   "passes": [
     {
       "name": "product",
@@ -291,7 +291,7 @@
           "name": "JsonSchema2020_12ToolFound",
           "description": "Server advertises tool 'json_schema_2020_12_tool'",
           "status": "FAILURE",
-          "errorMessage": "Tool 'json_schema_2020_12_tool' not found. Available tools: App, Assert, CaptureEvidence, Click, Clipboard, Credentials, DisplayInventory, FileSystem, GetText, GuardrailStatus, Invoke, Kill, Move, MultiEdit, MultiSelect, Notification, PowerShell, Process, Recording, Registry, Scrape, Screenshot, Scroll, Service, Shortcut, Snapshot, SystemInfo, Type, Wait, WaitFor"
+          "errorMessage": "Tool 'json_schema_2020_12_tool' not found. Available tools: App, Apply, Assert, CaptureEvidence, Click, Clipboard, Credentials, DisplayInventory, EventLog, FileSystem, GetText, GuardrailStatus, Invoke, Kill, LaunchExecutable, Move, MultiEdit, MultiSelect, Network, Notification, Package, Plan, PowerShell, Process, Recording, Registry, ScheduledTask, Scrape, Screenshot, Scroll, Service, Shortcut, Snapshot, SystemInfo, Type, Wait, WaitFor"
         },
         {
           "id": "prompts-get-embedded-resource",
