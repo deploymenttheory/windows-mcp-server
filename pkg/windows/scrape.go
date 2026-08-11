@@ -17,7 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/net/html"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/hostmatch"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/hostmatch"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
 )
 

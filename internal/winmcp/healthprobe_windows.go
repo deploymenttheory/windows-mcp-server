@@ -8,10 +8,10 @@ import (
 	"math/bits"
 	"unsafe"
 
+	"github.com/deploymenttheory/agentweave-harness/guardrails/signals"
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/system/registry"
 	"github.com/deploymenttheory/go-bindings-win32/bindings/win32/system/tpmbaseservices"
 	wmirt "github.com/deploymenttheory/go-bindings-wmi/runtime/wmi"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
 )
 
 // The systemProbe also implements signals.HealthProbe. Every method reads

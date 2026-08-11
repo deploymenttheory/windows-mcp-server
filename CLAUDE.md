@@ -20,7 +20,7 @@ built on `deploymenttheory/go-bindings-win32`, `go-bindings-wmi`, and the offici
 | `internal/desktop` | the Win32/UIA/WMI engine — one COM STA thread |
 | `pkg/windows` | tool definitions (one file per topic) + toolset/persona metadata |
 | `pkg/inventory` | domain-agnostic toolset filter/registration engine (mirrors `github-mcp-server`) |
-| `internal/guardrails` | the security stack, split by lifecycle layer (see below) |
+| `agentweave-harness/guardrails/*` (imported module) | the security stack, split by lifecycle layer (see below) |
 | `policy/examples` | starting-point policy documents (validated by the test suite) |
 | `internal/mcpspec` | vendored-schema loader + offline wire validation (platform-agnostic; no build tag) |
 | `internal/mcpconf` | official conformance-suite results: ingest + reporting (no build tag) |
@@ -184,30 +184,18 @@ A policy engine on the request path, plus an out-of-band kill switch. See
 `docs/security-architecture.md` for the design and `docs/policy-config.md` for the
 document schema.
 
-`internal/guardrails` is split by lifecycle layer, and the import graph is
-acyclic in that order:
-
-| Package | Holds | Depends on |
-|---|---|---|
-| `signals` | signal vocabulary, probes, `Registry`, the checks, `Decision` | — |
-| `audit` | hash chain, destination, `VerifyChain` | — |
-| `hostmatch` | egress allowlist compiler, wildcard matcher, forbidden-address ranges | — |
-| `policy` | document schema, signal cache, engine, verdict | `signals`, `hostmatch` |
-| `egress` | device egress proxy, counters, `Enforcer` | `hostmatch` |
-| `enforce` | the MCP middleware | `policy`, `audit` |
-| `watch` | heartbeat, rug-pull, monitor | `audit`, `signals` |
-| `contain` | kill switch, ladder, actuator, firewall | `audit`, `signals` |
-| `status` | status endpoint, `GuardrailStatus` + `Kill` tools | `signals`, `contain` |
-
-Two properties are worth preserving:
-
-- **`signals`, `audit` and `hostmatch` are leaves.** Recording must never be
-  contingent on the thing being recorded, the signal catalogue must stay evaluable
-  on its own, and `hostmatch` has to be importable by `policy` (so a malformed
-  allowlist fails at load) without dragging the proxy in behind it.
-- **`policy` has no MCP dependency.** The decision is testable against fake
-  signals and a fake tool index, with no transport. Anything MCP-shaped about
-  enforcement belongs in `enforce`.
+**The guardrails packages live in the
+[agentweave-harness](https://github.com/deploymenttheory/agentweave-harness)
+module** (`guardrails/{signals,audit,hostmatch,policy,egress,enforce,watch,contain,status,evidence,export,plan,telemetry}`)
+— extracted from this repo's former `internal/guardrails` so a separate harness
+process can eventually own adjudication. This server imports them for its
+standalone (in-process) stack; their layer table, acyclic-import rule and
+package-level invariants are documented in that repo's CLAUDE.md, and their
+package tests run in that repo's CI, not here. Everything below about how this
+server *wires* them still applies, and the wiring-level tests
+(`TestReceivingMiddlewareRunsOutermostFirst`, `TestServerDefaultPolicyIsAuditOnly`,
+…) stay in this repo. When a change here needs a guardrails-package change, that
+is a two-PR dance: harness PR + tag first, then bump the pin in go.mod.
 
 Everything is configured by a JSON document — `--policy-config` is the only
 security flag.
@@ -242,7 +230,7 @@ security flag.
 
 ### The egress proxy: two orderings and a listener
 
-`internal/guardrails/egress` is a loopback forward proxy admitting only the
+The `egress` guardrails package is a loopback forward proxy admitting only the
 domains `policy.EgressPolicy` declares. Three properties are load-bearing:
 
 - **The allowlist is checked before the name is resolved.** A refused host must
@@ -375,8 +363,8 @@ unbuffered job channel.
 ## Enforce HTTPS
 
 `"enforce_https": true` in the policy document refuses plaintext `http://`
-targets. `pkg/windows/urlpolicy.go` owns the tool-layer policy;
-`internal/guardrails/signals/remote.go` applies it to the may-run endpoint via
+targets. `pkg/windows/urlpolicy.go` owns the tool-layer policy; the guardrails
+`signals` package (`remote.go`) applies it to the may-run endpoint via
 `Env.EnforceHTTPS`. RunStdio copies the setting onto `Config` right after loading,
 because it has to reach the tool dependencies and the guardrail `Env`, neither of
 which carries a policy.
@@ -522,11 +510,10 @@ with no pinned baseline is skipped rather than treated as drift.
 
 Everything is `//go:build windows && (amd64 || arm64)` **except** the
 deliberately platform-agnostic files: `pkg/windows/{toolsets,params,result}.go`,
-all of `pkg/inventory`, all of `internal/mcpspec`, all of `internal/mcpconf`, and
-all of `internal/guardrails` except its `contain` actuators and the `signals`
-run-context detector. `hostmatch` and `egress` are untagged for the same reason —
-the allowlist decision and the proxy's request path are pure Go and must stay
-runnable without a Windows host; only the future `egress` OS enforcer is tagged.
+all of `pkg/inventory`, all of `internal/mcpspec`, and all of `internal/mcpconf`.
+(The guardrails packages, which carry the same untagged-core / windows-tagged-
+actuation split, now live in the agentweave-harness module, whose CI runs an
+ubuntu leg precisely to keep that core runnable without a Windows host.)
 Preserve that split — it is what keeps the filter engine, the schema validation,
 the conformance reporting and the security logic testable in isolation.
 

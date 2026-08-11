@@ -26,8 +26,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
 )
 
 // credentialFileMaxSize bounds the credentials document, so a mistyped path at a

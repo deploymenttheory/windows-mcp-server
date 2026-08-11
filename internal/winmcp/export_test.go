@@ -14,9 +14,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/evidence"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/export"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/evidence"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/export"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
 )
 
 // fakeSink records what the seal handed it, and can be made to fail or panic.

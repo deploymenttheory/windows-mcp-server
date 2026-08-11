@@ -12,9 +12,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/contain"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/status"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/contain"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/signals"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/status"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )
 

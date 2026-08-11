@@ -14,9 +14,9 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy/policytest"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy/policytest"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/signals"
 )
 
 // ErrBadFixtureStatus reports a device signal status that is not pass/fail/error.

@@ -3,7 +3,7 @@ package journeys
 import (
 	"slices"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/plan"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/plan"
 )
 
 // This file is docs/journey-taxonomy.md expressed as data: the closed sets of

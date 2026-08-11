@@ -12,12 +12,12 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/enforce"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/plan"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy/policytest"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/enforce"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/plan"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy/policytest"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/signals"
 )
 
 // fakePlanApprover returns a fixed outcome for every step it adjudicates.

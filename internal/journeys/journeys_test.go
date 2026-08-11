@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/plan"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/plan"
 )
 
 const goodJourney = `{

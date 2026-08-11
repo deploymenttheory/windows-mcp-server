@@ -5,7 +5,7 @@ package winmcp
 import (
 	"testing"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
 )
 
 type fakeAnchorWriter struct{ heads []string }

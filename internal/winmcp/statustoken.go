@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
 )
 
 // resolveStatusToken produces the bearer credential for the status endpoint,

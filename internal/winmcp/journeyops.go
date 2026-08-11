@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/signals"
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
 	"github.com/deploymenttheory/windows-mcp-server/internal/journeys"
 	"github.com/deploymenttheory/windows-mcp-server/internal/runrecord"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
