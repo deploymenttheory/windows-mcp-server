@@ -43,6 +43,18 @@ jobs:
           go mod verify
           go mod tidy -diff
 
+      # The agentweave-harness dependency is developed in lockstep with this
+      # repo, so working branches may point it at a local checkout. A replace
+      # directive that reaches main would make releases build against code no
+      # tag describes — refuse it here.
+      - name: Refuse replace directives
+        shell: bash
+        run: |
+          if grep -E '^replace ' go.mod; then
+            echo 'go.mod carries a replace directive; pin a published tag instead.' >&2
+            exit 1
+          fi
+
       - name: Build (amd64)
         run: go build ./...
 
