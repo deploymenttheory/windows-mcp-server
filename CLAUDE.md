@@ -200,6 +200,33 @@ is a two-PR dance: harness PR + tag first, then bump the pin in go.mod.
 Everything is configured by a JSON document — `--policy-config` is the only
 security flag.
 
+### Harness servant mode
+
+When the agentweave-harness process spawns this server it sets
+`AGENTWEAVE_CONTROL_PIPE` and `AGENTWEAVE_CONTROL_TOKEN` in the environment.
+`harnesslink.go` detects that, dials the control channel, authenticates with the
+token (then scrubs both vars, like every other secret env var), and serves the
+harness: `signal.evaluate` runs registered guardrail checks **by declared id
+only** (`harnessServant.handleSignalEvaluate`), `actuate` executes a **closed
+rung set** (`buildRungs` in `harnessrungs.go`) mapped onto the same primitives
+the local kill executor uses, and heartbeats/credential-events/audit-anchors are
+pushed up. There is deliberately no generic execution verb on the channel — the
+two properties `TestServantNeverExposesRunShell` and
+`TestServantSignalEvaluateUsesDeclaredIdsOnly` pin, so a harness compromise
+cannot become RCE on this host. Channel loss cancels the run context
+(`errHarnessChannelLost`), so the ordinary LIFO teardown — credential cleanup
+included — runs exactly as on any other exit.
+
+This mode is **additive**: the server still wires its full in-process guardrail
+stack (a Phase-3 harness acks observe mode and drives nothing), and with no
+harness present `harnessAddress()` is empty and the server runs standalone
+unchanged. The servant is a separate implementer of the wire contract — it
+imports the public `wire` package but never the harness's internal transport, so
+the pipe is dialed with go-winio directly. Servant wire-protocol logic is tested
+over `net.Pipe` (`harnesslink_test.go`); note `net.Pipe` and the Windows control
+pipe are both synchronous, so a test that has the servant send and the test read
+must do so on separate goroutines or it deadlocks.
+
 ### Invariants that are easy to break
 
 - **The default must never refuse.** `policy_default.json` applies whenever no
