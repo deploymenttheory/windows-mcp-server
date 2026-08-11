@@ -5,9 +5,9 @@ Produced by the official conformance suite, [modelcontextprotocol/conformance](h
 | | |
 |---|---|
 | Server version | `dev` |
-| Commit | `a8ab59ef8ae160c5dd14da01bce308db9cc8ed3d` |
-| Generated | `2026-08-03T07:31:43Z` |
-| Workflow run | https://github.com/deploymenttheory/windows-mcp-server/actions/runs/30793807866 |
+| Commit | `43e39eb8236b22df139742b1dd9a443bfee0582c` |
+| Generated | `2026-08-10T06:52:11Z` |
+| Workflow run | https://github.com/deploymenttheory/windows-mcp-server/actions/runs/31363295698 |
 
 ## Summary
 
@@ -24,7 +24,7 @@ Gated against `conformance/baseline-product.yml`; a failure not listed there fai
 
 | Check | Problem |
 |---|---|
-| `json-schema-2020-12-tool-found` | Tool 'json_schema_2020_12_tool' not found. Available tools: App, Assert, CaptureEvidence, Click, Clipboard, Credentials, DisplayInventory, FileSystem, GetText, GuardrailStatus, Invoke, Kill, Move, MultiEdit, MultiSelect, Notification, PowerShell, Process, Recording, Registry, Scrape, Screenshot, Scr… |
+| `json-schema-2020-12-tool-found` | Tool 'json_schema_2020_12_tool' not found. Available tools: App, Apply, Assert, CaptureEvidence, Click, Clipboard, Credentials, DisplayInventory, EventLog, FileSystem, GetText, GuardrailStatus, Invoke, Kill, LaunchExecutable, Move, MultiEdit, MultiSelect, Network, Notification, Package, Plan, PowerS… |
 | `prompts-get-embedded-resource` | Failed: unknown prompt "test_prompt_with_embedded_resource" |
 | `prompts-get-simple` | Failed: unknown prompt "test_simple_prompt" |
 | `prompts-get-with-args` | Failed: unknown prompt "test_prompt_with_arguments" |
