@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -27,6 +28,7 @@ import (
 	"github.com/deploymenttheory/agentweave-harness/guardrails/status"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/telemetry"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/watch"
+	"github.com/deploymenttheory/agentweave-harness/wire"
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
@@ -390,6 +392,74 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	})
 	kill := contain.NewKillSwitch(executor.OnTrip)
 	defer func() { _ = executor.Restore() }() // undo firewall isolation on exit
+
+	// --- agentweave-harness control channel (servant side) ---
+	// When the harness spawned this server it left the channel address and a
+	// bootstrap token in the environment. Dial back, authenticate, and serve
+	// signal evaluation, actuation and liveness for the session. This is
+	// additive: the local guardrail stack below is wired exactly as in
+	// standalone mode; a Phase-3 harness acks observe mode and drives nothing.
+	// When no harness is present, harnessAddress() is empty and the server runs
+	// standalone unchanged.
+	if pipe, token := harnessAddress(); pipe != "" {
+		var restoreMu sync.Mutex
+		var harnessRestore func() error
+		defer func() {
+			restoreMu.Lock()
+			r := harnessRestore
+			restoreMu.Unlock()
+			if r != nil {
+				_ = r()
+			}
+		}()
+
+		rungs := buildRungs(rungPrimitives{
+			Actuator:     actuator,
+			Banner:       dsk.ShowSecurityBanner,
+			Seal:         audit.Flush,
+			Finalize:     func() { _ = dsk.Close() },
+			CleanupCreds: cleanupCreds,
+			SetRestore: func(r func() error) {
+				restoreMu.Lock()
+				harnessRestore = r
+				restoreMu.Unlock()
+			},
+			Logger: logger,
+		})
+
+		servant, ack, derr := attachHarness(pipe, token, cfg.Version, sessionStamp, servantDeps{
+			Registry:   reg,
+			EnvFn:      envFn,
+			Rungs:      rungs,
+			Alive:      func() bool { return true },
+			RunContext: runContext,
+			Elevated:   actuator.Elevated(),
+			Logger:     logger,
+			OnLost: func(cause error) {
+				if cause == nil {
+					cancel(errHarnessChannelLost)
+					return
+				}
+				cancel(fmt.Errorf("%w: %w", errHarnessChannelLost, cause))
+			},
+		})
+		// The token has done its job. Scrub both bootstrap vars so no tool the
+		// agent runs can read the channel credential back — the same discipline
+		// scrubSecretEnv applies to the policy's secrets.
+		_ = os.Unsetenv(envHarnessPipe)
+		_ = os.Unsetenv(envHarnessToken)
+		if derr != nil {
+			return fmt.Errorf("agentweave-harness: %w", derr)
+		}
+		defer func() { _ = servant.Close() }()
+		logger.Info("attached to agentweave-harness", "mode", ack.Mode, "proto", ack.Proto)
+
+		go servant.serve(runCtx)
+		servant.StartHeartbeat(runCtx, heartbeatFromAck(ack))
+		if names := installedCredentialNames(installedCreds); len(names) > 0 {
+			_ = servant.PushCredentialEvent(wire.CredentialInstalled, names)
+		}
+	}
 
 	// Out-of-band approvals for on_fail: hold rules. Off unless a webhook is
 	// configured; a policy that uses approve without one is refused at load, so a nil
