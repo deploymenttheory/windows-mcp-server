@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/egress"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/hostmatch"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/status"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/egress"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/hostmatch"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/status"
 )
 
 // egressSummaryInterval is how often the running totals are folded into the

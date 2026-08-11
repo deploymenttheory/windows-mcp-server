@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/contain"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/contain"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
 )
 
 // TestEnforceHTTPSResolution pins that the setting comes from Config, which

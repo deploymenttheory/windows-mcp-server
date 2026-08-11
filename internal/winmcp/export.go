@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/export"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/status"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/export"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/status"
 )
 
 // provisionExport builds the evidence-export sink for a configured destination and

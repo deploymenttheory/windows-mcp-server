@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/export"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/export"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
 )
 
 // secretEnvVars are the environment variables holding a secret this server reads

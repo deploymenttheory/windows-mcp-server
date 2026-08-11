@@ -21,8 +21,8 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/evidence"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/evidence"
 	"github.com/deploymenttheory/windows-mcp-server/internal/journeys"
 	"github.com/deploymenttheory/windows-mcp-server/internal/mcpconf"
 	"github.com/deploymenttheory/windows-mcp-server/internal/winmcp"

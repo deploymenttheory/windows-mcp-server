@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/evidence"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/export"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/plan"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/evidence"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/export"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/plan"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
 )
 
 // verdictPrefixes are the audit events extracted into a bundle's verdicts.json —

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )

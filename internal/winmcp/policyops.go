@@ -9,9 +9,9 @@ import (
 	"log/slog"
 	"sort"
 
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/signals"
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/signals"
 )
 
 // The operator-facing operations behind the `policy` subcommands. They exist so

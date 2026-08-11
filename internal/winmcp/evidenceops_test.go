@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/evidence"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/plan"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/evidence"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/plan"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
 )
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

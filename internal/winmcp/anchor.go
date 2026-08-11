@@ -10,8 +10,8 @@ import (
 
 	"golang.org/x/sys/windows/svc/eventlog"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/audit"
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/policy"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
 )
 
 // eventLogSource is the Application-log source name the anchor writes under. If it

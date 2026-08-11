@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/evidence"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/evidence"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )
 

@@ -22,7 +22,18 @@ issues:
   new: true
 
   # Define the “base” for “new” issues as the merge-base against main.
-  new-from-merge-base: main
+  #
+  # origin/main, not bare `main`: on a pull_request the go-lint workflow checks
+  # out refs/pull/N/merge in detached HEAD and creates only the remote-tracking
+  # ref (checkout logs "* [new branch] main -> origin/main"); no local `main`
+  # branch exists, so `git merge-base main HEAD` fails "Not a valid object name
+  # main" and golangci-lint's new-detection silently falls back to reporting the
+  # whole backlog. Small PRs never noticed because the action's only-new-issues
+  # patch fetch masked it — but that fetch 404s once a PR's diff exceeds
+  # GitHub's 20000-line API cap, and then both filters are gone at once and the
+  # gate fails on pre-existing debt in untouched files. origin/main resolves in
+  # both CI and a normal local checkout.
+  new-from-merge-base: origin/main
 
   # Report only the changed lines, not every pre-existing issue in a touched file.
   #

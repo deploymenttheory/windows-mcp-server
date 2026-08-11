@@ -43,6 +43,18 @@ jobs:
           go mod verify
           go mod tidy -diff
 
+      # The agentweave-harness dependency is developed in lockstep with this
+      # repo, so working branches may point it at a local checkout. A replace
+      # directive that reaches main would make releases build against code no
+      # tag describes — refuse it here.
+      - name: Refuse replace directives
+        shell: bash
+        run: |
+          if grep -E '^replace ' go.mod; then
+            echo 'go.mod carries a replace directive; pin a published tag instead.' >&2
+            exit 1
+          fi
+
       - name: Build (amd64)
         run: go build ./...
 
@@ -56,8 +68,9 @@ jobs:
       # The UI Automation engine tests self-skip when the environment cannot host
       # UIA (hosted runners have no interactive desktop session), so this job
       # guarantees compilation plus the pure-logic suites: pkg/inventory,
-      # pkg/windows (manifest invariants, param coercion), internal/guardrails,
-      # and internal/winmcp. -v keeps those skips visible rather than silent.
+      # pkg/windows (manifest invariants, param coercion), and internal/winmcp.
+      # (The guardrails package suites run in the agentweave-harness repo's CI.)
+      # -v keeps those skips visible rather than silent.
       - name: Test
         run: go test ./... -count=1 -v
 

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/guardrails/plan"
+	"github.com/deploymenttheory/agentweave-harness/guardrails/plan"
 )
 
 // The tools a verb or an assertion lowers to. A journey document names none of
