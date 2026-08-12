@@ -386,6 +386,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	var servant *harnessServant
 	var harnessRestoreMu sync.Mutex
 	var harnessRestore func() error
+	egressRestore := &egressRestoreHolder{}
 	if pipe, token := harnessAddress(); pipe != "" {
 		rungs := buildRungs(rungPrimitives{
 			Actuator:     actuator,
@@ -398,7 +399,14 @@ func RunStdio(ctx context.Context, cfg Config) error {
 				harnessRestore = r
 				harnessRestoreMu.Unlock()
 			},
-			Logger: logger,
+			// The egress rungs drive the composed policy's OS enforcement on
+			// this host. A fresh enforcer: its recovery state lives on disk,
+			// so it needs no shared object with the local egress path (which,
+			// in enforce mode, is not running — the server's own policy has
+			// egress off).
+			Egress:        egress.WindowsEnforcer{Logger: logger},
+			EgressRestore: egressRestore,
+			Logger:        logger,
 		})
 
 		s, ack, derr := attachHarness(pipe, token, cfg.Version, sessionStamp, servantDeps{
@@ -501,6 +509,11 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// up: the servant closes and the isolation restore runs first, then the
 	// executor's Restore, then the egress teardown they were layered over.
 	if servant != nil {
+		// The egress firewall rules a harness egress_apply installed come out
+		// on exit, in case the harness never sent an explicit egress_restore
+		// (a crash, a lost channel). run() is idempotent, so an explicit
+		// restore already having fired makes this a no-op.
+		defer func() { _ = egressRestore.run() }()
 		defer func() {
 			harnessRestoreMu.Lock()
 			r := harnessRestore
