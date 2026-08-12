@@ -396,11 +396,20 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// --- agentweave-harness control channel (servant side) ---
 	// When the harness spawned this server it left the channel address and a
 	// bootstrap token in the environment. Dial back, authenticate, and serve
-	// signal evaluation, actuation and liveness for the session. This is
-	// additive: the local guardrail stack below is wired exactly as in
-	// standalone mode; a Phase-3 harness acks observe mode and drives nothing.
-	// When no harness is present, harnessAddress() is empty and the server runs
-	// standalone unchanged.
+	// signal evaluation, actuation and liveness for the session. When no harness
+	// is present, harnessAddress() is empty and the server runs standalone
+	// unchanged.
+	//
+	// The hello.ack's mode decides how much of the local guardrail stack is
+	// wired below. An observe ack is additive: the full in-process stack runs
+	// exactly as in standalone mode. An enforce ack means a live policy decider
+	// stands between the client and this process — the harness refuses on the
+	// wire, audits every frame, and fingerprints the manifest surfaces it
+	// serves — so the duplicated in-process layers (enforce, rug-pull,
+	// telemetry, the GuardrailStatus/Kill tools) are shed rather than run
+	// twice. The harness only acks enforce once its decider is actually
+	// installed, which is what makes that shedding safe.
+	harnessEnforcing := false
 	if pipe, token := harnessAddress(); pipe != "" {
 		var restoreMu sync.Mutex
 		var harnessRestore func() error
@@ -452,7 +461,12 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			return fmt.Errorf("agentweave-harness: %w", derr)
 		}
 		defer func() { _ = servant.Close() }()
-		logger.Info("attached to agentweave-harness", "mode", ack.Mode, "proto", ack.Proto)
+		harnessEnforcing = ack.Mode == wire.ModeEnforce
+		logger.Info("attached to agentweave-harness", "mode", ack.Mode, "proto", ack.Proto,
+			"local_enforcement", !harnessEnforcing)
+		_, _ = audit.Append("harness.attached", map[string]any{
+			"mode": ack.Mode, "local_enforcement": !harnessEnforcing,
+		})
 
 		go servant.serve(runCtx)
 		servant.StartHeartbeat(runCtx, heartbeatFromAck(ack))
@@ -515,7 +529,11 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		recordDecision      func(subject, severity, mode string)
 		telemetryMiddleware mcp.Middleware
 	)
-	if devicePolicy.Telemetry.Endpoint != "" {
+	// Not constructed at all under an enforcing harness: the exporter's spans
+	// describe the request path, which the harness now owns, and recordDecision
+	// feeds the enforce middleware being shed alongside it — the two go together
+	// or a dangling reference is left behind.
+	if devicePolicy.Telemetry.Endpoint != "" && !harnessEnforcing {
 		tele, terr := telemetry.New(ctx, telemetry.Config{
 			Endpoint:    devicePolicy.Telemetry.Endpoint,
 			SampleRatio: devicePolicy.Telemetry.SampleRatio,
@@ -558,15 +576,16 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// should cover the rug-pull and policy work that follows. The policy engine is
 	// innermost, so nothing can route around it and the audit and rug-pull layers
 	// still observe the requests it refuses.
-	chain := []mcp.Middleware{audit.Middleware()}
-	if telemetryMiddleware != nil {
-		chain = append(chain, telemetryMiddleware)
-	}
-	chain = append(chain,
-		rugpull.Middleware(),
-		rugpull.PromptMiddleware(),
-		rugpull.ResourceMiddleware(),
-		rugpull.DiscoverMiddleware(),
+	surface.installReceiving(receivingChain(
+		harnessEnforcing,
+		audit.Middleware(),
+		telemetryMiddleware,
+		[]mcp.Middleware{
+			rugpull.Middleware(),
+			rugpull.PromptMiddleware(),
+			rugpull.ResourceMiddleware(),
+			rugpull.DiscoverMiddleware(),
+		},
 		enforce.Middleware(engine, enforce.EnforcerDeps{
 			Audit:           audit,
 			Kill:            tripPolicy,
@@ -576,8 +595,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			ApprovalTimeout: devicePolicy.Approvals.Timeout.Std(),
 			Logger:          logger,
 		}),
-	)
-	surface.installReceiving(chain...)
+	)...)
 
 	// RegisterAll rather than RegisterTools: resources and prompts are part of the
 	// served surface too. Note RegisterResources (fixed URIs) and
@@ -585,64 +603,83 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// returns only the former.
 	inv.RegisterAll(runCtx, server, deps)
 
-	// Guardrail tools registered unconditionally (present under any persona).
-	statusTool, statusHandler := status.StatusTool(
-		holder.get,
-		snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress,
-			exportStatus(devicePolicy.Transparency.Export, exportSink)),
-		kill,
-	)
-	server.AddTool(statusTool, statusHandler)
-	// The agent-facing Kill tool always stops the session, but only actuates the
-	// containment ladder when the policy configures containment. It is not an
-	// authoritative trigger: a misbehaving model must not be able to isolate or
-	// shut down the device by asking.
-	stopSession := executor.StopGracefully
-	if devicePolicy.Kill.Actions.Isolate || devicePolicy.Kill.Actions.Lock || devicePolicy.Kill.Actions.Shutdown {
-		stopSession = kill.Trip
+	// Guardrail tools and rug-pull baselines are one block, registered together
+	// or not at all: the Status/Kill tools are part of the pinned tool surface
+	// (they sit in baselineTools), so registering one half without the other
+	// would either baseline tools that are never served or serve tools outside
+	// the baseline — both read as drift. Under an enforcing harness the whole
+	// block is shed: the harness injects and answers its own Status/Kill tools
+	// and fingerprints every manifest surface from the wire, where a tampered
+	// server cannot vouch for itself.
+	var baselineTools []*mcp.Tool
+	if !harnessEnforcing {
+		// Registered unconditionally within the local stack (present under any
+		// persona).
+		statusTool, statusHandler := status.StatusTool(
+			holder.get,
+			snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress,
+				exportStatus(devicePolicy.Transparency.Export, exportSink)),
+			kill,
+		)
+		server.AddTool(statusTool, statusHandler)
+		// The agent-facing Kill tool always stops the session, but only actuates the
+		// containment ladder when the policy configures containment. It is not an
+		// authoritative trigger: a misbehaving model must not be able to isolate or
+		// shut down the device by asking.
+		stopSession := executor.StopGracefully
+		if devicePolicy.Kill.Actions.Isolate || devicePolicy.Kill.Actions.Lock || devicePolicy.Kill.Actions.Shutdown {
+			stopSession = kill.Trip
+		}
+		killTool, killHandler := status.KillTool(stopSession)
+		server.AddTool(killTool, killHandler)
+
+		// Pin the rug-pull baselines over the full served surface. Prompts and
+		// resources are pinned too: a mutated prompt changes the instructions the
+		// model follows, and a mutated resource URI changes what it reads, so both are
+		// rug-pull vectors as much as a mutated tool is.
+		baselineTools = append(invMCPTools(runCtx, inv), statusTool, killTool)
+		baseHash := rugpull.SetBaseline(baselineTools)
+		_, _ = audit.Append("tools.pinned", map[string]any{"hash": baseHash, "count": len(baselineTools)})
+
+		basePrompts := invMCPPrompts(runCtx, inv)
+		promptHash := rugpull.SetPromptBaseline(basePrompts)
+		_, _ = audit.Append("prompts.pinned", map[string]any{"hash": promptHash, "count": len(basePrompts)})
+
+		baseResources := invMCPResources(runCtx, inv)
+		resourceHash := rugpull.SetResourceBaseline(baseResources)
+		_, _ = audit.Append("resources.pinned", map[string]any{"hash": resourceHash, "count": len(baseResources)})
+
+		// Protocol 2026-07-28 removed the initialize handshake and made server/discover
+		// the canonical advertisement of capabilities and instructions, so it is pinned
+		// too — otherwise a widened capability set or rewritten model instructions would
+		// drift entirely unwatched.
+		discoverHash := rugpull.SetDiscoverBaseline(surface.Capabilities, surface.Instructions)
+		_, _ = audit.Append("discover.pinned", map[string]any{"hash": discoverHash})
 	}
-	killTool, killHandler := status.KillTool(stopSession)
-	server.AddTool(killTool, killHandler)
-
-	// Pin the rug-pull baselines over the full served surface. Prompts and
-	// resources are pinned too: a mutated prompt changes the instructions the
-	// model follows, and a mutated resource URI changes what it reads, so both are
-	// rug-pull vectors as much as a mutated tool is.
-	baselineTools := append(invMCPTools(runCtx, inv), statusTool, killTool)
-	baseHash := rugpull.SetBaseline(baselineTools)
-	_, _ = audit.Append("tools.pinned", map[string]any{"hash": baseHash, "count": len(baselineTools)})
-
-	basePrompts := invMCPPrompts(runCtx, inv)
-	promptHash := rugpull.SetPromptBaseline(basePrompts)
-	_, _ = audit.Append("prompts.pinned", map[string]any{"hash": promptHash, "count": len(basePrompts)})
-
-	baseResources := invMCPResources(runCtx, inv)
-	resourceHash := rugpull.SetResourceBaseline(baseResources)
-	_, _ = audit.Append("resources.pinned", map[string]any{"hash": resourceHash, "count": len(baseResources)})
-
-	// Protocol 2026-07-28 removed the initialize handshake and made server/discover
-	// the canonical advertisement of capabilities and instructions, so it is pinned
-	// too — otherwise a widened capability set or rewritten model instructions would
-	// drift entirely unwatched.
-	discoverHash := rugpull.SetDiscoverBaseline(surface.Capabilities, surface.Instructions)
-	_, _ = audit.Append("discover.pinned", map[string]any{"hash": discoverHash})
 
 	// The engine can now resolve tools; from here every request is decided against
 	// the manifest that is actually served.
 	engine.SetIndex(newToolIndex(runCtx, inv))
 
 	// --- In-flight: signal refresh, posture drift, sentinel, always-on verifiers ---
-	verifiers := append(
+	verifiers := []watch.VerifyFunc{
 		// Refreshing the signal cache first means the posture re-evaluation below
 		// reads warm values rather than paying for the device probes itself.
-		[]watch.VerifyFunc{{
+		{
 			Name: "signal-refresh",
 			Run:  engine.Refresh,
 			Trip: tripPostureDrift,
-		}},
-		monitorVerifiers(heartbeat, rugpull, func() []*mcp.Tool { return baselineTools },
-			tripHeartbeat, tripRugpull)...,
-	)
+		},
+		// The local heartbeat stays in every mode: it beats into this host's own
+		// audit chain, which the harness reads but does not write.
+		{Name: "heartbeat", Run: heartbeat.Beat, Trip: tripHeartbeat},
+	}
+	if !harnessEnforcing {
+		// The local rug-pull recheck only exists alongside its baseline; under an
+		// enforcing harness the fingerprints are taken from the wire instead.
+		verifiers = append(verifiers, rugpullVerifier(rugpull,
+			func() []*mcp.Tool { return baselineTools }, tripRugpull))
+	}
 	watch.StartMonitor(runCtx, watch.MonitorConfig{
 		Interval:         devicePolicy.InFlight.Interval.Std(),
 		ControlDir:       devicePolicy.InFlight.ControlDir,
@@ -790,21 +827,6 @@ func invMCPResources(ctx context.Context, inv *inventory.Inventory) []*mcp.Resou
 		out = append(out, &res)
 	}
 	return out
-}
-
-// monitorVerifiers assembles the always-on in-flight checks (heartbeat + rug-pull
-// recheck). They run on every monitor tick and are not agent-disableable. Each
-// carries its own caller-gated trip function so the two triggers arm separately.
-func monitorVerifiers(
-	hb *watch.Heartbeat,
-	rp *watch.RugPull,
-	tools func() []*mcp.Tool,
-	tripHeartbeat, tripRugpull func(string),
-) []watch.VerifyFunc {
-	return []watch.VerifyFunc{
-		{Name: "heartbeat", Run: hb.Beat, Trip: tripHeartbeat},
-		{Name: "rug-pull", Run: func(context.Context) error { return rp.Recheck(tools()) }, Trip: tripRugpull},
-	}
 }
 
 // buildInventory applies persona, toolset, read-only, and allow/deny

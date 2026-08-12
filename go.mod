@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
+	github.com/deploymenttheory/agentweave-harness v0.3.0
 	github.com/deploymenttheory/go-bindings-win32 v0.2.1
 	github.com/deploymenttheory/go-bindings-wmi v1.0.0
 	github.com/google/jsonschema-go v0.4.3
@@ -31,7 +32,6 @@ require (
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/deploymenttheory/agentweave-harness v0.2.0
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

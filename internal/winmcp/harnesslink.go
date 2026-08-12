@@ -8,10 +8,13 @@ package winmcp
 // and then serves the harness's requests — evaluating declared signals,
 // executing actuation rungs, and pushing liveness and lifecycle events.
 //
-// Phase 3 scope: the link is additive. The server still wires its full local
-// guardrail stack; the harness acks observe mode and drives nothing. What this
-// file establishes is the servant contract itself, so Phase 4 can move the
-// decision out of process without the server changing again.
+// The hello.ack's mode sets how the rest of startup wires the local stack.
+// Under an observe ack the link is additive: the server still runs its full
+// in-process guardrail stack. Under an enforce ack — which the harness sends
+// only once its own policy decider is actually installed on the proxy path —
+// RunStdio sheds the duplicated local layers (enforce, rug-pull, telemetry,
+// Status/Kill); see receivingChain. This file owns the servant contract
+// either way.
 //
 // Two invariants are structural here, not incidental:
 //   - There is no generic execution verb. signal.evaluate runs only guardrail

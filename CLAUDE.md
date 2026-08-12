@@ -217,10 +217,23 @@ cannot become RCE on this host. Channel loss cancels the run context
 (`errHarnessChannelLost`), so the ordinary LIFO teardown — credential cleanup
 included — runs exactly as on any other exit.
 
-This mode is **additive**: the server still wires its full in-process guardrail
-stack (a Phase-3 harness acks observe mode and drives nothing), and with no
-harness present `harnessAddress()` is empty and the server runs standalone
-unchanged. The servant is a separate implementer of the wire contract — it
+How much of the local stack runs depends on the `hello.ack`'s mode. Under an
+**observe** ack the mode is additive: the server still wires its full
+in-process guardrail stack. Under an **enforce** ack — which the harness sends
+only once its own policy decider is actually installed on the proxy path — the
+server sheds the duplicated layers: no local enforce/rug-pull/telemetry
+middleware, no GuardrailStatus/Kill tools, no rug-pull baselines or recheck
+(the harness fingerprints the manifest from the wire, where a tampered server
+cannot vouch for itself). The local **audit** middleware stays in every mode —
+this host's chain is the record of what the process actually served, kept so
+the harness's account of the session is not the only one — as do the kill
+executor and actuation rungs the harness drives. The seam is `receivingChain`
+(`localstack.go`), pinned by `TestHarnessModeInstallsNoLocalEnforcement`,
+`TestHarnessModeStillAuditsLocally` and `TestObserveAckKeepsFullLocalStack`;
+Status/Kill registration and the baselines live in one `if` block in
+`server.go` deliberately, so the pinned tool surface and the served tool
+surface can never disagree. With no harness present `harnessAddress()` is
+empty and the server runs standalone unchanged. The servant is a separate implementer of the wire contract — it
 imports the public `wire` package but never the harness's internal transport, so
 the pipe is dialed with go-winio directly. Servant wire-protocol logic is tested
 over `net.Pipe` (`harnesslink_test.go`); note `net.Pipe` and the Windows control
