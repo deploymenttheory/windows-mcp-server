@@ -17,11 +17,19 @@ windows-mcp-server stdio --policy-config C:\ProgramData\windows-mcp\policy.json
 With no document the built-in default applies: the engine is present, every
 declared signal is evaluated and every verdict recorded, and nothing is refused.
 
-> **Scope.** This document describes the design. For the document schema, the
-> signal catalogue and the flag migration table, see
-> [docs/policy-config.md](policy-config.md); for a quick start, the
-> [Security section of the README](../README.md#security).
-> The local signals are **auditable defense-in-depth, not a hard boundary** — see
+> **Scope.** This document describes the design of the *in-process* stack this
+> server runs standalone. The guardrails packages it wires were extracted into
+> the [agentweave-harness](https://github.com/deploymenttheory/agentweave-harness)
+> module, which also documents the process-boundary model (a separate harness
+> that governs this server over a control channel) — see that repo's
+> `docs/architecture.md`. The document schema, signal catalogue, egress,
+> monitoring, evidence and plan-and-apply references moved there too (this
+> repo's `docs/policy-config.md` and the other moved docs now redirect). What
+> stays here is the host-side residue that did not move: credentials
+> (use-without-disclosure), the STA thread, the OS probes and actuators, and
+> the stdio-only posture. For a quick start, the
+> [Security section of the README](../README.md#security). The local signals
+> are **auditable defense-in-depth, not a hard boundary** — see
 > [Trust model](#trust-model).
 
 ---
