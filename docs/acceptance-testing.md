@@ -107,6 +107,7 @@ does not present as a UIA failure.
 | `WINDOWS_MCP_ACC_SNAPSHOT` | The snapshot to revert to (default `golden`). |
 | `WINDOWS_MCP_ACC_KEEP=1` | Leave the guest running after the suite, to inspect a failure with `weave console`. |
 | `WINDOWS_MCP_ACC_RECORDER=1` | Enable the manual recorder check (see below). |
+| `WINDOWS_MCP_ACC_PAIRED=1` | Enable the paired harness+server slice (see below). It builds a second binary and drives two processes; a routine run should not. |
 
 ## What slice 1 covers
 
@@ -125,6 +126,29 @@ The audit chain and the evidence bundle:
   and provenance are separate promises;
 - a journey run's **OTLP/JSON record and screenshots** are sealed into the bundle
   and `journey.finished` reaches `verdicts.json`. *(Needs the console session.)*
+
+## The paired harness+server slice
+
+Gated behind `WINDOWS_MCP_ACC_PAIRED=1` (on top of the base gate). It is the
+end-to-end pin for the cross-process behaviour a single-process test cannot
+reach: the [agentweave-harness](https://github.com/deploymenttheory/agentweave-harness)
+governing the shipped server on the guest as two real processes over the
+control channel. The harness binary is built from this repo's pinned module
+dependency, so the two binaries under test are the versions this repo actually
+ships against, then pushed alongside the server.
+
+- **Refusal on the wire.** An enforcing harness policy denies a `tools/call`;
+  the client receives an `IsError` refusal synthesized in the harness, and the
+  call never reaches the server (a sentinel in the argument does not
+  round-trip).
+- **Two chains.** The harness writes its own audit chain of the proxied
+  conversation; both it and any server-side host chain `audit verify` green.
+- **Never-read across the boundary.** The sentinel argument value appears in no
+  recorded frame on either chain — arguments are digested, never recorded raw,
+  now provable end to end rather than within one process.
+- **Channel-loss teardown.** Killing the harness mid-session closes the
+  servant's control pipe, cancels the run context, and the server's LIFO
+  teardown runs — asserted by the governed child exiting rather than orphaning.
 
 ## The recorder is checked by hand
 
