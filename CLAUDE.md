@@ -235,9 +235,19 @@ Status/Kill registration and the baselines live in one `if` block in
 surface can never disagree. With no harness present `harnessAddress()` is
 empty and the server runs standalone unchanged.
 
+In enforce mode the composed egress policy lives harness-side, so the server's
+own `devicePolicy.Egress` is off and the local `provisionEgress` path does
+nothing. The harness instead drives OS enforcement over the channel: an
+`egress_apply` actuation carries the tier, app list, proxy port and harness
+executable, and the server's egress rungs (`harnessrungs.go`,
+`RungEgressApply/Suspend/Restore` over a fresh `egress.WindowsEnforcer`) install
+the firewall/WinINET, stashing the undo in an `egressRestoreHolder` that the
+explicit `egress_restore` rung and the exit defer both reach exactly once.
+
 When the ack announces an egress proxy (`egress_proxy_port` +
-`egress_proxy_executable`), the server starts **no local egress listener** —
-that is the only thing skipped. `Recover()` still runs on every start, the
+`egress_proxy_executable`) for a session whose **local** policy still has egress
+enabled (observe mode with local egress), the server starts **no local egress
+listener** — that is the only thing skipped. `Recover()` still runs on every start, the
 elevation refusal still applies, and OS enforcement still installs, pointed
 at the harness's port with the global-block allow rule naming the harness
 executable (`provisionDelegatedEgress`,
