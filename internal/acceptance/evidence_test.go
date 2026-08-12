@@ -151,13 +151,11 @@ func TestJourneyArtifactsReachTheBundle(t *testing.T) {
 	}
 
 	// The run record and at least one image.
-	records := h.guestExec(fmt.Sprintf(
-		`Get-ChildItem -LiteralPath '%s\journeys' -Filter '*.otlp.json' | ForEach-Object { $_.Name }`, evidenceRoot))
+	records := h.listGuestFiles(evidenceRoot+`\journeys`, "*.otlp.json")
 	if strings.TrimSpace(records) == "" {
 		t.Error("the run wrote no OTLP/JSON run record")
 	}
-	images := h.guestExec(fmt.Sprintf(
-		`Get-ChildItem -LiteralPath '%s\evidence' -Filter '*.png' | ForEach-Object { $_.Name }`, evidenceRoot))
+	images := h.listGuestFiles(evidenceRoot+`\evidence`, "*.png")
 	if strings.TrimSpace(images) == "" {
 		t.Error("the run captured no images; screenshot persistence is not working on a real desktop")
 	}
@@ -188,21 +186,6 @@ func TestJourneyArtifactsReachTheBundle(t *testing.T) {
 }
 
 // --- guest-side helpers ---------------------------------------------------
-
-// requireInteractive skips unless the golden image's console-session runner is
-// present. Without it there is no route to a desktop, and the test would fail on
-// the absence of UIA rather than on the behaviour under test.
-func (h *harness) requireInteractive(t *testing.T) {
-	t.Helper()
-	if !h.guestFileExists(interactiveRunner) {
-		t.Skipf("no interactive runner at %s in the golden image; see docs/acceptance-testing.md",
-			interactiveRunner)
-	}
-}
-
-// interactiveRunner is the console-session command runner the golden image
-// installs. PowerShell over SSH lands in session 0, which has no desktop.
-const interactiveRunner = remoteDir + `\run-interactive.ps1`
 
 // runInteractive runs a command in the guest's console session and returns its
 // output.

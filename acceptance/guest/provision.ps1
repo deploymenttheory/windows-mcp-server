@@ -44,10 +44,15 @@ Step 'the interactive runner'
 # The suite skips its UI scenarios when this is missing, rather than running them
 # in session 0 where there is no desktop.
 $src = Join-Path $PSScriptRoot 'run-interactive.ps1'
-if (Test-Path -LiteralPath $src) {
-  Copy-Item -LiteralPath $src -Destination (Join-Path $WorkDir 'run-interactive.ps1') -Force
-} else {
+$dst = Join-Path $WorkDir 'run-interactive.ps1'
+if (-not (Test-Path -LiteralPath $src)) {
   Write-Warning "run-interactive.ps1 not found next to this script; copy it to $WorkDir by hand"
+} elseif ((Resolve-Path $src).Path -eq (Resolve-Path -ErrorAction SilentlyContinue $dst).Path) {
+  # This script was itself delivered into the work directory, so the runner is
+  # already where it belongs. Copy-Item onto itself is an error, not a no-op.
+  Write-Host '    already in place'
+} else {
+  Copy-Item -LiteralPath $src -Destination $dst -Force
 }
 [Environment]::SetEnvironmentVariable('ACC_INTERACTIVE_USER', $InteractiveUser, 'Machine')
 
