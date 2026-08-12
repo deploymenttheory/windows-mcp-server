@@ -56,6 +56,12 @@ type ToolDependencies interface {
 	// EnforceHTTPS reports whether the Enforce HTTPS setting is on. Tools that
 	// fetch or navigate to a URL must refuse plaintext http:// when it is.
 	EnforceHTTPS() bool
+
+	// EgressProxy returns the loopback egress proxy address ("host:port") this
+	// session's outbound HTTP must route through, or "" when no proxy is
+	// provisioned. Tools that fetch a URL honor it, so the server's own
+	// reaching-out is governed by the same allowlist as everything else's.
+	EgressProxy() string
 }
 
 // ProtectedPath marks a filesystem location the FileSystem tool must not touch,
@@ -147,6 +153,7 @@ type BaseDeps struct {
 	featureChecker inventory.FeatureFlagChecker
 	credentials    []desktop.CredentialInfo
 	enforceHTTPS   bool
+	egressProxy    string
 	protectedPaths []ProtectedPath
 	planner        Planner
 	evidence       *evidenceWriter
@@ -213,6 +220,13 @@ func (d *BaseDeps) WithEnforceHTTPS(on bool) *BaseDeps {
 	return d
 }
 
+// WithEgressProxy records the loopback egress proxy address outbound HTTP must
+// route through. Returns the receiver for chaining.
+func (d *BaseDeps) WithEgressProxy(addr string) *BaseDeps {
+	d.egressProxy = addr
+	return d
+}
+
 // WithProtectedPaths records the guardrail paths the FileSystem tool must not
 // touch. Returns the receiver for chaining.
 func (d *BaseDeps) WithProtectedPaths(paths []ProtectedPath) *BaseDeps {
@@ -261,6 +275,9 @@ func (d *BaseDeps) Credentials() []desktop.CredentialInfo { return d.credentials
 
 // EnforceHTTPS implements ToolDependencies.
 func (d *BaseDeps) EnforceHTTPS() bool { return d.enforceHTTPS }
+
+// EgressProxy implements ToolDependencies.
+func (d *BaseDeps) EgressProxy() string { return d.egressProxy }
 
 // Logger implements ToolDependencies.
 func (d *BaseDeps) Logger(_ context.Context) *slog.Logger { return d.logger }
