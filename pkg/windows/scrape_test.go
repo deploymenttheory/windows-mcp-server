@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -186,7 +187,7 @@ func TestRedirectsAreRevalidated(t *testing.T) {
 
 	// enforceHTTPS on, and the httptest server speaks plaintext, so the hop is
 	// refused by the per-hop scheme check.
-	_, err := fetchReadableText(context.Background(), srv.URL+"/redirect", true, permissiveDial)
+	_, err := fetchReadableText(context.Background(), srv.URL+"/redirect", true, permissiveDial, "")
 	if err == nil {
 		t.Fatal("a redirect to a refused target must not be followed")
 	}
@@ -221,5 +222,36 @@ func TestRedirectChainIsBounded(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "stopped after") {
 		t.Errorf("the chain should end at the redirect cap, got: %v", err)
+	}
+}
+
+// TestScrapeRoutesThroughTheEgressProxy pins the Phase-6 governance: with a
+// provisioned egress proxy, the fetch goes to the proxy (an absolute-URI
+// proxy request), not to the target — the server's own reaching-out is
+// governed by the same allowlist as everything else's. The proxy hop uses a
+// plain dialer, because the vetting dialer would rightly refuse its loopback
+// address; destination vetting becomes the proxy's job.
+func TestScrapeRoutesThroughTheEgressProxy(t *testing.T) {
+	var sawProxyRequest atomic.Bool
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A proxied plain-HTTP request carries the absolute URI in the
+		// request target; a direct fetch would carry only the path.
+		if r.URL.IsAbs() && r.URL.Host == "scrape-target.example.com" {
+			sawProxyRequest.Store(true)
+		}
+		_, _ = w.Write([]byte("<html><body>proxied body</body></html>"))
+	}))
+	defer proxy.Close()
+
+	text, err := fetchReadableText(context.Background(),
+		"http://scrape-target.example.com/page", false, nil, proxy.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("fetch via proxy: %v", err)
+	}
+	if !sawProxyRequest.Load() {
+		t.Fatal("the fetch did not route through the egress proxy")
+	}
+	if !strings.Contains(text, "proxied body") {
+		t.Fatalf("proxied body not returned: %q", text)
 	}
 }

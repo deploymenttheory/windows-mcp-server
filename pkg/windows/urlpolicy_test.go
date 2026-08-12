@@ -34,6 +34,7 @@ func (f fakeDeps) Logger(context.Context) *slog.Logger           { return slog.D
 func (f fakeDeps) IsFeatureEnabled(context.Context, string) bool { return false }
 func (f fakeDeps) Credentials() []desktop.CredentialInfo         { return f.creds }
 func (f fakeDeps) EnforceHTTPS() bool                            { return f.enforceHTTPS }
+func (f fakeDeps) EgressProxy() string                           { return "" }
 
 // compile-time assertion that the fake keeps up with the interface
 var _ ToolDependencies = fakeDeps{}

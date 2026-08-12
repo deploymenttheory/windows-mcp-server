@@ -458,6 +458,16 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		return err
 	}
 	defer cleanupEgress()
+	// The server's own reaching-out (Scrape) routes through whichever proxy
+	// this session runs — harness-announced or local — so it is governed by
+	// the same allowlist as everything else's. deps is the pointer the
+	// middleware captured, and RegisterAll has not run yet.
+	switch {
+	case harnessProxy.announced():
+		deps.WithEgressProxy(fmt.Sprintf("127.0.0.1:%d", harnessProxy.Port))
+	case egressSvc != nil:
+		deps.WithEgressProxy(egressSvc.Addr())
+	}
 
 	executor := contain.NewKillExecutor(contain.KillExecutorDeps{
 		Config:   killPolicyConfig(devicePolicy),

@@ -69,7 +69,7 @@ func Scrape() inventory.ServerTool {
 				return NewToolResultErrorFromErr("invalid URL", err), nil
 			}
 
-			text, err := fetchReadableText(ctx, rawURL, deps.EnforceHTTPS(), nil)
+			text, err := fetchReadableText(ctx, rawURL, deps.EnforceHTTPS(), nil, deps.EgressProxy())
 			if err != nil {
 				return NewToolResultErrorFromErr("scrape failed", err), nil
 			}
@@ -215,6 +215,7 @@ func fetchReadableText(
 	rawURL string,
 	enforceHTTPS bool,
 	dial func(context.Context, string, string) (net.Conn, error),
+	egressProxy string,
 ) (string, error) {
 	if dial == nil {
 		dial = scrapeDialContext
@@ -228,18 +229,30 @@ func fetchReadableText(
 	}
 	req.Header.Set("User-Agent", "windows-mcp-server/scrape")
 
-	client := &http.Client{
-		Timeout: 20 * time.Second,
+	transport := &http.Transport{
 		// Not http.DefaultTransport: this one vets the address it dials. The
 		// scheme and Enforce HTTPS checks below still run per hop, because a
 		// redirect to a plaintext or non-http scheme is a policy question the
 		// dialer cannot see.
-		Transport: &http.Transport{
-			DialContext:           dial,
-			Proxy:                 http.ProxyFromEnvironment,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 15 * time.Second,
-		},
+		DialContext:           dial,
+		Proxy:                 http.ProxyFromEnvironment,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+	}
+	if egressProxy != "" {
+		// A provisioned egress proxy governs the server's own reaching-out with
+		// the same allowlist as everything else's. The proxy hop dials loopback
+		// — which the vetting dialer rightly refuses — so that one hop uses a
+		// plain dialer, and the destination vetting becomes the proxy's job:
+		// its allowlist is checked before any DNS, and its forbidden-address
+		// check runs on the resolved answers, strictly stronger than what the
+		// local dialer could do.
+		transport.Proxy = http.ProxyURL(&url.URL{Scheme: "http", Host: egressProxy})
+		transport.DialContext = (&net.Dialer{Timeout: 10 * time.Second}).DialContext
+	}
+	client := &http.Client{
+		Timeout:   20 * time.Second,
+		Transport: transport,
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			return checkScrapeRedirect(r, via, enforceHTTPS)
 		},
