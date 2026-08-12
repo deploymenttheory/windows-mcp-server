@@ -41,6 +41,34 @@ the point of audit mode, and why it does not simply skip evaluation. Note this
 caps `hold` too: an audit-mode device never suspends a call for approval, which
 is what keeps audit mode observe-only.
 
+## Argument constraints
+
+A rule may also bound the arguments of the calls it matches; a violated bound
+fails the rule at its `on_fail`, exactly like a failing required signal, and a
+rule may carry constraints with an empty `require`:
+
+```jsonc
+{ "name": "bounded-typing",
+  "match": {"tool": "Type"},
+  "require": [],
+  "constraints": {"text": {"max_length": 4096, "pattern": "^[\\x20-\\x7e]+$"}},
+  "on_fail": "deny" }
+```
+
+Per argument: `min` / `max` (numbers, inclusive), `max_length` (strings, in
+bytes), `pattern` (a regular expression, standard unanchored matching — write
+`^…$` to anchor). Patterns are **RE2** (Go's `regexp`): no backtracking, so
+evaluation is linear in the input and a policy author cannot write a pattern
+that stalls the request path — a backreference does not compile and validation
+refuses it. An absent argument fails, a wrong-typed argument fails, and an
+omitted `arguments` object is an empty set in which every constrained argument
+is absent — a caller cannot dodge a constraint by leaving things out. Failure
+details name the argument and the bound, never the value: argument values stay
+out of the audit chain for the same reason tool arguments are digested, not
+recorded. Constraints on a `startup`-scope rule are refused at load (startup
+subjects carry no arguments), and plan-time evaluation skips them — they are
+spent where the arguments actually are, at call time.
+
 ## Document reference
 
 ```jsonc
