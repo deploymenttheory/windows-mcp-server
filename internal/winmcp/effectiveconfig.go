@@ -27,8 +27,8 @@ import (
 // tamper-target (write must be refused) from a secret (read must be refused),
 // so it refuses both rather than guess.
 //
-// EgressProxyPort is Phase-6 scope: announced ports are logged and otherwise
-// ignored, with the local egress posture unchanged — never half-applied.
+// The announced egress proxy (port and executable) is consumed by the egress
+// provisioning, which RunStdio feeds directly — see harnessEgress.
 func applyEffectiveConfig(
 	ec wire.EffectiveConfig,
 	cfg *Config,
@@ -57,10 +57,9 @@ func applyEffectiveConfig(
 	if ec.Banner {
 		banner("This session is governed by agentweave-harness")
 	}
-	if ec.EgressProxyPort != 0 {
-		logger.Warn("harness egress proxy announced but not yet supported; local egress posture unchanged",
-			"port", ec.EgressProxyPort)
-	}
+	// EgressProxyPort/EgressProxyExecutable are deliberately not handled here:
+	// they configure the egress provisioning, which RunStdio feeds directly
+	// (see harnessEgress) — before this function's concerns, not among them.
 }
 
 // statIsDir reports whether the path names an existing directory, so a
