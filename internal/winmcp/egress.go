@@ -23,17 +23,36 @@ import (
 // rotating hostnames could drive its length.
 const egressSummaryInterval = 5 * time.Minute
 
+// harnessEgress is the harness-announced proxy the server points its OS
+// enforcement at instead of starting a listener of its own: the hello.ack's
+// egress_proxy_port and egress_proxy_executable. The zero value means no
+// harness proxy (standalone, or an observe-mode harness with egress off).
+type harnessEgress struct {
+	Port       int
+	Executable string
+}
+
+func (h harnessEgress) announced() bool { return h.Port != 0 }
+
 // provisionEgress starts the device egress proxy when the policy asks for it,
 // and returns a cleanup that runs exactly once however the session ends.
 //
 // It mirrors provisionCredentials: two independent paths reach the teardown —
 // the normal-exit defer and the kill executor's Finalize — and both must be safe
 // to call, in either order.
+//
+// When the harness announced a proxy, the local listener is skipped — that is
+// the only thing skipped. Recovery still runs (rules outlive processes),
+// the elevation refusal still applies, and OS enforcement still installs,
+// pointed at the harness's port with the allow rule naming the harness
+// executable. Fail-closed holds across a harness death: the firewall stands
+// while the proxy dies, so traffic is cut rather than freed.
 func provisionEgress(
 	ctx context.Context,
 	devicePolicy *policy.Policy,
 	auditLog *audit.AuditLog,
 	logger *slog.Logger,
+	harnessProxy harnessEgress,
 ) (*egress.Service, func(), func(), error) {
 	noop := func() {}
 	cfg := devicePolicy.Egress
@@ -52,6 +71,10 @@ func provisionEgress(
 
 	if !cfg.Enabled {
 		return nil, noop, noop, nil
+	}
+
+	if harnessProxy.announced() {
+		return provisionDelegatedEgress(cfg, enforcer, auditLog, logger, harnessProxy)
 	}
 
 	allow, err := hostmatch.Compile(cfg.Allow)
@@ -189,6 +212,80 @@ func provisionEgress(
 		_, _ = auditLog.Append("egress.suspended", map[string]any{"counters": svc.Counters()})
 	}
 	return svc, cleanup, suspend, nil
+}
+
+// provisionDelegatedEgress is the harness-proxied path: no local listener, OS
+// enforcement pointed at the announced port with the allow rule naming the
+// harness executable. The elevation refusal is kept verbatim from the local
+// path — an operator whose document says these applications cannot bypass the
+// proxy must never get a server where they silently can, whichever process
+// serves it. The auth token is not read: it credentials a listener this
+// process is not running.
+func provisionDelegatedEgress(
+	cfg policy.EgressPolicy,
+	enforcer egress.WindowsEnforcer,
+	auditLog *audit.AuditLog,
+	logger *slog.Logger,
+	harnessProxy harnessEgress,
+) (*egress.Service, func(), func(), error) {
+	noop := func() {}
+	wantsEnforcement := len(cfg.Applications) > 0 || cfg.BlockAllOutbound
+	if wantsEnforcement && !enforcer.Elevated() {
+		_, _ = auditLog.Append("egress.enforce.failed", map[string]any{
+			"reason":      "not elevated",
+			"enforcement": cfg.Enforcement(),
+		})
+		return nil, noop, noop, fmt.Errorf("%w: egress.applications and egress.block_all_outbound "+
+			"install firewall rules, so the server must run elevated; "+
+			"remove them to run the proxy in advisory mode", egress.ErrNotElevated)
+	}
+
+	proxyAddr := fmt.Sprintf("127.0.0.1:%d", harnessProxy.Port)
+	restoreRules, err := enforcer.Apply(egress.EnforceSpec{
+		ProxyAddr:       proxyAddr,
+		Applications:    cfg.Applications,
+		GlobalBlock:     cfg.BlockAllOutbound,
+		AllowPorts:      cfg.AllowPorts,
+		SetSystemProxy:  cfg.SetSystemProxy,
+		ProxyExecutable: harnessProxy.Executable,
+	})
+	if err != nil {
+		_, _ = auditLog.Append("egress.enforce.failed", map[string]any{"error": err.Error()})
+		return nil, noop, noop, fmt.Errorf("apply egress enforcement: %w", err)
+	}
+	if wantsEnforcement {
+		_, _ = auditLog.Append("egress.enforce.applied", map[string]any{
+			"enforcement":  cfg.Enforcement(),
+			"applications": len(cfg.Applications),
+			"proxied_by":   "harness",
+		})
+	}
+	_, _ = auditLog.Append("egress.delegated", map[string]any{
+		"proxy":       proxyAddr,
+		"enforcement": cfg.Enforcement(),
+	})
+	logger.Info("egress proxying delegated to the harness", "proxy", proxyAddr,
+		"enforcement", cfg.Enforcement())
+
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			if err := restoreRules(); err != nil {
+				logger.Error("could not remove egress firewall rules; they will be cleaned up on the next start",
+					"error", err)
+				_, _ = auditLog.Append("egress.enforce.failed",
+					map[string]any{"phase": "restore", "error": err.Error()})
+			}
+			_, _ = auditLog.Append("egress.stopped", map[string]any{"proxied_by": "harness"})
+		})
+	}
+	suspend := func() {
+		if err := enforcer.Suspend(); err != nil {
+			logger.Error("could not disable egress allow rules for containment", "error", err)
+		}
+		_, _ = auditLog.Append("egress.suspended", map[string]any{"proxied_by": "harness"})
+	}
+	return nil, cleanup, suspend, nil
 }
 
 // summarizeEgress folds the running totals into the audit chain periodically, so

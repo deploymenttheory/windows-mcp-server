@@ -233,7 +233,19 @@ executor and actuation rungs the harness drives. The seam is `receivingChain`
 Status/Kill registration and the baselines live in one `if` block in
 `server.go` deliberately, so the pinned tool surface and the served tool
 surface can never disagree. With no harness present `harnessAddress()` is
-empty and the server runs standalone unchanged. The servant is a separate implementer of the wire contract — it
+empty and the server runs standalone unchanged.
+
+When the ack announces an egress proxy (`egress_proxy_port` +
+`egress_proxy_executable`), the server starts **no local egress listener** —
+that is the only thing skipped. `Recover()` still runs on every start, the
+elevation refusal still applies, and OS enforcement still installs, pointed
+at the harness's port with the global-block allow rule naming the harness
+executable (`provisionDelegatedEgress`,
+`TestHarnessModeSkipsLocalProxyOnlyWhenPortAnnounced`). The attach therefore
+happens *before* egress provisioning in RunStdio, with the harness teardown
+defers registered after the executor's Restore so the unwind keeps its
+layering. Fail-closed holds across a harness death: the firewall stands while
+the proxy dies, so traffic is cut rather than freed. The servant is a separate implementer of the wire contract — it
 imports the public `wire` package but never the harness's internal transport, so
 the pipe is dialed with go-winio directly. Servant wire-protocol logic is tested
 over `net.Pipe` (`harnesslink_test.go`); note `net.Pipe` and the Windows control

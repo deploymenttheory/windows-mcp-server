@@ -354,18 +354,111 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
+	startedAt := time.Now()
+	actuator := contain.NewSystemActuator(logger)
+
+	// --- agentweave-harness control channel (servant side) ---
+	// When the harness spawned this server it left the channel address and a
+	// bootstrap token in the environment. Dial back, authenticate, and serve
+	// signal evaluation, actuation and liveness for the session. When no harness
+	// is present, harnessAddress() is empty and the server runs standalone
+	// unchanged.
+	//
+	// The attach happens before the egress provisioning on purpose: the ack's
+	// effective config carries the harness-side proxy's port and executable,
+	// which provisionEgress needs so it can point the OS enforcement at the
+	// harness instead of starting a listener of its own. The harness teardown
+	// defers are registered further down, after the executor's Restore, so the
+	// unwind keeps its layering (isolation undone first, then containment,
+	// then the egress state it was all layered over).
+	//
+	// The hello.ack's mode decides how much of the local guardrail stack is
+	// wired below. An observe ack is additive: the full in-process stack runs
+	// exactly as in standalone mode. An enforce ack means a live policy decider
+	// stands between the client and this process — the harness refuses on the
+	// wire, audits every frame, and fingerprints the manifest surfaces it
+	// serves — so the duplicated in-process layers (enforce, rug-pull,
+	// telemetry, the GuardrailStatus/Kill tools) are shed rather than run
+	// twice. The harness only acks enforce once its decider is actually
+	// installed, which is what makes that shedding safe.
+	harnessEnforcing := false
+	var harnessProxy harnessEgress
+	var servant *harnessServant
+	var harnessRestoreMu sync.Mutex
+	var harnessRestore func() error
+	if pipe, token := harnessAddress(); pipe != "" {
+		rungs := buildRungs(rungPrimitives{
+			Actuator:     actuator,
+			Banner:       dsk.ShowSecurityBanner,
+			Seal:         audit.Flush,
+			Finalize:     func() { _ = dsk.Close() },
+			CleanupCreds: cleanupCreds,
+			SetRestore: func(r func() error) {
+				harnessRestoreMu.Lock()
+				harnessRestore = r
+				harnessRestoreMu.Unlock()
+			},
+			Logger: logger,
+		})
+
+		s, ack, derr := attachHarness(pipe, token, cfg.Version, sessionStamp, servantDeps{
+			Registry:   reg,
+			EnvFn:      envFn,
+			Rungs:      rungs,
+			Alive:      func() bool { return true },
+			RunContext: runContext,
+			Elevated:   actuator.Elevated(),
+			Logger:     logger,
+			OnLost: func(cause error) {
+				if cause == nil {
+					cancel(errHarnessChannelLost)
+					return
+				}
+				cancel(fmt.Errorf("%w: %w", errHarnessChannelLost, cause))
+			},
+		})
+		// The token has done its job. Scrub both bootstrap vars so no tool the
+		// agent runs can read the channel credential back — the same discipline
+		// scrubSecretEnv applies to the policy's secrets.
+		_ = os.Unsetenv(envHarnessPipe)
+		_ = os.Unsetenv(envHarnessToken)
+		if derr != nil {
+			return fmt.Errorf("agentweave-harness: %w", derr)
+		}
+		servant = s
+		harnessEnforcing = ack.Mode == wire.ModeEnforce
+		harnessProxy = harnessEgress{
+			Port:       ack.EffectiveConfig.EgressProxyPort,
+			Executable: ack.EffectiveConfig.EgressProxyExecutable,
+		}
+		logger.Info("attached to agentweave-harness", "mode", ack.Mode, "proto", ack.Proto,
+			"local_enforcement", !harnessEnforcing, "egress_proxy_port", harnessProxy.Port)
+		_, _ = audit.Append("harness.attached", map[string]any{
+			"mode": ack.Mode, "local_enforcement": !harnessEnforcing,
+			"egress_proxy_port": harnessProxy.Port,
+		})
+		// Before the servant starts serving and before RegisterAll builds the
+		// tool surface, per the wire contract; envFn and the tool deps both see
+		// the folded settings from the first call they answer.
+		applyEffectiveConfig(ack.EffectiveConfig, &cfg, devicePolicy, deps, dsk.ShowSecurityBanner, logger)
+
+		go servant.serve(runCtx)
+		servant.StartHeartbeat(runCtx, heartbeatFromAck(ack))
+		if names := installedCredentialNames(installedCreds); len(names) > 0 {
+			_ = servant.PushCredentialEvent(wire.CredentialInstalled, names)
+		}
+	}
+
 	// --- Device egress proxy ---
 	// Registered before the executor's Restore defer so the deferred stack
 	// unwinds in the right order: containment is undone first, then the egress
 	// state it was layered over.
-	egressSvc, cleanupEgress, suspendEgress, err := provisionEgress(runCtx, devicePolicy, audit, logger)
+	egressSvc, cleanupEgress, suspendEgress, err := provisionEgress(runCtx, devicePolicy, audit, logger, harnessProxy)
 	if err != nil {
 		return err
 	}
 	defer cleanupEgress()
 
-	startedAt := time.Now()
-	actuator := contain.NewSystemActuator(logger)
 	executor := contain.NewKillExecutor(contain.KillExecutorDeps{
 		Config:   killPolicyConfig(devicePolicy),
 		Actuator: actuator,
@@ -393,90 +486,20 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	kill := contain.NewKillSwitch(executor.OnTrip)
 	defer func() { _ = executor.Restore() }() // undo firewall isolation on exit
 
-	// --- agentweave-harness control channel (servant side) ---
-	// When the harness spawned this server it left the channel address and a
-	// bootstrap token in the environment. Dial back, authenticate, and serve
-	// signal evaluation, actuation and liveness for the session. When no harness
-	// is present, harnessAddress() is empty and the server runs standalone
-	// unchanged.
-	//
-	// The hello.ack's mode decides how much of the local guardrail stack is
-	// wired below. An observe ack is additive: the full in-process stack runs
-	// exactly as in standalone mode. An enforce ack means a live policy decider
-	// stands between the client and this process — the harness refuses on the
-	// wire, audits every frame, and fingerprints the manifest surfaces it
-	// serves — so the duplicated in-process layers (enforce, rug-pull,
-	// telemetry, the GuardrailStatus/Kill tools) are shed rather than run
-	// twice. The harness only acks enforce once its decider is actually
-	// installed, which is what makes that shedding safe.
-	harnessEnforcing := false
-	if pipe, token := harnessAddress(); pipe != "" {
-		var restoreMu sync.Mutex
-		var harnessRestore func() error
+	// The harness teardown defers, registered here rather than at the attach
+	// so the LIFO unwind keeps its layering exactly as before the attach moved
+	// up: the servant closes and the isolation restore runs first, then the
+	// executor's Restore, then the egress teardown they were layered over.
+	if servant != nil {
 		defer func() {
-			restoreMu.Lock()
+			harnessRestoreMu.Lock()
 			r := harnessRestore
-			restoreMu.Unlock()
+			harnessRestoreMu.Unlock()
 			if r != nil {
 				_ = r()
 			}
 		}()
-
-		rungs := buildRungs(rungPrimitives{
-			Actuator:     actuator,
-			Banner:       dsk.ShowSecurityBanner,
-			Seal:         audit.Flush,
-			Finalize:     func() { _ = dsk.Close() },
-			CleanupCreds: cleanupCreds,
-			SetRestore: func(r func() error) {
-				restoreMu.Lock()
-				harnessRestore = r
-				restoreMu.Unlock()
-			},
-			Logger: logger,
-		})
-
-		servant, ack, derr := attachHarness(pipe, token, cfg.Version, sessionStamp, servantDeps{
-			Registry:   reg,
-			EnvFn:      envFn,
-			Rungs:      rungs,
-			Alive:      func() bool { return true },
-			RunContext: runContext,
-			Elevated:   actuator.Elevated(),
-			Logger:     logger,
-			OnLost: func(cause error) {
-				if cause == nil {
-					cancel(errHarnessChannelLost)
-					return
-				}
-				cancel(fmt.Errorf("%w: %w", errHarnessChannelLost, cause))
-			},
-		})
-		// The token has done its job. Scrub both bootstrap vars so no tool the
-		// agent runs can read the channel credential back — the same discipline
-		// scrubSecretEnv applies to the policy's secrets.
-		_ = os.Unsetenv(envHarnessPipe)
-		_ = os.Unsetenv(envHarnessToken)
-		if derr != nil {
-			return fmt.Errorf("agentweave-harness: %w", derr)
-		}
 		defer func() { _ = servant.Close() }()
-		harnessEnforcing = ack.Mode == wire.ModeEnforce
-		logger.Info("attached to agentweave-harness", "mode", ack.Mode, "proto", ack.Proto,
-			"local_enforcement", !harnessEnforcing)
-		_, _ = audit.Append("harness.attached", map[string]any{
-			"mode": ack.Mode, "local_enforcement": !harnessEnforcing,
-		})
-		// Before the servant starts serving and before RegisterAll builds the
-		// tool surface, per the wire contract; envFn and the tool deps both see
-		// the folded settings from the first call they answer.
-		applyEffectiveConfig(ack.EffectiveConfig, &cfg, devicePolicy, deps, dsk.ShowSecurityBanner, logger)
-
-		go servant.serve(runCtx)
-		servant.StartHeartbeat(runCtx, heartbeatFromAck(ack))
-		if names := installedCredentialNames(installedCreds); len(names) > 0 {
-			_ = servant.PushCredentialEvent(wire.CredentialInstalled, names)
-		}
 	}
 
 	// Out-of-band approvals for on_fail: hold rules. Off unless a webhook is
