@@ -467,6 +467,10 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		_, _ = audit.Append("harness.attached", map[string]any{
 			"mode": ack.Mode, "local_enforcement": !harnessEnforcing,
 		})
+		// Before the servant starts serving and before RegisterAll builds the
+		// tool surface, per the wire contract; envFn and the tool deps both see
+		// the folded settings from the first call they answer.
+		applyEffectiveConfig(ack.EffectiveConfig, &cfg, devicePolicy, deps, dsk.ShowSecurityBanner, logger)
 
 		go servant.serve(runCtx)
 		servant.StartHeartbeat(runCtx, heartbeatFromAck(ack))
