@@ -15,7 +15,9 @@ It is gated, operator-run, and never part of CI.
 
 ```powershell
 $env:WINDOWS_MCP_ACC = "1"
-go test ./internal/acceptance/ -count=1 -v
+$env:WINDOWS_MCP_ACC_WEAVE = "D:\weave\weave.exe"   # or have weave on PATH
+$env:WINDOWS_MCP_ACC_GUEST = "acc"                  # the VM `weave list` names
+go test ./internal/acceptance/ -count=1 -v -timeout 60m
 ```
 
 With the gate unset every test skips. The scenarios revert snapshots and kill
@@ -25,10 +27,15 @@ processes, so they must not run unattended.
 
 - A Windows host with the virtualization platform enabled and membership of
   **Hyper-V Administrators** (no elevation).
-- [`weave`](https://github.com/deploymenttheory/guestweave-windows) on `PATH`.
-  The dependency is the CLI, not the Go module — `weave` is pre-alpha and its
-  internals are not importable.
+- [`weave`](https://github.com/deploymenttheory/guestweave-windows) on `PATH`, or
+  `WINDOWS_MCP_ACC_WEAVE` pointing at `weave.exe`. The dependency is the CLI, not
+  the Go module — `weave` is pre-alpha and its internals are not importable, and
+  it is normally run from a build tree rather than installed.
 - A guest built once from the recipe below, with a `golden` snapshot.
+
+The suite checks all three before it stops, reverts or builds anything, so a
+missing binary, an unknown guest or an absent snapshot fails in seconds with the
+names available rather than partway through a boot.
 
 You do **not** need to source Windows media. `--from-windows pro-25h2` is a media
 spec, and weave downloads and caches Microsoft's retail media itself.
@@ -95,6 +102,7 @@ does not present as a UIA failure.
 | Variable | Effect |
 |---|---|
 | `WINDOWS_MCP_ACC=1` | Required. Without it everything skips. |
+| `WINDOWS_MCP_ACC_WEAVE` | Full path to `weave.exe`, when it is not on `PATH`. |
 | `WINDOWS_MCP_ACC_GUEST` | The weave VM to drive (default `acc`). |
 | `WINDOWS_MCP_ACC_SNAPSHOT` | The snapshot to revert to (default `golden`). |
 | `WINDOWS_MCP_ACC_KEEP=1` | Leave the guest running after the suite, to inspect a failure with `weave console`. |
