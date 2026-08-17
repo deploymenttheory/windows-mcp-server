@@ -4,7 +4,7 @@
     "name": "CompletionComplete",
     "description": "Server responds to completion requests",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:09.63Z",
+    "timestamp": "2026-08-17T06:33:50.343Z",
     "specReferences": [
       {
         "id": "MCP-Completion",
@@ -23,7 +23,7 @@
     "id": "localhost-host-rebinding-rejected",
     "name": "DNSRebindingRejected",
     "description": "Server rejects requests with non-localhost Host/Origin headers",
-    "timestamp": "2026-08-10T06:52:10.547Z",
+    "timestamp": "2026-08-17T06:33:51.085Z",
     "specReferences": [
       {
         "id": "MCP-DNS-Rebinding-Protection",
@@ -46,7 +46,7 @@
     "id": "localhost-host-valid-accepted",
     "name": "LocalhostHostAccepted",
     "description": "Server accepts requests with valid localhost Host/Origin headers",
-    "timestamp": "2026-08-10T06:52:10.547Z",
+    "timestamp": "2026-08-17T06:33:51.085Z",
     "specReferences": [
       {
         "id": "MCP-DNS-Rebinding-Protection",
@@ -70,7 +70,7 @@
     "name": "ElicitationSEP1034General",
     "description": "Server requests elicitation with default values",
     "status": "FAILURE",
-    "timestamp": "2026-08-10T06:52:10.141Z",
+    "timestamp": "2026-08-17T06:33:50.693Z",
     "errorMessage": "Failed: MCP error -32602: unknown tool \"test_elicitation_sep1034_defaults\"",
     "specReferences": [
       {
@@ -84,7 +84,7 @@
     "name": "ElicitationSEP1330General",
     "description": "Server requests elicitation with enum schemas",
     "status": "FAILURE",
-    "timestamp": "2026-08-10T06:52:10.235Z",
+    "timestamp": "2026-08-17T06:33:50.783Z",
     "errorMessage": "Failed: MCP error -32602: unknown tool \"test_elicitation_sep1330_enums\"",
     "specReferences": [
       {
@@ -98,7 +98,7 @@
     "name": "JsonSchema2020_12ToolFound",
     "description": "Server advertises tool 'json_schema_2020_12_tool'",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.112Z",
+    "timestamp": "2026-08-17T06:33:50.681Z",
     "specReferences": [
       {
         "id": "SEP-1613",
@@ -173,7 +173,7 @@
     "name": "JsonSchema2020_12$Schema",
     "description": "inputSchema.$schema field preserved with value 'https://json-schema.org/draft/2020-12/schema'",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.112Z",
+    "timestamp": "2026-08-17T06:33:50.681Z",
     "specReferences": [
       {
         "id": "SEP-1613",
@@ -191,7 +191,7 @@
     "name": "JsonSchema2020_12$Defs",
     "description": "inputSchema.$defs field preserved with expected structure",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.112Z",
+    "timestamp": "2026-08-17T06:33:50.681Z",
     "specReferences": [
       {
         "id": "SEP-1613",
@@ -224,7 +224,7 @@
     "name": "JsonSchema2020_12AdditionalProperties",
     "description": "inputSchema.additionalProperties field preserved",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.112Z",
+    "timestamp": "2026-08-17T06:33:50.681Z",
     "specReferences": [
       {
         "id": "SEP-1613",
@@ -242,7 +242,7 @@
     "name": "JsonSchema2020_12CompositionKeywords",
     "description": "inputSchema composition keywords (allOf/anyOf) preserved (SEP-2106)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.112Z",
+    "timestamp": "2026-08-17T06:33:50.681Z",
     "specReferences": [
       {
         "id": "SEP-2106",
@@ -260,7 +260,7 @@
     "name": "JsonSchema2020_12ConditionalKeywords",
     "description": "inputSchema conditional keywords (if/then/else) preserved (SEP-2106)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.112Z",
+    "timestamp": "2026-08-17T06:33:50.681Z",
     "specReferences": [
       {
         "id": "SEP-2106",
@@ -279,7 +279,7 @@
     "name": "JsonSchema2020_12AnchorKeyword",
     "description": "inputSchema reference keyword ($anchor) preserved in $defs (SEP-2106)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.112Z",
+    "timestamp": "2026-08-17T06:33:50.681Z",
     "specReferences": [
       {
         "id": "SEP-2106",
@@ -296,7 +296,7 @@
     "name": "LoggingSetLevel",
     "description": "Server accepts logging level setting",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:09.592Z",
+    "timestamp": "2026-08-17T06:33:50.266Z",
     "specReferences": [
       {
         "id": "MCP-Logging",
@@ -312,7 +312,7 @@
     "name": "Ping",
     "description": "Server responds to ping requests",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:09.617Z",
+    "timestamp": "2026-08-17T06:33:50.298Z",
     "specReferences": [
       {
         "id": "MCP-Ping",
@@ -328,7 +328,7 @@
     "name": "PromptsGetEmbeddedResource",
     "description": "Get prompt with embedded resource",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.515Z",
+    "timestamp": "2026-08-17T06:33:51.066Z",
     "specReferences": [
       {
         "id": "MCP-Prompts-Embedded-Resources",
@@ -364,7 +364,7 @@
     "name": "PromptsGetSimple",
     "description": "Get simple prompt successfully",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.455Z",
+    "timestamp": "2026-08-17T06:33:51.005Z",
     "specReferences": [
       {
         "id": "MCP-Prompts-Get",
@@ -380,7 +380,7 @@
     "name": "PromptsGetWithArgs",
     "description": "Get parameterized prompt with argument substitution",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.482Z",
+    "timestamp": "2026-08-17T06:33:51.033Z",
     "specReferences": [
       {
         "id": "MCP-Prompts-Get",
@@ -405,7 +405,7 @@
     "name": "PromptsGetWithImage",
     "description": "Get prompt with image content",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.545Z",
+    "timestamp": "2026-08-17T06:33:51.082Z",
     "specReferences": [
       {
         "id": "MCP-Prompts-Image",
@@ -421,7 +421,7 @@
     "name": "PromptsList",
     "description": "Server lists available prompts with valid structure",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.42Z",
+    "timestamp": "2026-08-17T06:33:50.969Z",
     "specReferences": [
       {
         "id": "MCP-Prompts-List",
@@ -447,7 +447,7 @@
     "name": "ResourcesList",
     "description": "Server lists available resources with valid structure",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.266Z",
+    "timestamp": "2026-08-17T06:33:50.814Z",
     "specReferences": [
       {
         "id": "MCP-Resources-List",
@@ -471,7 +471,7 @@
     "name": "ResourcesReadBinary",
     "description": "Read binary resource successfully",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.312Z",
+    "timestamp": "2026-08-17T06:33:50.854Z",
     "specReferences": [
       {
         "id": "MCP-Resources-Read",
@@ -489,7 +489,7 @@
     "name": "ResourcesReadText",
     "description": "Read text resource successfully",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.297Z",
+    "timestamp": "2026-08-17T06:33:50.845Z",
     "specReferences": [
       {
         "id": "MCP-Resources-Read",
@@ -507,7 +507,7 @@
     "name": "ResourcesSubscribe",
     "description": "Subscribe to resource successfully",
     "status": "FAILURE",
-    "timestamp": "2026-08-10T06:52:10.345Z",
+    "timestamp": "2026-08-17T06:33:50.892Z",
     "errorMessage": "Failed: method not found: \"resources/subscribe\"",
     "specReferences": [
       {
@@ -521,7 +521,7 @@
     "name": "ResourcesTemplateRead",
     "description": "Read resource from template with parameter substitution",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.328Z",
+    "timestamp": "2026-08-17T06:33:50.877Z",
     "specReferences": [
       {
         "id": "MCP-Resources-Templates",
@@ -538,7 +538,7 @@
     "name": "ResourcesUnsubscribe",
     "description": "Unsubscribe from resource successfully",
     "status": "FAILURE",
-    "timestamp": "2026-08-10T06:52:10.39Z",
+    "timestamp": "2026-08-17T06:33:50.938Z",
     "errorMessage": "Failed: method not found: \"resources/subscribe\"",
     "specReferences": [
       {
@@ -552,7 +552,7 @@
     "name": "ServerInitialize",
     "description": "Server responds to initialize request with valid structure",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:09.576Z",
+    "timestamp": "2026-08-17T06:33:50.244Z",
     "specReferences": [
       {
         "id": "MCP-Initialize",
@@ -569,7 +569,7 @@
     "name": "ServerSessionIdVisibleAscii",
     "description": "Server-provided session ID uses only visible ASCII characters",
     "status": "INFO",
-    "timestamp": "2026-08-10T06:52:09.581Z",
+    "timestamp": "2026-08-17T06:33:50.25Z",
     "specReferences": [
       {
         "id": "MCP-Session-Management",
@@ -585,7 +585,7 @@
     "name": "ServerSSEMultipleStreamsSession",
     "description": "Server provides session ID for multiple streams test",
     "status": "WARNING",
-    "timestamp": "2026-08-10T06:52:10.204Z",
+    "timestamp": "2026-08-17T06:33:50.75Z",
     "specReferences": [
       {
         "id": "SEP-1699",
@@ -601,7 +601,7 @@
     "name": "ServerSSEPollingSession",
     "description": "Server provides session ID for SSE polling tests",
     "status": "WARNING",
-    "timestamp": "2026-08-10T06:52:10.156Z",
+    "timestamp": "2026-08-17T06:33:50.719Z",
     "specReferences": [
       {
         "id": "SEP-1699",
@@ -617,7 +617,7 @@
     "name": "OutgoingRequest",
     "description": "Sending POST tools/call",
     "status": "INFO",
-    "timestamp": "2026-08-10T06:52:10.156Z",
+    "timestamp": "2026-08-17T06:33:50.719Z",
     "details": {
       "method": "POST",
       "url": "http://127.0.0.1:3003/mcp",
@@ -642,14 +642,14 @@
     "name": "IncomingResponse",
     "description": "Received 200 response for POST",
     "status": "INFO",
-    "timestamp": "2026-08-10T06:52:10.172Z",
+    "timestamp": "2026-08-17T06:33:50.724Z",
     "details": {
       "statusCode": 200,
       "headers": {
         "cache-control": "no-cache, no-transform",
         "connection": "keep-alive",
         "content-type": "text/event-stream",
-        "date": "Mon, 10 Aug 2026 06:52:10 GMT",
+        "date": "Mon, 17 Aug 2026 06:33:50 GMT",
         "transfer-encoding": "chunked"
       }
     }
@@ -659,7 +659,7 @@
     "name": "StreamClosed",
     "description": "POST SSE stream closed after 1 event(s)",
     "status": "INFO",
-    "timestamp": "2026-08-10T06:52:10.173Z",
+    "timestamp": "2026-08-17T06:33:50.724Z",
     "details": {
       "eventCount": 1,
       "receivedToolResponse": false
@@ -670,7 +670,7 @@
     "name": "ServerSendsPrimingEvent",
     "description": "Server SHOULD send priming event with id and empty data on POST SSE streams",
     "status": "WARNING",
-    "timestamp": "2026-08-10T06:52:10.173Z",
+    "timestamp": "2026-08-17T06:33:50.724Z",
     "specReferences": [
       {
         "id": "SEP-1699",
@@ -690,7 +690,7 @@
     "name": "ServerSendsRetryField",
     "description": "Server SHOULD send retry field to control client reconnection timing",
     "status": "WARNING",
-    "timestamp": "2026-08-10T06:52:10.173Z",
+    "timestamp": "2026-08-17T06:33:50.724Z",
     "specReferences": [
       {
         "id": "SEP-1699",
@@ -707,7 +707,7 @@
     "name": "ServerDisconnectResume",
     "description": "Server closes SSE stream mid-call and resumes after reconnection",
     "status": "INFO",
-    "timestamp": "2026-08-10T06:52:10.173Z",
+    "timestamp": "2026-08-17T06:33:50.724Z",
     "specReferences": [
       {
         "id": "SEP-1699",
@@ -723,7 +723,7 @@
     "name": "ToolsCallAudio",
     "description": "Tool returns audio content",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:09.769Z",
+    "timestamp": "2026-08-17T06:33:50.422Z",
     "specReferences": [
       {
         "id": "MCP-Tools-Call",
@@ -740,7 +740,7 @@
     "name": "ToolsCallElicitation",
     "description": "Tool requests user input from client",
     "status": "FAILURE",
-    "timestamp": "2026-08-10T06:52:10.066Z",
+    "timestamp": "2026-08-17T06:33:50.657Z",
     "errorMessage": "Failed: MCP error -32602: unknown tool \"test_elicitation\"",
     "specReferences": [
       {
@@ -754,7 +754,7 @@
     "name": "ToolsCallEmbeddedResource",
     "description": "Tool returns embedded resource content",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:09.805Z",
+    "timestamp": "2026-08-17T06:33:50.443Z",
     "specReferences": [
       {
         "id": "MCP-Tools-Call",
@@ -771,7 +771,7 @@
     "name": "ToolsCallError",
     "description": "Tool returns error correctly",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:09.883Z",
+    "timestamp": "2026-08-17T06:33:50.501Z",
     "specReferences": [
       {
         "id": "MCP-Error-Handling",
@@ -799,7 +799,7 @@
     "name": "ToolsCallImage",
     "description": "Tool returns image content",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:09.739Z",
+    "timestamp": "2026-08-17T06:33:50.406Z",
     "specReferences": [
       {
         "id": "MCP-Tools-Call",
@@ -816,7 +816,7 @@
     "name": "ToolsCallMixedContent",
     "description": "Tool returns multiple content types",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:09.831Z",
+    "timestamp": "2026-08-17T06:33:50.469Z",
     "specReferences": [
       {
         "id": "MCP-Tools-Call",
@@ -838,7 +838,7 @@
     "name": "ToolsCallSampling",
     "description": "Tool requests LLM sampling from client",
     "status": "FAILURE",
-    "timestamp": "2026-08-10T06:52:10.048Z",
+    "timestamp": "2026-08-17T06:33:50.642Z",
     "errorMessage": "Failed: MCP error -32602: unknown tool \"test_sampling\"",
     "specReferences": [
       {
@@ -852,7 +852,7 @@
     "name": "ToolsCallSimpleText",
     "description": "Tool returns simple text content",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:09.721Z",
+    "timestamp": "2026-08-17T06:33:50.393Z",
     "specReferences": [
       {
         "id": "MCP-Tools-Call",
@@ -879,7 +879,7 @@
     "name": "ToolsCallWithLogging",
     "description": "Tool sends log messages during execution",
     "status": "FAILURE",
-    "timestamp": "2026-08-10T06:52:09.863Z",
+    "timestamp": "2026-08-17T06:33:50.484Z",
     "errorMessage": "Failed: MCP error -32602: unknown tool \"test_tool_with_logging\"",
     "specReferences": [
       {
@@ -893,7 +893,7 @@
     "name": "ToolsCallWithProgress",
     "description": "Tool reports progress notifications",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:10.01Z",
+    "timestamp": "2026-08-17T06:33:50.62Z",
     "specReferences": [
       {
         "id": "MCP-Progress",
@@ -938,7 +938,7 @@
     "name": "ToolsList",
     "description": "Server lists available tools with valid structure",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:09.679Z",
+    "timestamp": "2026-08-17T06:33:50.38Z",
     "specReferences": [
       {
         "id": "MCP-Tools-List",
@@ -1022,7 +1022,7 @@
         "url": "https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-names"
       }
     ],
-    "timestamp": "2026-08-10T06:52:09.679Z",
+    "timestamp": "2026-08-17T06:33:50.38Z",
     "status": "SUCCESS",
     "details": {
       "toolCount": 57,
