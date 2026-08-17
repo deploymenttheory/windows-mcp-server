@@ -4,7 +4,7 @@
     "name": "ToolsListCachingHints",
     "description": "tools/list response includes ttlMs and cacheScope caching hints",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.808Z",
+    "timestamp": "2026-08-17T06:33:46.929Z",
     "specReferences": [
       {
         "id": "MCP-Caching",
@@ -27,7 +27,7 @@
     "name": "PromptsListCachingHints",
     "description": "prompts/list response includes ttlMs and cacheScope caching hints",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.81Z",
+    "timestamp": "2026-08-17T06:33:46.939Z",
     "specReferences": [
       {
         "id": "MCP-Caching",
@@ -50,7 +50,7 @@
     "name": "ResourcesListCachingHints",
     "description": "resources/list response includes ttlMs and cacheScope caching hints",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.811Z",
+    "timestamp": "2026-08-17T06:33:46.941Z",
     "specReferences": [
       {
         "id": "MCP-Caching",
@@ -73,7 +73,7 @@
     "name": "ResourcesTemplatesListCachingHints",
     "description": "resources/templates/list response includes ttlMs and cacheScope caching hints",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.82Z",
+    "timestamp": "2026-08-17T06:33:46.943Z",
     "specReferences": [
       {
         "id": "MCP-Caching",
@@ -96,7 +96,7 @@
     "name": "ResourcesReadCachingHints",
     "description": "resources/read response includes ttlMs and cacheScope caching hints",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.822Z",
+    "timestamp": "2026-08-17T06:33:46.955Z",
     "specReferences": [
       {
         "id": "MCP-Caching",
@@ -119,7 +119,7 @@
     "name": "TtlNonNegative",
     "description": "All ttlMs values are non-negative integers",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.822Z",
+    "timestamp": "2026-08-17T06:33:46.955Z",
     "specReferences": [
       {
         "id": "MCP-Caching",
@@ -160,7 +160,7 @@
     "name": "CacheScopeValid",
     "description": "All cacheScope values are \"public\" or \"private\"",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.822Z",
+    "timestamp": "2026-08-17T06:33:46.955Z",
     "specReferences": [
       {
         "id": "MCP-Caching",
@@ -201,7 +201,7 @@
     "name": "CompletionComplete",
     "description": "Server responds to completion requests",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.518Z",
+    "timestamp": "2026-08-17T06:33:46.666Z",
     "specReferences": [
       {
         "id": "MCP-Completion",
@@ -228,7 +228,7 @@
     "id": "localhost-host-rebinding-rejected",
     "name": "DNSRebindingRejected",
     "description": "Server rejects requests with non-localhost Host/Origin headers",
-    "timestamp": "2026-08-10T06:52:06.779Z",
+    "timestamp": "2026-08-17T06:33:46.897Z",
     "specReferences": [
       {
         "id": "MCP-DNS-Rebinding-Protection",
@@ -251,7 +251,7 @@
     "id": "localhost-host-valid-accepted",
     "name": "LocalhostHostAccepted",
     "description": "Server accepts requests with valid localhost Host/Origin headers",
-    "timestamp": "2026-08-10T06:52:06.779Z",
+    "timestamp": "2026-08-17T06:33:46.897Z",
     "specReferences": [
       {
         "id": "MCP-DNS-Rebinding-Protection",
@@ -275,7 +275,7 @@
     "name": "ServerAcceptsValidBase64",
     "description": "Server decodes valid Base64 header value and validates against body",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.854Z",
+    "timestamp": "2026-08-17T06:33:46.997Z",
     "specReferences": [
       {
         "id": "SEP-2243-Value-Encoding",
@@ -297,7 +297,7 @@
     "name": "ServerRejectsInvalidBase64Padding",
     "description": "Server MUST reject Mcp-Param header with invalid Base64 padding (per SEP-2243 test-case table)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.855Z",
+    "timestamp": "2026-08-17T06:33:46.998Z",
     "specReferences": [
       {
         "id": "SEP-2243-Value-Encoding",
@@ -326,7 +326,7 @@
     "name": "ServerRejectsInvalidBase64PaddingErrorCode",
     "description": "Server MUST reject Mcp-Param header with invalid Base64 padding (per SEP-2243 test-case table) — uses JSON-RPC error code -32020 (HeaderMismatch)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.855Z",
+    "timestamp": "2026-08-17T06:33:46.998Z",
     "specReferences": [
       {
         "id": "SEP-2243-Value-Encoding",
@@ -355,7 +355,7 @@
     "name": "ServerRejectsInvalidBase64Chars",
     "description": "Server MUST reject Mcp-Param header with non-alphabet Base64 characters (per SEP-2243 test-case table)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.856Z",
+    "timestamp": "2026-08-17T06:33:46.999Z",
     "specReferences": [
       {
         "id": "SEP-2243-Value-Encoding",
@@ -384,7 +384,7 @@
     "name": "ServerRejectsInvalidBase64CharsErrorCode",
     "description": "Server MUST reject Mcp-Param header with non-alphabet Base64 characters (per SEP-2243 test-case table) — uses JSON-RPC error code -32020 (HeaderMismatch)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.856Z",
+    "timestamp": "2026-08-17T06:33:46.999Z",
     "specReferences": [
       {
         "id": "SEP-2243-Value-Encoding",
@@ -413,7 +413,7 @@
     "name": "ServerLiteralMissingBase64Prefix",
     "description": "Server treats value without =?base64? prefix as literal (not Base64)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.857Z",
+    "timestamp": "2026-08-17T06:33:47.001Z",
     "specReferences": [
       {
         "id": "SEP-2243-Value-Encoding",
@@ -435,7 +435,7 @@
     "name": "ServerLiteralMissingBase64Suffix",
     "description": "Server treats value without ?= suffix as literal (not Base64)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.859Z",
+    "timestamp": "2026-08-17T06:33:47.002Z",
     "specReferences": [
       {
         "id": "SEP-2243-Value-Encoding",
@@ -457,7 +457,7 @@
     "name": "ServerRejectsMissingCustomHeader",
     "description": "Server MUST reject request where custom header is omitted but value is present in body",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.859Z",
+    "timestamp": "2026-08-17T06:33:47.003Z",
     "specReferences": [
       {
         "id": "SEP-2243-Custom-Headers",
@@ -486,7 +486,7 @@
     "name": "ServerRejectsMissingCustomHeaderErrorCode",
     "description": "Server MUST reject request where custom header is omitted but value is present in body — uses JSON-RPC error code -32020 (HeaderMismatch)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.859Z",
+    "timestamp": "2026-08-17T06:33:47.003Z",
     "specReferences": [
       {
         "id": "SEP-2243-Custom-Headers",
@@ -515,7 +515,7 @@
     "name": "ServerRejectsMismatchedMethodHeader",
     "description": "Server rejects requests where Mcp-Method header does not match body method",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.833Z",
+    "timestamp": "2026-08-17T06:33:46.971Z",
     "specReferences": [
       {
         "id": "SEP-2243-Server-Validation",
@@ -541,7 +541,7 @@
     "name": "ServerRejectsMismatchedMethodHeaderErrorCode",
     "description": "Server rejects requests where Mcp-Method header does not match body method — uses JSON-RPC error code -32020 (HeaderMismatch)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.833Z",
+    "timestamp": "2026-08-17T06:33:46.971Z",
     "specReferences": [
       {
         "id": "SEP-2243-Server-Validation",
@@ -567,7 +567,7 @@
     "name": "ServerRejectsMissingMethodHeader",
     "description": "Server rejects requests with missing Mcp-Method header",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.833Z",
+    "timestamp": "2026-08-17T06:33:46.972Z",
     "specReferences": [
       {
         "id": "SEP-2243-Server-Validation",
@@ -593,7 +593,7 @@
     "name": "ServerRejectsMissingMethodHeaderErrorCode",
     "description": "Server rejects requests with missing Mcp-Method header — uses JSON-RPC error code -32020 (HeaderMismatch)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.833Z",
+    "timestamp": "2026-08-17T06:33:46.972Z",
     "specReferences": [
       {
         "id": "SEP-2243-Server-Validation",
@@ -619,7 +619,7 @@
     "name": "ServerRejectsMismatchedNameHeader",
     "description": "Server rejects tools/call where Mcp-Name does not match body params.name",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.834Z",
+    "timestamp": "2026-08-17T06:33:46.972Z",
     "specReferences": [
       {
         "id": "SEP-2243-Server-Validation",
@@ -645,7 +645,7 @@
     "name": "ServerRejectsMismatchedNameHeaderErrorCode",
     "description": "Server rejects tools/call where Mcp-Name does not match body params.name — uses JSON-RPC error code -32020 (HeaderMismatch)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.834Z",
+    "timestamp": "2026-08-17T06:33:46.972Z",
     "specReferences": [
       {
         "id": "SEP-2243-Server-Validation",
@@ -671,7 +671,7 @@
     "name": "ServerAcceptsWhitespaceHeaderValue",
     "description": "Server MUST accept leading/trailing whitespace in Mcp-Name value (RFC 9110 §5.5: field parsing MUST exclude OWS before evaluating)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.836Z",
+    "timestamp": "2026-08-17T06:33:46.974Z",
     "specReferences": [
       {
         "id": "RFC-9110-5.5-Field-Values",
@@ -691,7 +691,7 @@
     "name": "ServerRejectsMissingNameHeader",
     "description": "Server MUST reject tools/call with missing Mcp-Name header when body has params.name",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.837Z",
+    "timestamp": "2026-08-17T06:33:46.975Z",
     "specReferences": [
       {
         "id": "SEP-2243-Server-Validation",
@@ -718,7 +718,7 @@
     "name": "ServerRejectsMissingNameHeaderErrorCode",
     "description": "Server MUST reject tools/call with missing Mcp-Name header when body has params.name — uses JSON-RPC error code -32020 (HeaderMismatch)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.837Z",
+    "timestamp": "2026-08-17T06:33:46.975Z",
     "specReferences": [
       {
         "id": "SEP-2243-Server-Validation",
@@ -745,7 +745,7 @@
     "name": "ServerAcceptsLowercaseHeaderName",
     "description": "Server MUST accept lowercase header name (mcp-method)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.841Z",
+    "timestamp": "2026-08-17T06:33:46.98Z",
     "specReferences": [
       {
         "id": "SEP-2243-Case-Sensitivity",
@@ -763,7 +763,7 @@
     "name": "ServerAcceptsUppercaseHeaderName",
     "description": "Server MUST accept uppercase header name (MCP-METHOD)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.845Z",
+    "timestamp": "2026-08-17T06:33:46.985Z",
     "specReferences": [
       {
         "id": "SEP-2243-Case-Sensitivity",
@@ -781,7 +781,7 @@
     "name": "ServerRejectsCaseMismatchValue",
     "description": "Server MUST reject uppercase method value (TOOLS/LIST) since values are case-sensitive",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.846Z",
+    "timestamp": "2026-08-17T06:33:46.986Z",
     "specReferences": [
       {
         "id": "SEP-2243-Case-Sensitivity",
@@ -807,7 +807,7 @@
     "name": "ServerRejectsCaseMismatchValueErrorCode",
     "description": "Server MUST reject uppercase method value (TOOLS/LIST) since values are case-sensitive — uses JSON-RPC error code -32020 (HeaderMismatch)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.846Z",
+    "timestamp": "2026-08-17T06:33:46.986Z",
     "specReferences": [
       {
         "id": "SEP-2243-Case-Sensitivity",
@@ -833,7 +833,7 @@
     "name": "InputRequiredResultElicitationIncomplete",
     "description": "Server returns InputRequiredResult with elicitation inputRequest",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.862Z",
+    "timestamp": "2026-08-17T06:33:47.007Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -884,7 +884,7 @@
     "name": "InputRequiredResultElicitationComplete",
     "description": "Server returns complete result after retry with inputResponses",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.864Z",
+    "timestamp": "2026-08-17T06:33:47.017Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -919,7 +919,7 @@
     "name": "InputRequiredResultListRootsIncomplete",
     "description": "Server returns InputRequiredResult with roots/list inputRequest",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.871Z",
+    "timestamp": "2026-08-17T06:33:47.028Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -956,7 +956,7 @@
     "name": "InputRequiredResultListRootsComplete",
     "description": "Server returns complete result after retry with roots response",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.873Z",
+    "timestamp": "2026-08-17T06:33:47.03Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -991,7 +991,7 @@
     "name": "InputRequiredResultSamplingIncomplete",
     "description": "Server returns InputRequiredResult with sampling inputRequest",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.867Z",
+    "timestamp": "2026-08-17T06:33:47.021Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1039,7 +1039,7 @@
     "name": "InputRequiredResultSamplingComplete",
     "description": "Server returns complete result after retry with sampling response",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.868Z",
+    "timestamp": "2026-08-17T06:33:47.024Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1074,7 +1074,7 @@
     "name": "RespectClientCapabilities",
     "description": "Server only includes inputRequests for declared client capabilities",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.947Z",
+    "timestamp": "2026-08-17T06:33:47.085Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1122,7 +1122,7 @@
     "name": "IgnoreUnexpectedParams",
     "description": "Server ignores extra unrecognized keys in inputResponses",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.951Z",
+    "timestamp": "2026-08-17T06:33:47.089Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1157,7 +1157,7 @@
     "name": "InputRequiredResultMissingResponseRerequests",
     "description": "Server re-requests missing inputResponses via new InputRequiredResult",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.894Z",
+    "timestamp": "2026-08-17T06:33:47.054Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1208,7 +1208,7 @@
     "name": "InputRequiredResultMultiRoundR1",
     "description": "Round 1: Server returns InputRequiredResult with requestState",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.887Z",
+    "timestamp": "2026-08-17T06:33:47.046Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1230,7 +1230,7 @@
             "text": "device policy warning: run-context (rule \"interactive-session\"): non-interactive session 0"
           }
         ],
-        "requestState": "eyJkYXRhIjoicm91bmQ9MSIsImhtYWMiOiJmYjI0NmQyYTM1MWYzM2JiMGZhNGEwMDJmYzRiYWQ4ZDY2MzY3NWI2NDA2MzUxOGVmYzQ3N2ZkYjE1MjMyODJmIn0=",
+        "requestState": "eyJkYXRhIjoicm91bmQ9MSIsImhtYWMiOiJmYzE2YjE5Y2E1NGYzYjExMjk3MDljNTAyMmNmYWFkMTM1ZDJhYzIyYTk2MTFlMmNlNmE3YmNkMDFlY2YwNjM1In0=",
         "resultType": "input_required",
         "inputRequests": {
           "step1": {
@@ -1260,7 +1260,7 @@
     "name": "InputRequiredResultMultiRoundR2",
     "description": "Round 2: Server returns another InputRequiredResult with updated requestState",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.888Z",
+    "timestamp": "2026-08-17T06:33:47.048Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1282,7 +1282,7 @@
             "text": "device policy warning: run-context (rule \"interactive-session\"): non-interactive session 0"
           }
         ],
-        "requestState": "eyJkYXRhIjoicm91bmQ9MjtuYW1lPUFsaWNlIiwiaG1hYyI6ImIyZjJiMTg0OTFlMGVlZGFiNGE5YzVhNzAwZDg0MzA4Yzc0YTliZWU5NTAyZDczMzMxNmI4MWU0MDkxMzUwMjIifQ==",
+        "requestState": "eyJkYXRhIjoicm91bmQ9MjtuYW1lPUFsaWNlIiwiaG1hYyI6IjNjYjhlYjNlYTRiYWUyODJmOGY4Y2FmODE0NzcyNzY2Y2U5YmY1MWY4MWMwNTViN2RmZTM5Njg2NTMyZjAwYTEifQ==",
         "resultType": "input_required",
         "inputRequests": {
           "step2": {
@@ -1312,7 +1312,7 @@
     "name": "InputRequiredResultMultiRoundR3",
     "description": "Round 3: Server returns complete result",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.89Z",
+    "timestamp": "2026-08-17T06:33:47.05Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1347,7 +1347,7 @@
     "name": "InputRequiredResultMultipleInputsIncomplete",
     "description": "Server returns InputRequiredResult with multiple inputRequests of different types",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.882Z",
+    "timestamp": "2026-08-17T06:33:47.04Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1369,7 +1369,7 @@
             "text": "device policy warning: run-context (rule \"interactive-session\"): non-interactive session 0"
           }
         ],
-        "requestState": "eyJkYXRhIjoibXVsdGlwbGUtaW5wdXRzIiwiaG1hYyI6IjMxNTBiZGFkYThhMDQ0NDA3NTE5ZWJmZDc2YzhjMDM2YTRiNDE4MmI3YjRjY2QwYzBlNWRlMWQzNjJjOGZiY2YifQ==",
+        "requestState": "eyJkYXRhIjoibXVsdGlwbGUtaW5wdXRzIiwiaG1hYyI6IjA4OWQ3MmYyM2RmYTVlZTY5MTMzNTNmNWMxMWE0NzZmZGU5YTM1N2Y0N2M3MTM3MjZmOTk0NDBiNzNkOWI4YTQifQ==",
         "resultType": "input_required",
         "inputRequests": {
           "client_roots": {
@@ -1418,7 +1418,7 @@
     "name": "InputRequiredResultMultipleInputsComplete",
     "description": "Server returns complete result after all inputResponses are provided",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.883Z",
+    "timestamp": "2026-08-17T06:33:47.042Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1453,7 +1453,7 @@
     "name": "InputRequiredResultNonToolIncomplete",
     "description": "prompts/get returns InputRequiredResult with inputRequests",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.913Z",
+    "timestamp": "2026-08-17T06:33:47.057Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1499,7 +1499,7 @@
     "name": "InputRequiredResultNonToolComplete",
     "description": "prompts/get returns complete GetPromptResult after retry with inputResponses",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.915Z",
+    "timestamp": "2026-08-17T06:33:47.059Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1534,7 +1534,7 @@
     "name": "InputRequiredResultRequestStateIncomplete",
     "description": "Server returns InputRequiredResult with both inputRequests and requestState",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.876Z",
+    "timestamp": "2026-08-17T06:33:47.034Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1556,7 +1556,7 @@
             "text": "device policy warning: run-context (rule \"interactive-session\"): non-interactive session 0"
           }
         ],
-        "requestState": "eyJkYXRhIjoicmVxdWVzdC1zdGF0ZSIsImhtYWMiOiIxMWRkMzY2OWI0MzI1MDY2NTBkZWFhYzczYjhjNWZhZjhiYWMwZjMxODZkYTFiZmE2NDYwNDc5ZjhkZjEyZmIwIn0=",
+        "requestState": "eyJkYXRhIjoicmVxdWVzdC1zdGF0ZSIsImhtYWMiOiIyMGQwZjRkZWMyNzg2NTMxY2ZlYTA4ZDdlYjI1NjgwZmY0MThlMmM2NDc3YjIyNTA0ZWRlN2FjNDZjMDY2OTlhIn0=",
         "resultType": "input_required",
         "inputRequests": {
           "confirm": {
@@ -1586,7 +1586,7 @@
     "name": "InputRequiredResultRequestStateComplete",
     "description": "Server validates echoed requestState and returns complete result",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.878Z",
+    "timestamp": "2026-08-17T06:33:47.036Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1621,7 +1621,7 @@
     "name": "ResultTypeIncluded",
     "description": "Server includes resultType field in InputRequiredResult response",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.917Z",
+    "timestamp": "2026-08-17T06:33:47.063Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1672,7 +1672,7 @@
     "name": "RejectTamperedState",
     "description": "Server rejects tampered requestState with error",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.944Z",
+    "timestamp": "2026-08-17T06:33:47.082Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1691,7 +1691,7 @@
     "name": "NotOnUnsupportedRequests",
     "description": "Server does not return InputRequiredResult on unsupported methods",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.932Z",
+    "timestamp": "2026-08-17T06:33:47.072Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1704,7 +1704,7 @@
     "name": "ValidateInputResponses",
     "description": "Server validates InputResponses structure",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.958Z",
+    "timestamp": "2026-08-17T06:33:47.091Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1723,7 +1723,7 @@
     "name": "ErrorOnProtocolError",
     "description": "Server returns JSON-RPC error for protocol-level input errors",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.975Z",
+    "timestamp": "2026-08-17T06:33:47.095Z",
     "specReferences": [
       {
         "id": "SEP-2322",
@@ -1774,7 +1774,7 @@
     "name": "JsonSchema2020_12ToolFound",
     "description": "Server advertises tool 'json_schema_2020_12_tool'",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.685Z",
+    "timestamp": "2026-08-17T06:33:46.818Z",
     "specReferences": [
       {
         "id": "SEP-1613",
@@ -1849,7 +1849,7 @@
     "name": "JsonSchema2020_12$Schema",
     "description": "inputSchema.$schema field preserved with value 'https://json-schema.org/draft/2020-12/schema'",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.685Z",
+    "timestamp": "2026-08-17T06:33:46.818Z",
     "specReferences": [
       {
         "id": "SEP-1613",
@@ -1867,7 +1867,7 @@
     "name": "JsonSchema2020_12$Defs",
     "description": "inputSchema.$defs field preserved with expected structure",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.685Z",
+    "timestamp": "2026-08-17T06:33:46.818Z",
     "specReferences": [
       {
         "id": "SEP-1613",
@@ -1900,7 +1900,7 @@
     "name": "JsonSchema2020_12AdditionalProperties",
     "description": "inputSchema.additionalProperties field preserved",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.685Z",
+    "timestamp": "2026-08-17T06:33:46.818Z",
     "specReferences": [
       {
         "id": "SEP-1613",
@@ -1918,7 +1918,7 @@
     "name": "JsonSchema2020_12CompositionKeywords",
     "description": "inputSchema composition keywords (allOf/anyOf) preserved (SEP-2106)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.685Z",
+    "timestamp": "2026-08-17T06:33:46.818Z",
     "specReferences": [
       {
         "id": "SEP-2106",
@@ -1936,7 +1936,7 @@
     "name": "JsonSchema2020_12ConditionalKeywords",
     "description": "inputSchema conditional keywords (if/then/else) preserved (SEP-2106)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.685Z",
+    "timestamp": "2026-08-17T06:33:46.818Z",
     "specReferences": [
       {
         "id": "SEP-2106",
@@ -1955,7 +1955,7 @@
     "name": "JsonSchema2020_12AnchorKeyword",
     "description": "inputSchema reference keyword ($anchor) preserved in $defs (SEP-2106)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.685Z",
+    "timestamp": "2026-08-17T06:33:46.818Z",
     "specReferences": [
       {
         "id": "SEP-2106",
@@ -1972,7 +1972,7 @@
     "name": "PromptsGetEmbeddedResource",
     "description": "Get prompt with embedded resource",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.774Z",
+    "timestamp": "2026-08-17T06:33:46.891Z",
     "specReferences": [
       {
         "id": "MCP-Prompts-Embedded-Resources",
@@ -2008,7 +2008,7 @@
     "name": "PromptsGetSimple",
     "description": "Get simple prompt successfully",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.75Z",
+    "timestamp": "2026-08-17T06:33:46.88Z",
     "specReferences": [
       {
         "id": "MCP-Prompts-Get",
@@ -2024,7 +2024,7 @@
     "name": "PromptsGetWithArgs",
     "description": "Get parameterized prompt with argument substitution",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.76Z",
+    "timestamp": "2026-08-17T06:33:46.887Z",
     "specReferences": [
       {
         "id": "MCP-Prompts-Get",
@@ -2049,7 +2049,7 @@
     "name": "PromptsGetWithImage",
     "description": "Get prompt with image content",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.777Z",
+    "timestamp": "2026-08-17T06:33:46.895Z",
     "specReferences": [
       {
         "id": "MCP-Prompts-Image",
@@ -2065,7 +2065,7 @@
     "name": "PromptsList",
     "description": "Server lists available prompts with valid structure",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.744Z",
+    "timestamp": "2026-08-17T06:33:46.876Z",
     "specReferences": [
       {
         "id": "MCP-Prompts-List",
@@ -2091,7 +2091,7 @@
     "name": "ResourcesList",
     "description": "Server lists available resources with valid structure",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.713Z",
+    "timestamp": "2026-08-17T06:33:46.847Z",
     "specReferences": [
       {
         "id": "MCP-Resources-List",
@@ -2115,7 +2115,7 @@
     "name": "ResourcesReadBinary",
     "description": "Read binary resource successfully",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.719Z",
+    "timestamp": "2026-08-17T06:33:46.861Z",
     "specReferences": [
       {
         "id": "MCP-Resources-Read",
@@ -2133,7 +2133,7 @@
     "name": "ResourcesReadText",
     "description": "Read text resource successfully",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.716Z",
+    "timestamp": "2026-08-17T06:33:46.851Z",
     "specReferences": [
       {
         "id": "MCP-Resources-Read",
@@ -2151,7 +2151,7 @@
     "name": "ResourcesTemplateRead",
     "description": "Read resource from template with parameter substitution",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.722Z",
+    "timestamp": "2026-08-17T06:33:46.865Z",
     "specReferences": [
       {
         "id": "MCP-Resources-Templates",
@@ -2168,7 +2168,7 @@
     "name": "ResourcesNotFoundNoEmptyContents",
     "description": "Server does not return an empty contents array for a non-existent resource",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.726Z",
+    "timestamp": "2026-08-17T06:33:46.869Z",
     "specReferences": [
       {
         "id": "SEP-2164",
@@ -2185,7 +2185,7 @@
     "name": "ResourcesNotFoundErrorCode",
     "description": "Server returns -32602 (Invalid Params) for non-existent resource (SHOULD)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.726Z",
+    "timestamp": "2026-08-17T06:33:46.869Z",
     "specReferences": [
       {
         "id": "SEP-2164",
@@ -2203,7 +2203,7 @@
     "name": "ResourcesNotFoundDataUri",
     "description": "Server includes the requested URI in the error data field (SHOULD)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.726Z",
+    "timestamp": "2026-08-17T06:33:46.869Z",
     "specReferences": [
       {
         "id": "SEP-2164",
@@ -2220,7 +2220,7 @@
     "name": "ServerAcceptsMultiplePostStreams",
     "description": "Server allows multiple concurrent POST requests (each may return SSE or JSON)",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.697Z",
+    "timestamp": "2026-08-17T06:33:46.834Z",
     "specReferences": [
       {
         "id": "SEP-1699",
@@ -2248,7 +2248,7 @@
     "name": "ServerSSEStreamsFunctional",
     "description": "Multiple POST SSE streams should be functional",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.702Z",
+    "timestamp": "2026-08-17T06:33:46.841Z",
     "specReferences": [
       {
         "id": "SEP-1699",
@@ -2291,7 +2291,7 @@
     "name": "RequestMetaInvalid",
     "description": "Rejects request with missing _meta with -32602 Invalid params",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -2315,7 +2315,7 @@
     "name": "HttpServerMetaInvalid400",
     "description": "Rejections of requests missing required _meta fields use HTTP 400 Bad Request.",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -2339,7 +2339,7 @@
     "name": "RequestMetaInvalid",
     "description": "Rejects request with _meta missing io.modelcontextprotocol/protocolVersion",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -2363,7 +2363,7 @@
     "name": "HttpServerMetaInvalid400",
     "description": "Rejections of requests missing required _meta fields use HTTP 400 Bad Request.",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -2387,7 +2387,7 @@
     "name": "RequestMetaInvalid",
     "description": "Rejects request with _meta missing io.modelcontextprotocol/clientCapabilities",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -2411,7 +2411,7 @@
     "name": "HttpServerMetaInvalid400",
     "description": "Rejections of requests missing required _meta fields use HTTP 400 Bad Request.",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -2435,7 +2435,7 @@
     "name": "RequestMetaClientInfoOptional",
     "description": "Serves requests whose _meta omits io.modelcontextprotocol/clientInfo (clientInfo is a SHOULD).",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -2479,7 +2479,7 @@
     "name": "ServerImplementsDiscover",
     "description": "Servers MUST implement server/discover.",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -2519,7 +2519,7 @@
     "name": "ServerIdentifiesInResultMeta",
     "description": "Servers SHOULD identify themselves via _meta['io.modelcontextprotocol/serverInfo'] on responses (spec PR #3002).",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -2539,7 +2539,7 @@
     "name": "ServerDeclaresPromptsInDiscover",
     "description": "Servers that support prompts MUST declare the prompts capability in their DiscoverResult.",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -2657,7 +2657,7 @@
     "name": "DiscoverCapabilitiesMatchHandlers",
     "description": "capabilities matches what the server honors on real RPC calls",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4536,7 +4536,7 @@
     "name": "ServerUnsupportedVersionError",
     "description": "If the server does not implement the requested version (whether the version is unknown to the server, or is a known version the server has chosen not to support), it MUST respond with an UnsupportedProtocolVersionError listing the versions it does support; the error data carries the supported versions and echoes the requested version.",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4569,7 +4569,7 @@
     "name": "HttpServerUnsupportedVersion400",
     "description": "If the server does not implement the requested protocol version, it MUST respond with 400 Bad Request and an UnsupportedProtocolVersionError listing its supported versions.",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4602,7 +4602,7 @@
     "name": "HttpServerHeaderMismatch400",
     "description": "If the values do not match, the server MUST reject the request with 400 Bad Request and a HeaderMismatch JSON-RPC error.",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4625,7 +4625,7 @@
     "name": "ServerRejectsUndeclaredCapability",
     "description": "A server MUST NOT rely on capabilities the client has not declared. If processing a request requires a capability the client did not include in io.modelcontextprotocol/clientCapabilities, the server MUST return a MissingRequiredClientCapabilityError (-32021).",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4653,7 +4653,7 @@
     "name": "MissingCapabilityHttp400",
     "description": "On HTTP, the response status MUST be 400 Bad Request [for MissingRequiredClientCapabilityError].",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4681,7 +4681,7 @@
     "name": "HttpServerMethodNotFound404initialize",
     "description": "If the server does not implement the removed RPC method 'initialize', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4704,7 +4704,7 @@
     "name": "HttpServerMethodNotFound404ping",
     "description": "If the server does not implement the removed RPC method 'ping', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4727,7 +4727,7 @@
     "name": "HttpServerMethodNotFound404loggingsetLevel",
     "description": "If the server does not implement the removed RPC method 'logging/setLevel', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4750,7 +4750,7 @@
     "name": "HttpServerMethodNotFound404resourcessubscribe",
     "description": "If the server does not implement the removed RPC method 'resources/subscribe', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4773,7 +4773,7 @@
     "name": "HttpServerMethodNotFound404resourcesunsubscribe",
     "description": "If the server does not implement the removed RPC method 'resources/unsubscribe', it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4796,7 +4796,7 @@
     "name": "HttpServerMethodNotFound404",
     "description": "If the server does not implement the requested RPC method, it MUST respond with 404 Not Found and a JSON-RPC error with code -32601 (Method not found).",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4819,7 +4819,7 @@
     "name": "HttpServerNoIndependentRequestsOnStream",
     "description": "Request stream contains only IncompleteResult, never independent JSON-RPC requests",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4835,7 +4835,7 @@
     "name": "ServerNoLogWithoutLogLevel",
     "description": "No notifications/message for requests that didn't set _meta.../logLevel",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4851,7 +4851,7 @@
     "name": "ServerSendsSubscriptionAck",
     "description": "notifications/subscriptions/acknowledged is the first message on a subscriptions/listen stream",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4864,7 +4864,7 @@
         "method": "notifications/subscriptions/acknowledged",
         "params": {
           "_meta": {
-            "io.modelcontextprotocol/subscriptionId": 1786344726481
+            "io.modelcontextprotocol/subscriptionId": 1786948426629
           },
           "notifications": {}
         }
@@ -4876,7 +4876,7 @@
     "name": "ServerTagsSubscriptionId",
     "description": "Listen-stream notifications carry _meta.../subscriptionId",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4884,7 +4884,7 @@
       }
     ],
     "details": {
-      "subscriptionId": 1786344726481,
+      "subscriptionId": 1786948426629,
       "inspectedNotificationCount": 1
     }
   },
@@ -4893,7 +4893,7 @@
     "name": "ServerHonorsNotificationFilter",
     "description": "Server doesn't send notification types the client didn't request",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4909,7 +4909,7 @@
     "name": "ServerSendsPromptsListChangedOnSubscription",
     "description": "List-changed-capable servers notify listen streams with promptsListChanged: true (SHOULD)",
     "status": "SKIPPED",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4925,7 +4925,7 @@
     "name": "ServerSendsToolsListChangedOnSubscription",
     "description": "List-changed-capable servers notify listen streams with toolsListChanged: true (SHOULD)",
     "status": "SKIPPED",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "specReferences": [
       {
         "id": "SEP-2575",
@@ -4941,7 +4941,7 @@
     "name": "HttpServerErrorJsonrpcId",
     "description": "All error responses carry the request JSON-RPC id",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.25Z",
+    "timestamp": "2026-08-17T06:33:46.447Z",
     "details": {
       "errorResponsesObserved": 14
     },
@@ -4957,7 +4957,7 @@
     "name": "ToolsCallAudio",
     "description": "Tool returns audio content",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.55Z",
+    "timestamp": "2026-08-17T06:33:46.69Z",
     "specReferences": [
       {
         "id": "MCP-Tools-Call",
@@ -4974,7 +4974,7 @@
     "name": "ToolsCallEmbeddedResource",
     "description": "Tool returns embedded resource content",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.557Z",
+    "timestamp": "2026-08-17T06:33:46.694Z",
     "specReferences": [
       {
         "id": "MCP-Tools-Call",
@@ -4991,7 +4991,7 @@
     "name": "ToolsCallError",
     "description": "Tool returns error correctly",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.565Z",
+    "timestamp": "2026-08-17T06:33:46.702Z",
     "specReferences": [
       {
         "id": "MCP-Error-Handling",
@@ -5027,7 +5027,7 @@
     "name": "ToolsCallImage",
     "description": "Tool returns image content",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.546Z",
+    "timestamp": "2026-08-17T06:33:46.685Z",
     "specReferences": [
       {
         "id": "MCP-Tools-Call",
@@ -5044,7 +5044,7 @@
     "name": "ToolsCallMixedContent",
     "description": "Tool returns multiple content types",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.561Z",
+    "timestamp": "2026-08-17T06:33:46.699Z",
     "specReferences": [
       {
         "id": "MCP-Tools-Call",
@@ -5066,7 +5066,7 @@
     "name": "ToolsCallSimpleText",
     "description": "Tool returns simple text content",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.543Z",
+    "timestamp": "2026-08-17T06:33:46.681Z",
     "specReferences": [
       {
         "id": "MCP-Tools-Call",
@@ -5101,7 +5101,7 @@
     "name": "ToolsCallWithProgress",
     "description": "Tool reports progress notifications",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.669Z",
+    "timestamp": "2026-08-17T06:33:46.807Z",
     "specReferences": [
       {
         "id": "MCP-Progress",
@@ -5154,7 +5154,7 @@
     "name": "ToolsList",
     "description": "Server lists available tools with valid structure",
     "status": "SUCCESS",
-    "timestamp": "2026-08-10T06:52:06.525Z",
+    "timestamp": "2026-08-17T06:33:46.675Z",
     "specReferences": [
       {
         "id": "MCP-Tools-List",
@@ -5238,7 +5238,7 @@
         "url": "https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-names"
       }
     ],
-    "timestamp": "2026-08-10T06:52:06.525Z",
+    "timestamp": "2026-08-17T06:33:46.675Z",
     "status": "SUCCESS",
     "details": {
       "toolCount": 57,
