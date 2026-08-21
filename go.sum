@@ -9,8 +9,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/deploymenttheory/agentweave-harness v0.7.0 h1:kxTw/dL9bfHtkccdstpeq61g8L8Sx7BRmrGmzJXfm34=
 github.com/deploymenttheory/agentweave-harness v0.7.0/go.mod h1:DgW0MwkJ71dNJIfhLkajyRCfGqWnB2KUJ2yTVHiBlKk=
-github.com/deploymenttheory/go-bindings-win32 v0.2.1 h1:mApZJdaGj636R5lLwSPIIdA+6hKPewtdg8VpePc5VBA=
-github.com/deploymenttheory/go-bindings-win32 v0.2.1/go.mod h1:UCwSCOc2LcmtnGEQFuhyDZ9pFjMdpxvOhR4MsjOji94=
+github.com/deploymenttheory/go-bindings-win32 v0.3.1 h1:iR4Bfa6qYsVgJVTmj9BSVzSRT9Mhq9LJBAsOh9hfe3c=
+github.com/deploymenttheory/go-bindings-win32 v0.3.1/go.mod h1:J3mOfF0N1uFmI8Cm3GPtq1YJYnwAKUkOsmc36GYbm0w=
 github.com/deploymenttheory/go-bindings-wmi v1.0.0 h1:kbHeth09+2dKsKBX3AI2modiYLzNK9jWHCIo3YPJ8Vo=
 github.com/deploymenttheory/go-bindings-wmi v1.0.0/go.mod h1:mZNOAL0xzQjecyTDExnIumQ1zSWNogtWu/Kh5X/lqgk=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
