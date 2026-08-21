@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
-	github.com/deploymenttheory/agentweave-harness v0.7.0
+	github.com/deploymenttheory/agentweave-harness v1.0.0
 	github.com/deploymenttheory/go-bindings-win32 v0.2.1
 	github.com/deploymenttheory/go-bindings-wmi v1.0.0
 	github.com/google/jsonschema-go v0.4.3
