@@ -5,9 +5,9 @@ Produced by the official conformance suite, [modelcontextprotocol/conformance](h
 | | |
 |---|---|
 | Server version | `dev` |
-| Commit | `43e39eb8236b22df139742b1dd9a443bfee0582c` |
-| Generated | `2026-08-10T06:52:11Z` |
-| Workflow run | https://github.com/deploymenttheory/windows-mcp-server/actions/runs/31363295698 |
+| Commit | `22d529621b2d53d1fc0730e0c99902b253cf7373` |
+| Generated | `2026-08-24T06:34:21Z` |
+| Workflow run | https://github.com/deploymenttheory/windows-mcp-server/actions/runs/32697674124 |
 
 ## Summary
 

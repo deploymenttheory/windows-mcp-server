@@ -1,8 +1,8 @@
 {
   "server_version": "dev",
-  "commit": "43e39eb8236b22df139742b1dd9a443bfee0582c",
-  "generated_at": "2026-08-10T06:52:11Z",
-  "run_url": "https://github.com/deploymenttheory/windows-mcp-server/actions/runs/31363295698",
+  "commit": "22d529621b2d53d1fc0730e0c99902b253cf7373",
+  "generated_at": "2026-08-24T06:34:21Z",
+  "run_url": "https://github.com/deploymenttheory/windows-mcp-server/actions/runs/32697674124",
   "passes": [
     {
       "name": "product",
