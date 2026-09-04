@@ -52,9 +52,9 @@ func TestAllToolsValid(t *testing.T) {
 
 // TestExpectedToolCount guards against accidental tool loss/addition.
 func TestExpectedToolCount(t *testing.T) {
-	// 35 since LaunchExecutable was split out of App's launch_executable mode, so
+	// 37 since LaunchExecutable was split out of App's launch_executable mode, so
 	// arbitrary code execution sits in the shell toolset rather than in apps.
-	const want = 35
+	const want = 37
 	if got := len(AllTools()); got != want {
 		t.Errorf("tool count = %d, want %d (update this test intentionally)", got, want)
 	}
@@ -103,6 +103,7 @@ func TestReadOnlyToolsAreSafe(t *testing.T) {
 		"Snapshot": true, "Screenshot": true, "DisplayInventory": true,
 		"Wait": true, "WaitFor": true, "Scrape": true, "GetText": true,
 		"Assert": true, "CaptureEvidence": true, "SystemInfo": true,
+		"FileSearch": true, "FolderOverview": true,
 		"Plan": true, "EventLog": true, "Network": true,
 	}
 	for _, st := range AllTools() {

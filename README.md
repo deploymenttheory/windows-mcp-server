@@ -74,7 +74,7 @@ do**, see the walk-throughs for a
 
 | | What it does | Guide |
 |---|---|---|
-| **Desktop automation** | 35 tools across 13 toolsets: accessibility-tree perception, UI Automation pattern invocation, synthetic input, screenshots, apps, windows, PowerShell, registry, filesystem, processes, services, event logs, network, scheduled tasks, packages, scraping, plan-and-apply | [Toolsets and personas](docs/toolsets-and-personas.md) |
+| **Desktop automation** | 37 tools across 13 toolsets: accessibility-tree perception, UI Automation pattern invocation, synthetic input, screenshots, apps, windows, PowerShell, registry, filesystem, processes, services, event logs, network, scheduled tasks, packages, scraping, plan-and-apply | [Toolsets and personas](docs/toolsets-and-personas.md) |
 | **Personas** | Presets that select toolsets *and* inject workflow guidance, so the agent adopts a role rather than just getting a tool list | [Toolsets and personas](docs/toolsets-and-personas.md#personas) |
 | **Credentials** | The agent signs in to apps and sites without ever being told the secret. The `Credentials` tool has no read mode and no engine method returns plaintext — but see the note below on toolset exposure | [Credentials](docs/credentials.md) |
 | **Session recording** | Once `transparency.recording_dir` is set, the whole session goes to one video file — automatically, under every persona — with timeline markers | [Session recording](docs/recording.md) |
@@ -108,7 +108,7 @@ are on by default; the rest are opt-in.
 | `system` | ✓ | `Clipboard`, `Process`, `Notification` |
 | `system-admin` | | `Registry`, `ScheduledTask` (list / get / run / enable / disable / delete / create) |
 | `shell` | | `PowerShell`, `LaunchExecutable` |
-| `filesystem` | | `FileSystem` (read / write / copy / move / delete / list / search / info) |
+| `filesystem` | | `FileSystem` (read / write / copy / move / delete / list / search / info), `FileSearch` (indexed read-only local discovery), `FolderOverview` (bounded read-only folder/drive summary) |
 | `web` | | `Scrape` |
 | `diagnostics` | | `SystemInfo` (OS/hardware/disk via WMI), `Service` (list / start / stop / restart), `EventLog` (Get-WinEvent queries), `Network` (adapters / dns / config / test) |
 | `testing` | | `Assert` (PASS/FAIL UI condition), `CaptureEvidence` (screenshot + tree) |

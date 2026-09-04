@@ -48,6 +48,8 @@ func AllTools() []inventory.ServerTool {
 
 		// filesystem toolset
 		FileSystem(),
+		FileSearch(),
+		FolderOverview(),
 
 		// web toolset
 		Scrape(),

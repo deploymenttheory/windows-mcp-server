@@ -57,7 +57,8 @@ var (
 	// ToolsetFilesystem: file operations (non-default).
 	ToolsetFilesystem = inventory.ToolsetMetadata{
 		ID:          "filesystem",
-		Description: "Read, write, copy, move, delete, list, and search files. Disabled by default.",
+		Description: "Read, write, copy, move, delete, list, indexed-search, and overview files and folders. " +
+			"Disabled by default.",
 		Icon:        "file-directory",
 	}
 	// ToolsetWeb: web scraping (non-default).

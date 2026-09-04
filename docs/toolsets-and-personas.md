@@ -64,6 +64,8 @@ further than looking at the screen.
 | Tool | Does |
 |---|---|
 | `FileSystem` | read / write / copy / move / delete / list / search / info — **destructive** |
+| `FileSearch` | Searches the local Windows Search `SystemIndex` for indexed file/folder names; read-only, bounded to 100 results, and supports a local folder scope. Results may lag the live filesystem. |
+| `FolderOverview` | Reports local drive capacity when available, immediate file/folder counts, and a bounded child sample; read-only and non-recursive. |
 
 ### `web` — opt-in
 
