@@ -27,6 +27,7 @@ import (
 	"sync"
 
 	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
+	"github.com/deploymenttheory/mcp-server-core/toolkit"
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
 )
 
@@ -274,10 +275,10 @@ func removeCredentials(
 // credentialInfos converts the install records into the non-secret view the
 // Credentials tool serves. Present is left false: the tool checks liveness against
 // the store at call time rather than trusting a startup snapshot.
-func credentialInfos(installed []installedCredential) []desktop.CredentialInfo {
-	out := make([]desktop.CredentialInfo, 0, len(installed))
+func credentialInfos(installed []installedCredential) []toolkit.CredentialInfo {
+	out := make([]toolkit.CredentialInfo, 0, len(installed))
 	for _, c := range installed {
-		out = append(out, desktop.CredentialInfo{
+		out = append(out, toolkit.CredentialInfo{
 			Name:                c.Name,
 			Target:              c.Target,
 			Username:            c.Username,

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
+	"github.com/deploymenttheory/mcp-server-core/runtime"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )
 
@@ -15,13 +16,13 @@ import (
 // --exclude-tools: they are registered outside the inventory, so no inventory
 // filter can remove them. The assertion is against the real served tools/list.
 func TestGuardrailToolsAlwaysServed(t *testing.T) {
-	surface, err := CaptureSurface(context.Background(), Config{
+	captured, err := CaptureSurface(context.Background(), Config{
 		ExcludeTools: []string{"GuardrailStatus", "Kill"},
 	})
 	if err != nil {
 		t.Fatalf("CaptureSurface: %v", err)
 	}
-	served := string(surface.ToolsListResult)
+	served := string(captured.ToolsListResult)
 	for _, name := range []string{"GuardrailStatus", "Kill"} {
 		if !strings.Contains(served, `"`+name+`"`) {
 			t.Errorf("%s must be served despite --exclude-tools; tools/list did not contain it", name)
@@ -39,7 +40,7 @@ func TestGuardrailToolsAbsentFromPolicyIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildInventory: %v", err)
 	}
-	idx := newToolIndex(context.Background(), inv)
+	idx := runtime.NewToolIndex(context.Background(), inv)
 
 	for _, name := range []string{"GuardrailStatus", "Kill"} {
 		if _, ok := idx.Lookup(name); ok {
@@ -52,27 +53,9 @@ func TestGuardrailToolsAbsentFromPolicyIndex(t *testing.T) {
 	}
 }
 
-func TestToolsOutsidePersona(t *testing.T) {
-	// first-line-support carries shell/diagnostics but not filesystem or web.
-	inv, _, err := buildInventory(Config{Persona: "first-line-support"}, false)
-	if err != nil {
-		t.Fatalf("buildInventory: %v", err)
-	}
-	enabled := inv.EnabledToolsets()
-
-	// FileSystem (filesystem toolset) is outside the persona; PowerShell (shell) is in.
-	if out := toolsOutsidePersona([]string{"FileSystem"}, enabled); len(out) != 1 || out[0] != "FileSystem" {
-		t.Errorf("FileSystem should be flagged as outside first-line-support, got %v", out)
-	}
-	if out := toolsOutsidePersona([]string{"PowerShell"}, enabled); len(out) != 0 {
-		t.Errorf("PowerShell is within first-line-support and should not be flagged, got %v", out)
-	}
-	// Always-served tools belong to no toolset and are never flagged.
-	if out := toolsOutsidePersona([]string{"Kill"}, enabled); len(out) != 0 {
-		t.Errorf("Kill belongs to no toolset and must not be flagged, got %v", out)
-	}
-}
-
+// TestProtectedPathsCoverGuardrailFiles pins that the guardrail files are
+// matched the Windows way (case-folded, cleaned) through the shared
+// GuardrailPaths with this server's normaliser.
 func TestProtectedPathsCoverGuardrailFiles(t *testing.T) {
 	cfg := Config{
 		PolicyConfig:    `C:\policy.json`,
@@ -80,7 +63,8 @@ func TestProtectedPathsCoverGuardrailFiles(t *testing.T) {
 	}
 	dp := &policy.Policy{Transparency: policy.TransparencyPolicy{AuditDestination: `C:\ProgramData\windows-mcp\audit\`}}
 
-	deps := windows.NewBaseDeps(nil, nil, nil).WithProtectedPaths(protectedPaths(cfg, dp))
+	deps := windows.NewBaseDeps(nil, nil, nil)
+	deps.WithProtectedPaths(guardrailPaths(cfg, dp))
 
 	for _, tc := range []struct {
 		name       string

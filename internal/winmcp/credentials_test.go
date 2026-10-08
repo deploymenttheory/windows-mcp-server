@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/deploymenttheory/mcp-server-core/runtime"
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
 )
 
@@ -257,22 +258,23 @@ func TestAuditViewHasNoSecret(t *testing.T) {
 	}
 }
 
-// TestWithToolsetKeepsDefaults is the regression guard for auto-enabling the
+// TestWithToolsetKeepsDefaults is the regression guard, kept here because buildInventory
+// relies on it, for auto-enabling the
 // credentials toolset: a nil selection means "the defaults", so it must become
 // default+credentials rather than credentials alone, which would silently drop
 // every default toolset.
 func TestWithToolsetKeepsDefaults(t *testing.T) {
-	got := withToolset(nil, "credentials")
+	got := runtime.WithToolset(nil, "credentials")
 	if len(got) != 2 || got[0] != "default" || got[1] != "credentials" {
 		t.Errorf("nil selection = %v, want [default credentials]", got)
 	}
-	if got := withToolset([]string{"all"}, "credentials"); len(got) != 1 || got[0] != "all" {
+	if got := runtime.WithToolset([]string{"all"}, "credentials"); len(got) != 1 || got[0] != "all" {
 		t.Errorf("'all' should be left alone, got %v", got)
 	}
-	if got := withToolset([]string{"credentials"}, "credentials"); len(got) != 1 {
+	if got := runtime.WithToolset([]string{"credentials"}, "credentials"); len(got) != 1 {
 		t.Errorf("already-present toolset should not be duplicated, got %v", got)
 	}
-	got = withToolset([]string{"screen", "apps"}, "credentials")
+	got = runtime.WithToolset([]string{"screen", "apps"}, "credentials")
 	if len(got) != 3 || got[2] != "credentials" {
 		t.Errorf("explicit selection = %v, want screen,apps,credentials", got)
 	}

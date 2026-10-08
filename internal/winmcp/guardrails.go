@@ -4,21 +4,27 @@ package winmcp
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/contain"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/signals"
+	"github.com/deploymenttheory/mcp-server-core/runtime"
+	"github.com/deploymenttheory/mcp-server-core/toolkit"
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )
+
+// EnvPrefix is the prefix of every environment variable this server reads.
+const EnvPrefix = "WINDOWS_MCP_"
+
+// envNames derives the secret-carrying variable names from the prefix. They
+// are read from the environment rather than from flags or the policy document
+// because they are secrets: argv is world-readable, and a policy document is
+// meant to be reviewable and checked in.
+var envNames = runtime.EnvNames{Prefix: EnvPrefix}
 
 // systemProbe adapts the desktop engine to signals.SystemProbe. A fresh probe
 // is created per evaluation so posture-drift re-checks see current WMI facts;
@@ -76,211 +82,28 @@ func (p *systemProbe) DeviceIdentity() signals.DeviceIdentity {
 	}
 }
 
-// loadPolicy resolves the active device policy.
-//
-// With no --policy-config the embedded default applies: the engine is present,
-// every declared signal is evaluated and every verdict recorded, but nothing is
-// refused. That is deliberate — an engine that arrived enforcing would start
-// refusing tool calls on devices that worked the day before, with no operator
-// action and no document to point at.
-//
-// A named policy that fails to load is fatal. Falling back to the default would
-// silently run a device under weaker policy than its operator wrote, which is the
-// worst of the available outcomes.
-func loadPolicy(cfg Config, reg *signals.Registry, logger *slog.Logger) (*policy.Policy, error) {
-	if cfg.PolicyConfig == "" {
-		logger.Info("device devicePolicy: built-in default (audit only, nothing refused)")
-		return policy.Default(), nil
-	}
-	devicePolicy, err := policy.Load(cfg.PolicyConfig, reg.IDs())
-	if err != nil {
-		return nil, fmt.Errorf("device devicePolicy: %w", err)
-	}
-	logger.Info("device devicePolicy loaded",
-		"path", cfg.PolicyConfig,
-		"mode", string(devicePolicy.Mode),
-		"signals", devicePolicy.SignalIDs(),
-		"rules", len(devicePolicy.Rules),
-	)
-	return devicePolicy, nil
-}
-
-// killPolicyConfig maps the policy's containment actions to the executor's config.
-func killPolicyConfig(devicePolicy *policy.Policy) contain.KillActionConfig {
-	a := devicePolicy.Kill.Actions
-	return contain.KillActionConfig{
-		Isolate:       a.Isolate,
-		KillProcs:     len(a.KillProcs) > 0,
-		ProcNames:     a.KillProcs,
-		Lock:          a.Lock,
-		Shutdown:      a.Shutdown,
-		ShutdownDelay: a.ShutdownDelay.Std(),
-	}
-}
-
-// toolIndex adapts the served inventory to policy.ToolIndex, so policy rules
-// can match on the toolset and annotations a tool actually carries.
-//
-// It is a snapshot taken once the manifest is assembled, not a live view: the
-// manifest cannot change while the process runs — the rug-pull detector trips the
-// kill switch if it does — so a snapshot is accurate, and it keeps the lookup a
-// map read on the request path rather than a filter pass over every tool.
-type toolIndex map[string]policy.ToolFacts
-
-func (i toolIndex) Lookup(tool string) (policy.ToolFacts, bool) {
-	facts, ok := i[tool]
-	return facts, ok
-}
-
-// newToolIndex builds the index from the assembled inventory.
-func newToolIndex(ctx context.Context, inv *inventory.Inventory) toolIndex {
-	tools := inv.AvailableTools(ctx)
-	index := make(toolIndex, len(tools))
-	for i := range tools {
-		st := &tools[i]
-		facts := policy.ToolFacts{
-			Name:    st.Tool.Name,
-			Toolset: string(st.Toolset.ID),
-		}
-		// A tool with no annotations is treated as neither read-only nor
-		// destructive: it then matches only the broad rules, which is the safe
-		// reading of "the manifest does not say".
-		if a := st.Tool.Annotations; a != nil {
-			facts.ReadOnly = a.ReadOnlyHint
-			facts.OpenWorld = a.OpenWorldHint != nil && *a.OpenWorldHint
-			facts.Destructive = a.DestructiveHint != nil && *a.DestructiveHint
-		}
-		index[st.Tool.Name] = facts
-	}
-	return index
-}
-
 // guardrailEnv builds a fresh evaluation environment. The same systemProbe backs
 // both the SystemProbe and HealthProbe surfaces (it reads live OS/hardware state
 // on every call), so posture is measured just-in-time on each evaluation.
+//
+// EnforceHTTPS lives on Config rather than being read from the policy at each
+// call site because it has to reach the tool dependencies and the guardrail
+// Env, and neither carries a policy. RunStdio copies it across immediately
+// after loading, so the policy remains the only place an operator sets it.
 func guardrailEnv(cfg Config, dsk *desktop.Desktop, logger *slog.Logger) *signals.Env {
 	p := &systemProbe{dsk: dsk}
-	return &signals.Env{Sys: p, Health: p, Logger: logger, EnforceHTTPS: enforceHTTPS(cfg)}
+	return &signals.Env{Sys: p, Health: p, Logger: logger, EnforceHTTPS: cfg.EnforceHTTPS}
 }
 
-// enforceHTTPS resolves the Enforce HTTPS setting.
-//
-// The value lives on Config rather than being read from the policy at each call
-// site because it has to reach the tool dependencies and the guardrail Env, and
-// neither carries a policy. RunStdio copies it across immediately after loading,
-// so the policy remains the only place an operator sets it.
-func enforceHTTPS(cfg Config) bool { return cfg.EnforceHTTPS }
-
-// Environment variables carrying the tier-2 credentials. They are read from the
-// environment rather than from flags or the policy document because they are
-// secrets: argv is world-readable, and a policy document is meant to be
-// reviewable and checked in. This mirrors the credentials invariant — a secret
-// may be used, but it is never written somewhere it can be read back.
-const (
-	envGraphTenant   = "WINDOWS_MCP_GRAPH_TENANT"
-	envGraphClientID = "WINDOWS_MCP_GRAPH_CLIENT_ID"
-	// These two are variable *names*, not values — which is the whole point of
-	// reading them from the environment.
-	envGraphClientSecret = "WINDOWS_MCP_GRAPH_CLIENT_SECRET" //nolint:gosec // an env var name, not a secret
-	envRemotePolicyToken = "WINDOWS_MCP_REMOTE_POLICY_TOKEN" //nolint:gosec // an env var name, not a secret
-)
-
-// newGuardrailRegistry builds the signal registry: the tier-1 local checks, the
-// just-in-time at-source device-posture checks, and — when the credentials are
-// present in the environment — the authoritative tier-2 Graph and remote-policy
-// providers.
-//
-// Registering a signal only makes it available for a policy to declare. Nothing
-// here decides whether it is evaluated; that is the policy's job.
-func newGuardrailRegistry(_ Config, logger *slog.Logger) *signals.Registry {
-	reg := signals.NewRegistry()
-	signals.RegisterBuiltins(reg)
-	signals.RegisterHealth(reg) // JIT at-source device-posture checks
-
-	gc := signals.GraphConfig{
-		TenantID:     os.Getenv(envGraphTenant),
-		ClientID:     os.Getenv(envGraphClientID),
-		ClientSecret: os.Getenv(envGraphClientSecret),
-	}
-	if gc.Configured() {
-		signals.RegisterGraph(reg, signals.NewGraphClient(gc))
-		if logger != nil {
-			logger.Info("tier-2 Graph signals available (Entra + Intune compliance)")
-		}
-	}
-	if token := os.Getenv(envRemotePolicyToken); token != "" {
-		signals.RegisterRemotePolicy(reg, token)
-	}
-	return reg
+// guardrailPaths lists the guardrail files the FileSystem tool must not touch
+// for this configuration, normalised the Windows way.
+func guardrailPaths(cfg Config, p *policy.Policy) []toolkit.ProtectedPath {
+	return runtime.GuardrailPaths(runtime.GuardrailPathsConfig{
+		CredentialsFile: cfg.CredentialsFile,
+		PolicyConfig:    cfg.PolicyConfig,
+		Normalize:       windows.NormalizePath,
+	}, p)
 }
-
-// tripFunc returns the trip function for one kill trigger. When the kill switch
-// is armed (--with-kill-switch) and this trigger is enabled (--kill-on-<trigger>),
-// it is the switch's Trip, which runs the full containment ladder. Otherwise it is
-// report-only: the event is still audited and logged, because Layer 4 transparency
-// must not be conditional on containment — the operator sees that a trigger fired
-// even when they chose not to act on it.
-func tripFunc(
-	trigger string,
-	armed bool,
-	kill *contain.KillSwitch,
-	audit *audit.AuditLog,
-	logger *slog.Logger,
-) func(string) {
-	if armed {
-		return kill.Trip
-	}
-	return func(reason string) {
-		if audit != nil {
-			_, _ = audit.Append("killswitch.disarmed", map[string]any{
-				"trigger": trigger,
-				"reason":  reason,
-			})
-		}
-		if logger != nil {
-			logger.Warn("kill trigger fired but is disarmed; not containing",
-				"trigger", trigger,
-				"reason", reason,
-				"enable_with", "--with-kill-switch",
-			)
-		}
-	}
-}
-
-// pinnedCapabilities declares every server capability explicitly.
-//
-// This must stay explicit. The SDK *infers* capabilities it finds unset:
-// registering a prompt or resource makes Server.capabilities() fill in
-// Prompts/Resources with ListChanged: true. That would re-open exactly the silent
-// re-advertisement channel the tools capability was pinned to close — a mutated
-// manifest could be pushed to the client without the client re-listing, which is
-// what rug-pull detection exists to catch. Any non-nil field we set wins over
-// inference, so pinning each one with ListChanged false keeps the manifest static
-// and drift detectable.
-//
-// Two fields are deliberately left unset. Extensions (added in 2026-07-28) stays
-// absent because this server implements no protocol extension — declaring one it
-// does not honour would be a false advertisement, and the rug-pull discover
-// baseline trips if a future SDK starts populating it. Logging stays absent
-// because SEP-2577 deprecated the feature and this server logs to stderr or a
-// file, never as MCP notifications.
-func pinnedCapabilities() *mcp.ServerCapabilities {
-	return &mcp.ServerCapabilities{
-		Tools:       &mcp.ToolCapabilities{},
-		Prompts:     &mcp.PromptCapabilities{},
-		Resources:   &mcp.ResourceCapabilities{},
-		Completions: &mcp.CompletionCapabilities{},
-	}
-}
-
-// decisionHolder stores the latest decision for the status surface.
-type decisionHolder struct {
-	mu sync.Mutex
-	d  signals.Decision
-}
-
-func (h *decisionHolder) set(d signals.Decision) { h.mu.Lock(); h.d = d; h.mu.Unlock() }
-func (h *decisionHolder) get() signals.Decision  { h.mu.Lock(); defer h.mu.Unlock(); return h.d }
 
 // nonAutomationToolsets is the toolset set permitted when the server runs in
 // SYSTEM context (Session 0 cannot drive the interactive desktop).
