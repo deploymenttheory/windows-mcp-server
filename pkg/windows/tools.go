@@ -2,7 +2,7 @@
 
 package windows
 
-import "github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+import "github.com/deploymenttheory/mcp-server-core/inventory"
 
 // AllTools returns the full manifest of Windows automation tools with their
 // toolset membership. This is the single source of truth for what the server

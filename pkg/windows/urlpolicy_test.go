@@ -5,7 +5,6 @@ package windows
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -13,7 +12,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+	"github.com/deploymenttheory/mcp-server-core/inventory"
+	"github.com/deploymenttheory/mcp-server-core/toolkit"
 )
 
 // fakeDeps is a ToolDependencies stand-in, usable ONLY for handler paths that
@@ -26,13 +26,13 @@ import (
 // before the engine call; test the allow side against the gate helpers directly.
 type fakeDeps struct {
 	enforceHTTPS bool
-	creds        []desktop.CredentialInfo
+	creds        []toolkit.CredentialInfo
 }
 
 func (f fakeDeps) Desktop() *desktop.Desktop                     { return nil }
 func (f fakeDeps) Logger(context.Context) *slog.Logger           { return slog.Default() }
 func (f fakeDeps) IsFeatureEnabled(context.Context, string) bool { return false }
-func (f fakeDeps) Credentials() []desktop.CredentialInfo         { return f.creds }
+func (f fakeDeps) Credentials() []toolkit.CredentialInfo         { return f.creds }
 func (f fakeDeps) EnforceHTTPS() bool                            { return f.enforceHTTPS }
 func (f fakeDeps) EgressProxy() string                           { return "" }
 
@@ -102,7 +102,7 @@ func TestAppLaunchBlocksPlaintextURL(t *testing.T) {
 func TestAppLaunchGateDecision(t *testing.T) {
 	// blocked mirrors the condition in App()'s launch branch.
 	blocked := func(name string, enforce bool) bool {
-		scheme, isURL := urlSchemeIfURL(name)
+		scheme, isURL := toolkit.URLSchemeIfURL(name)
 		return isURL && scheme == "http" && enforce
 	}
 
@@ -125,9 +125,3 @@ func TestAppLaunchGateDecision(t *testing.T) {
 	}
 }
 
-func TestEnforceHTTPSSchemeIsErrorsIsMatchable(t *testing.T) {
-	err := validateScrapeURL("http://example.com", true)
-	if !errors.Is(err, ErrPlaintextHTTP) {
-		t.Errorf("want ErrPlaintextHTTP, got %v", err)
-	}
-}

@@ -7,14 +7,22 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/deploymenttheory/mcp-server-core/toolkit"
 )
+
+// protect builds a ProtectedPath matched the Windows way.
+func protect(path, label string, tree, denyRead, denyWrite bool) toolkit.ProtectedPath {
+	return toolkit.NewProtectedPath(NormalizePath, path, label, tree, denyRead, denyWrite)
+}
 
 func TestFileSystemRefusesProtectedPaths(t *testing.T) {
 	creds := `C:\secrets\creds.json`
 	auditDir := `C:\ProgramData\windows-mcp\audit\`
-	deps := NewBaseDeps(nil, nil, nil).WithProtectedPaths([]ProtectedPath{
-		NewProtectedPath(creds, "the credentials file", false, true, true),
-		NewProtectedPath(auditDir, "the audit log", true, false, true),
+	deps := NewBaseDeps(nil, nil, nil)
+	deps.WithProtectedPaths([]toolkit.ProtectedPath{
+		protect(creds, "the credentials file", false, true, true),
+		protect(auditDir, "the audit log", true, false, true),
 	})
 	fs := FileSystem()
 
@@ -39,8 +47,9 @@ func TestFileSystemRefusesProtectedPaths(t *testing.T) {
 // TestFileSystemAllowsUnprotectedPaths confirms the guard does not block ordinary
 // work: a write to an unrelated path succeeds.
 func TestFileSystemAllowsUnprotectedPaths(t *testing.T) {
-	deps := NewBaseDeps(nil, nil, nil).WithProtectedPaths([]ProtectedPath{
-		NewProtectedPath(`C:\secrets\creds.json`, "the credentials file", false, true, true),
+	deps := NewBaseDeps(nil, nil, nil)
+	deps.WithProtectedPaths([]toolkit.ProtectedPath{
+		protect(`C:\secrets\creds.json`, "the credentials file", false, true, true),
 	})
 	fs := FileSystem()
 

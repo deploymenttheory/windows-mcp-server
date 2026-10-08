@@ -11,7 +11,8 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+	"github.com/deploymenttheory/mcp-server-core/inventory"
+	"github.com/deploymenttheory/mcp-server-core/toolkit"
 )
 
 // Network reports adapter, DNS and IP configuration, and tests connectivity to a
@@ -80,7 +81,7 @@ func Network() inventory.ServerTool {
 					return NewToolResultError(err.Error()), nil
 				}
 				if port > 0 {
-					cmd += fmt.Sprintf(" -Port %d", clampInt(port, 1, 65535))
+					cmd += fmt.Sprintf(" -Port %d", toolkit.ClampInt(port, 1, 65535))
 				}
 				command = ps.Script("$ProgressPreference='SilentlyContinue'; " + cmd +
 					" | Select-Object ComputerName, RemoteAddress, RemotePort, " +

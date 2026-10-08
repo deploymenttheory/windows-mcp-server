@@ -12,7 +12,8 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+	"github.com/deploymenttheory/mcp-server-core/inventory"
+	"github.com/deploymenttheory/mcp-server-core/toolkit"
 )
 
 // eventLogLevels maps the friendly level names the tool accepts to the numeric
@@ -62,8 +63,8 @@ func EventLog() inventory.ServerTool {
 			if err != nil {
 				return NewToolResultError(err.Error()), nil
 			}
-			hours := clampInt(hoursArg, 1, 720)
-			max := clampInt(maxArg, 1, 500)
+			hours := toolkit.ClampInt(hoursArg, 1, 720)
+			max := toolkit.ClampInt(maxArg, 1, 500)
 
 			// Build the FilterHashtable from vetted parts. Model-supplied strings are
 			// bound as data via PSScript, so a log or provider name cannot break out

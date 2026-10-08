@@ -13,7 +13,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+	"github.com/deploymenttheory/mcp-server-core/inventory"
+	"github.com/deploymenttheory/mcp-server-core/toolkit"
 )
 
 // Assert wait bounds, matching the journey vocabulary so a document cannot ask
@@ -55,12 +56,12 @@ func assertSchema() *jsonschema.Schema {
 		Type: "object",
 		Properties: map[string]*jsonschema.Schema{
 			"subject": {
-				Type: "string", Enum: AssertSubjects,
+				Type: "string", Enum: toolkit.AssertSubjects,
 				Description: "What to read: screen.text, window.title, window, element, " +
 					"element.name/.value/.control_type/.enabled/.checked/.selected/.focused/.count, result.text.",
 			},
 			"operator": {
-				Type: "string", Enum: AssertOperators,
+				Type: "string", Enum: toolkit.AssertOperators,
 				Description: "How to compare. Text: is, is_not, contains, does_not_contain, " +
 					"starts_with, ends_with, matches (full-match regex), does_not_match, is_empty, " +
 					"is_not_empty, is_one_of. Boolean: is_true, is_false. Existence: exists, " +
@@ -116,8 +117,8 @@ func assertHandler(ctx context.Context, deps ToolDependencies, req *mcp.CallTool
 
 	// Hand the comparison to the run record. This is what carries the observed
 	// value into the evidence; the model gets the same information as text.
-	if reg, ok := deps.(AssertionRegister); ok {
-		reg.RecordAssertion(AssertionRecord{
+	if reg, ok := deps.(toolkit.AssertionRegister); ok {
+		reg.RecordAssertion(toolkit.AssertionRecord{
 			Subject: spec.subject, Operator: spec.operator,
 			Expected: spec.expectedText(), Observed: obs.Render(),
 			Passed: pass, Polls: polls, Timeout: spec.timeout.Seconds(),
@@ -141,7 +142,7 @@ type assertionSpec struct {
 	scope    string
 	timeout  time.Duration
 	interval time.Duration
-	opts     CompareOptions
+	opts     toolkit.CompareOptions
 }
 
 // description renders what is being verified, for the PASS/FAIL line. The
@@ -169,10 +170,10 @@ func parseAssertion(args map[string]any) (assertionSpec, error) {
 	var s assertionSpec
 	var err error
 
-	if s.subject, err = OptionalStringEnum(args, "subject", "", toStrings(AssertSubjects)...); err != nil {
+	if s.subject, err = OptionalStringEnum(args, "subject", "", toStrings(toolkit.AssertSubjects)...); err != nil {
 		return s, err
 	}
-	if s.operator, err = OptionalStringEnum(args, "operator", "", toStrings(AssertOperators)...); err != nil {
+	if s.operator, err = OptionalStringEnum(args, "operator", "", toStrings(toolkit.AssertOperators)...); err != nil {
 		return s, err
 	}
 	if s.subject == "" || s.operator == "" {
@@ -189,7 +190,7 @@ func parseAssertion(args map[string]any) (assertionSpec, error) {
 		NameMatch:    OptionalString(args, "name_match", ""),
 		Occurrence:   OptionalString(args, "occurrence", ""),
 	}
-	if SubjectNeedsTarget(s.subject) && s.selector.Empty() {
+	if toolkit.SubjectNeedsTarget(s.subject) && s.selector.Empty() {
 		return s, fmt.Errorf("subject %s needs a target: give automation_id or name", s.subject)
 	}
 
@@ -211,7 +212,7 @@ func parseAssertion(args map[string]any) (assertionSpec, error) {
 		s.interval = time.Duration(interval * float64(time.Second))
 	}
 
-	s.opts = CompareOptions{
+	s.opts = toolkit.CompareOptions{
 		IgnoreCase:         OptionalBool(args, "ignore_case", false),
 		Trim:               OptionalBool(args, "trim", false),
 		CollapseWhitespace: OptionalBool(args, "collapse_whitespace", false),
@@ -223,7 +224,7 @@ func parseAssertion(args map[string]any) (assertionSpec, error) {
 // returns the final observation either way, so a failure reports what was on
 // screen rather than only that the condition was not met, and the poll count, so
 // "passed immediately" and "passed on the last poll" are distinguishable.
-func runAssertion(ctx context.Context, deps ToolDependencies, s assertionSpec) (bool, Observation, int, error) {
+func runAssertion(ctx context.Context, deps ToolDependencies, s assertionSpec) (bool, toolkit.Observation, int, error) {
 	deadline := time.Now().Add(s.timeout)
 	polls := 0
 	for {
@@ -232,7 +233,7 @@ func runAssertion(ctx context.Context, deps ToolDependencies, s assertionSpec) (
 		if err != nil {
 			return false, obs, polls, err
 		}
-		pass, err := EvalAssertion(s.operator, obs, s.expected, s.opts)
+		pass, err := toolkit.EvalAssertion(s.operator, obs, s.expected, s.opts)
 		if err != nil {
 			return false, obs, polls, err
 		}
@@ -250,40 +251,40 @@ func runAssertion(ctx context.Context, deps ToolDependencies, s assertionSpec) (
 // observeSubject reads the subject from the live desktop. Every evaluation takes
 // its own snapshot, so a polled assertion re-reads the screen on every poll —
 // which is what makes polling mean anything.
-func observeSubject(deps ToolDependencies, s assertionSpec) (Observation, error) {
-	kind, ok := SubjectKind(s.subject)
+func observeSubject(deps ToolDependencies, s assertionSpec) (toolkit.Observation, error) {
+	kind, ok := toolkit.SubjectKind(s.subject)
 	if !ok {
-		return Observation{}, fmt.Errorf("%w: unknown subject %q", ErrAssertionShape, s.subject)
+		return toolkit.Observation{}, fmt.Errorf("%w: unknown subject %q", toolkit.ErrAssertionShape, s.subject)
 	}
 
-	if s.subject == SubjectResultText {
+	if s.subject == toolkit.SubjectResultText {
 		return observeRegister(deps, kind), nil
 	}
 
 	dsk := deps.Desktop()
 	state, err := dsk.Snapshot(desktop.SnapshotOptions{AllWindows: s.scope == "any_window"})
 	if err != nil {
-		return Observation{}, fmt.Errorf("snapshot failed: %w", err)
+		return toolkit.Observation{}, fmt.Errorf("snapshot failed: %w", err)
 	}
 
 	switch s.subject {
-	case SubjectScreenText:
-		return Observation{Kind: kind, Text: state.TreeText}, nil
-	case SubjectWindowTitle:
-		return Observation{Kind: kind, Text: state.Foreground.Title}, nil
-	case SubjectWindow:
-		return Observation{Kind: kind, Exists: windowMatches(state, s.selector)}, nil
+	case toolkit.SubjectScreenText:
+		return toolkit.Observation{Kind: kind, Text: state.TreeText}, nil
+	case toolkit.SubjectWindowTitle:
+		return toolkit.Observation{Kind: kind, Text: state.Foreground.Title}, nil
+	case toolkit.SubjectWindow:
+		return toolkit.Observation{Kind: kind, Exists: windowMatches(state, s.selector)}, nil
 	}
 
 	matches, err := dsk.Matches(s.selector)
 	if err != nil {
-		return Observation{}, err
+		return toolkit.Observation{}, err
 	}
-	if s.subject == SubjectElementCount {
-		return Observation{Kind: kind, Number: float64(len(matches))}, nil
+	if s.subject == toolkit.SubjectElementCount {
+		return toolkit.Observation{Kind: kind, Number: float64(len(matches))}, nil
 	}
-	if s.subject == SubjectElement {
-		return Observation{Kind: kind, Exists: len(matches) > 0}, nil
+	if s.subject == toolkit.SubjectElement {
+		return toolkit.Observation{Kind: kind, Exists: len(matches) > 0}, nil
 	}
 
 	// Everything below reads one element, so ambiguity is resolved — or refused —
@@ -291,60 +292,60 @@ func observeSubject(deps ToolDependencies, s assertionSpec) (Observation, error)
 	label, _, err := dsk.Resolve(s.selector)
 	if err != nil {
 		if errors.Is(err, desktop.ErrNoMatch) {
-			return Observation{Kind: kind, Absent: true, AbsentReason: "no matching element"}, nil
+			return toolkit.Observation{Kind: kind, Absent: true, AbsentReason: "no matching element"}, nil
 		}
-		return Observation{}, err
+		return toolkit.Observation{}, err
 	}
 	st, err := dsk.ElementState(label)
 	if err != nil {
-		return Observation{}, err
+		return toolkit.Observation{}, err
 	}
 	return observeElement(s.subject, kind, st), nil
 }
 
 // observeRegister reads what the most recent read step returned.
-func observeRegister(deps ToolDependencies, kind ValueKind) Observation {
-	reg, ok := deps.(ReadRegister)
+func observeRegister(deps ToolDependencies, kind toolkit.ValueKind) toolkit.Observation {
+	reg, ok := deps.(toolkit.ReadRegister)
 	if !ok {
-		return Observation{Kind: kind, Absent: true, AbsentReason: "no read register on this session"}
+		return toolkit.Observation{Kind: kind, Absent: true, AbsentReason: "no read register on this session"}
 	}
 	text, set := reg.LastRead()
 	if !set {
-		return Observation{Kind: kind, Absent: true, AbsentReason: "nothing has been read yet"}
+		return toolkit.Observation{Kind: kind, Absent: true, AbsentReason: "nothing has been read yet"}
 	}
-	return Observation{Kind: kind, Text: text}
+	return toolkit.Observation{Kind: kind, Text: text}
 }
 
 // observeElement maps one element's state onto the requested subject. The Has*
 // flags matter: a Button has no toggle state, and reporting that is not the same
 // as reporting that it is unchecked.
-func observeElement(subject string, kind ValueKind, st desktop.ElementState) Observation {
+func observeElement(subject string, kind toolkit.ValueKind, st desktop.ElementState) toolkit.Observation {
 	switch subject {
-	case SubjectElementName:
-		return Observation{Kind: kind, Text: st.Name}
-	case SubjectElementControlType:
-		return Observation{Kind: kind, Text: st.ControlType}
-	case SubjectElementValue:
+	case toolkit.SubjectElementName:
+		return toolkit.Observation{Kind: kind, Text: st.Name}
+	case toolkit.SubjectElementControlType:
+		return toolkit.Observation{Kind: kind, Text: st.ControlType}
+	case toolkit.SubjectElementValue:
 		if !st.HasValue {
-			return Observation{Kind: kind, Absent: true, AbsentReason: "the element exposes no value"}
+			return toolkit.Observation{Kind: kind, Absent: true, AbsentReason: "the element exposes no value"}
 		}
-		return Observation{Kind: kind, Text: st.Value}
-	case SubjectElementEnabled:
-		return Observation{Kind: kind, Bool: st.Enabled}
-	case SubjectElementFocused:
-		return Observation{Kind: kind, Bool: st.Focused}
-	case SubjectElementChecked:
+		return toolkit.Observation{Kind: kind, Text: st.Value}
+	case toolkit.SubjectElementEnabled:
+		return toolkit.Observation{Kind: kind, Bool: st.Enabled}
+	case toolkit.SubjectElementFocused:
+		return toolkit.Observation{Kind: kind, Bool: st.Focused}
+	case toolkit.SubjectElementChecked:
 		if !st.HasToggle {
-			return Observation{Kind: kind, Absent: true, AbsentReason: "the element has no checked state"}
+			return toolkit.Observation{Kind: kind, Absent: true, AbsentReason: "the element has no checked state"}
 		}
-		return Observation{Kind: kind, Bool: st.Checked}
-	case SubjectElementSelected:
+		return toolkit.Observation{Kind: kind, Bool: st.Checked}
+	case toolkit.SubjectElementSelected:
 		if !st.HasSelection {
-			return Observation{Kind: kind, Absent: true, AbsentReason: "the element has no selected state"}
+			return toolkit.Observation{Kind: kind, Absent: true, AbsentReason: "the element has no selected state"}
 		}
-		return Observation{Kind: kind, Bool: st.Selected}
+		return toolkit.Observation{Kind: kind, Bool: st.Selected}
 	default:
-		return Observation{Kind: kind, Absent: true, AbsentReason: "unreadable subject"}
+		return toolkit.Observation{Kind: kind, Absent: true, AbsentReason: "unreadable subject"}
 	}
 }
 
@@ -427,7 +428,7 @@ func CaptureEvidence() inventory.ServerTool {
 			// Persist the image when the session has somewhere to put it. A capture
 			// that returns a picture to the model and writes nothing leaves the
 			// durable record of a run with no pictures of it.
-			if sink, ok := deps.(EvidenceSink); ok {
+			if sink, ok := deps.(toolkit.EvidenceSink); ok {
 				art, written, werr := sink.WriteEvidence(label, pngData, w, h)
 				switch {
 				case werr != nil:
