@@ -2,7 +2,7 @@
 
 > **Status: implemented and normative.** This specifies journey schema **version
 > 2**, which is what the build accepts. The vocabularies below are expressed as
-> data in `internal/journeys/vocabulary.go` and pinned against this document by
+> data in `mcp-server-core/journeys/vocabulary.go` and pinned against this document by
 > the package's tests, so a table here and a table there cannot drift apart
 > silently.
 

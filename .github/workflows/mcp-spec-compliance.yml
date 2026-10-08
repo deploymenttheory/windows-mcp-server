@@ -35,8 +35,6 @@ on:
       - '.github/workflows/mcp-spec-compliance.yml'
       - 'conformance/**'
       - 'schema/**'
-      - 'internal/mcpconf/**'
-      - 'internal/mcpspec/**'
       - 'internal/winmcp/**'
       - 'internal/guardrails/**'
       - 'pkg/windows/**'
