@@ -182,9 +182,10 @@ func (m *overlayManager) createBanner(text string) *activeOverlay {
 	rect := Rect{Left: 0, Top: 0, Right: sw, Bottom: bannerHeightPx}
 	w, h := rect.Width(), rect.Height()
 
+	className := overlayClassName
 	hwnd, err := wm.CreateWindowEx(
 		overlayExLayeredFlags,
-		overlayClassName, "",
+		&className, nil,
 		wm.WS_POPUP,
 		screenI32(rect.Left), screenI32(rect.Top), screenI32(w), screenI32(h),
 		0, 0, m.hinstance, nil,
@@ -205,8 +206,9 @@ func (m *overlayManager) createBanner(text string) *activeOverlay {
 		bits[i] = bg
 	}
 	// Centered bold white text via GDI.
+	fontName := "Segoe UI"
 	font := gdi.CreateFont(int32(-bannerFontPx), 0, 0, 0, int32(gdi.FW_BOLD), 0, 0, 0,
-		uint32(gdi.DEFAULT_CHARSET), 0, 0, 0, 0, "Segoe UI")
+		uint32(gdi.DEFAULT_CHARSET), 0, 0, 0, 0, &fontName)
 	if font != 0 {
 		old := gdi.SelectObject(dc, gdi.HGDIOBJ(font))
 		gdi.SetBkMode(dc, int32(gdi.TRANSPARENT))
@@ -291,9 +293,10 @@ func (m *overlayManager) createOverlay(rect Rect, draw drawFunc, ttl time.Durati
 		return nil
 	}
 
+	className := overlayClassName
 	hwnd, err := wm.CreateWindowEx(
 		overlayExLayeredFlags,
-		overlayClassName, "",
+		&className, nil,
 		wm.WS_POPUP,
 		screenI32(rect.Left), screenI32(rect.Top), screenI32(w), screenI32(h),
 		0, 0, m.hinstance, nil,

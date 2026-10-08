@@ -46,7 +46,8 @@ func tpmPlatformClaim(nonce []byte) (quoteSize int, err error) {
 		return 0, fmt.Errorf("%w: %d bytes", ErrNonceTooLarge, len(nonce))
 	}
 	var prov cng.NCRYPT_PROV_HANDLE
-	if err = cng.NCryptOpenStorageProvider(&prov, "Microsoft Platform Crypto Provider", 0); err != nil {
+	providerName := "Microsoft Platform Crypto Provider"
+	if err = cng.NCryptOpenStorageProvider(&prov, &providerName, 0); err != nil {
 		return 0, fmt.Errorf("open Platform Crypto Provider: %w", err)
 	}
 	defer func() { _ = cng.NCryptFreeObject(cng.NCRYPT_HANDLE(prov)) }() // best-effort cleanup
@@ -105,7 +106,8 @@ func openOrCreateAIK(prov cng.NCRYPT_PROV_HANDLE) (cng.NCRYPT_KEY_HANDLE, error)
 	if err := cng.NCryptOpenKey(prov, &aik, platformAIKName, 0, cng.NCRYPT_MACHINE_KEY_FLAG); err == nil {
 		return aik, nil
 	}
-	if err := cng.NCryptCreatePersistedKey(prov, &aik, "RSA", platformAIKName, 0,
+	keyName := platformAIKName
+	if err := cng.NCryptCreatePersistedKey(prov, &aik, "RSA", &keyName, 0,
 		cng.NCRYPT_MACHINE_KEY_FLAG|cng.NCRYPT_OVERWRITE_KEY_FLAG); err != nil {
 		return 0, fmt.Errorf("provision machine AIK (requires elevation): %w", err)
 	}

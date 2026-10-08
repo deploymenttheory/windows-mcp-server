@@ -73,7 +73,7 @@ func (d *Desktop) InvokeLabel(label int) error {
 func (d *Desktop) SetValueLabel(label int, value string) error {
 	return d.withPattern(label, accessibility.UIA_ValuePatternId, "SetValue", func(unk *systemcom.IUnknown) error {
 		pat := (*accessibility.IUIAutomationValuePattern)(unsafe.Pointer(unk))
-		bstr := foundation.SysAllocString(value)
+		bstr := foundation.SysAllocString(&value)
 		defer foundation.SysFreeString(bstr)
 		return pat.SetValue(bstr)
 	})

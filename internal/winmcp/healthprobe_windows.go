@@ -40,7 +40,7 @@ func regDWORD(subKey, value string) (uint32, bool, error) {
 	var data uint32
 	cb := uint32(unsafe.Sizeof(data))
 	typ := registry.REG_VALUE_TYPE(0)
-	rc := registry.RegGetValue(registry.HKEY_LOCAL_MACHINE, subKey, value,
+	rc := registry.RegGetValue(registry.HKEY_LOCAL_MACHINE, &subKey, &value,
 		registry.RRF_RT_REG_DWORD, &typ, unsafe.Pointer(&data), &cb)
 	switch rc {
 	case 0: // ERROR_SUCCESS
