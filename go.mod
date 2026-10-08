@@ -6,7 +6,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/deploymenttheory/agentweave-harness v1.0.1-0.20261008191534-a01948594dc7
 	github.com/deploymenttheory/go-bindings-win32 v0.5.0
-	github.com/deploymenttheory/go-bindings-wmi v1.0.1-0.20261008191329-660b8f163b37
+	github.com/deploymenttheory/go-bindings-wmi v1.0.1
 	github.com/deploymenttheory/mcp-server-core v0.2.1
 	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
