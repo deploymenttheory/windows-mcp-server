@@ -1,3 +1,5 @@
+//go:build windows && (amd64 || arm64)
+
 package windows
 
 import "testing"
@@ -11,7 +13,7 @@ import "testing"
 // truncate the audit log or read the credentials file straight past the check.
 func TestProtectedPathFoldsWindowsSpellings(t *testing.T) {
 	const target = `C:\ProgramData\windows-mcp\audit\session.jsonl`
-	p := NewProtectedPath(target, "the audit log", false, true, true)
+	p := protect(target, "the audit log", false, true, true)
 
 	equivalent := []string{
 		target,
@@ -24,7 +26,7 @@ func TestProtectedPathFoldsWindowsSpellings(t *testing.T) {
 		`C:\ProgramData\windows-mcp\other\..\audit\session.jsonl`,
 	}
 	for _, spelling := range equivalent {
-		if !p.covers(normalizeProtectedPath(spelling)) {
+		if !p.Covers(NormalizePath(spelling)) {
 			t.Errorf("%s reaches the protected file but is not covered", spelling)
 		}
 	}
@@ -35,7 +37,7 @@ func TestProtectedPathFoldsWindowsSpellings(t *testing.T) {
 		`C:\ProgramData\windows-mcp\audit`,
 	}
 	for _, other := range different {
-		if p.covers(normalizeProtectedPath(other)) {
+		if p.Covers(NormalizePath(other)) {
 			t.Errorf("%s is a different file and must not be covered", other)
 		}
 	}
@@ -44,7 +46,7 @@ func TestProtectedPathFoldsWindowsSpellings(t *testing.T) {
 // TestProtectedTreeFoldsSpellings covers the directory form, which is how the
 // kill-switch control directory and a directory audit destination are protected.
 func TestProtectedTreeFoldsSpellings(t *testing.T) {
-	p := NewProtectedPath(`C:\ProgramData\windows-mcp\control`, "the control directory", true, true, true)
+	p := protect(`C:\ProgramData\windows-mcp\control`, "the control directory", true, true, true)
 
 	inside := []string{
 		`C:\ProgramData\windows-mcp\control\kill`,
@@ -53,11 +55,11 @@ func TestProtectedTreeFoldsSpellings(t *testing.T) {
 		`C:\ProgramData\windows-mcp\control`,
 	}
 	for _, path := range inside {
-		if !p.covers(normalizeProtectedPath(path)) {
+		if !p.Covers(NormalizePath(path)) {
 			t.Errorf("%s is inside the protected tree but is not covered", path)
 		}
 	}
-	if p.covers(normalizeProtectedPath(`C:\ProgramData\windows-mcp\controlled\file`)) {
+	if p.Covers(NormalizePath(`C:\ProgramData\windows-mcp\controlled\file`)) {
 		t.Error("a sibling whose name merely shares a prefix must not be covered")
 	}
 }

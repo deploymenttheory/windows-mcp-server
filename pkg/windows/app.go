@@ -8,7 +8,8 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+	"github.com/deploymenttheory/mcp-server-core/inventory"
+	"github.com/deploymenttheory/mcp-server-core/toolkit"
 )
 
 // App launches, switches to, or resizes applications and windows.
@@ -61,9 +62,9 @@ func App() inventory.ServerTool {
 				}
 				// A URL-shaped name is a navigation, not an app launch: Start-Process
 				// hands it to the default browser. Enforce HTTPS has to see it.
-				if scheme, isURL := urlSchemeIfURL(name); isURL && scheme == "http" && deps.EnforceHTTPS() {
+				if scheme, isURL := toolkit.URLSchemeIfURL(name); isURL && scheme == "http" && deps.EnforceHTTPS() {
 					return NewToolResultErrorf("%s: %q would open the default browser at a plaintext "+
-						"address. Retry with an https:// URL.", ErrPlaintextHTTP, name), nil
+						"address. Retry with an https:// URL.", toolkit.ErrPlaintextHTTP, name), nil
 				}
 				if _, err := dsk.LaunchApp(ctx, name); err != nil {
 					return NewToolResultErrorFromErr("launch failed", err), nil

@@ -12,7 +12,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+	"github.com/deploymenttheory/mcp-server-core/inventory"
+	"github.com/deploymenttheory/mcp-server-core/toolkit"
 )
 
 // Credentials exposes the credentials supplied to the server at startup.
@@ -131,8 +132,8 @@ func credentialsHandler(_ context.Context, deps ToolDependencies, req *mcp.CallT
 
 // credentialsList reports the configured credentials with live presence, and
 // never includes a secret.
-func credentialsList(deps ToolDependencies, registry []desktop.CredentialInfo) (*mcp.CallToolResult, error) {
-	out := make([]desktop.CredentialInfo, 0, len(registry))
+func credentialsList(deps ToolDependencies, registry []toolkit.CredentialInfo) (*mcp.CallToolResult, error) {
+	out := make([]toolkit.CredentialInfo, 0, len(registry))
 	for _, c := range registry {
 		c.Present, _ = deps.Desktop().CredentialPresent(c.Target, desktop.CredentialType(c.Type))
 		c.Injectable = desktop.CredentialType(c.Type).Readable()
@@ -147,7 +148,7 @@ func credentialsList(deps ToolDependencies, registry []desktop.CredentialInfo) (
 
 func credentialsVerify(
 	deps ToolDependencies,
-	registry []desktop.CredentialInfo,
+	registry []toolkit.CredentialInfo,
 	args map[string]any,
 ) (*mcp.CallToolResult, error) {
 	cred, err := lookupCredential(registry, args)
@@ -173,7 +174,7 @@ func credentialsVerify(
 // can take focus between them.
 func credentialsInject(
 	deps ToolDependencies,
-	registry []desktop.CredentialInfo,
+	registry []toolkit.CredentialInfo,
 	args map[string]any,
 ) (*mcp.CallToolResult, error) {
 	cred, err := lookupCredential(registry, args)
@@ -248,10 +249,10 @@ func resolveCredentialTarget(deps ToolDependencies, args map[string]any) (*deskt
 }
 
 // lookupCredential resolves the required "name" argument to a configured entry.
-func lookupCredential(registry []desktop.CredentialInfo, args map[string]any) (desktop.CredentialInfo, error) {
+func lookupCredential(registry []toolkit.CredentialInfo, args map[string]any) (toolkit.CredentialInfo, error) {
 	name, err := RequiredString(args, "name")
 	if err != nil {
-		return desktop.CredentialInfo{}, err
+		return toolkit.CredentialInfo{}, err
 	}
 	for _, c := range registry {
 		if c.Name == name {
@@ -263,7 +264,7 @@ func lookupCredential(registry []desktop.CredentialInfo, args map[string]any) (d
 	for _, c := range registry {
 		available = append(available, c.Name)
 	}
-	return desktop.CredentialInfo{}, fmt.Errorf("no credential named %q; configured credentials: %v", name, available)
+	return toolkit.CredentialInfo{}, fmt.Errorf("no credential named %q; configured credentials: %v", name, available)
 }
 
 // describeTyped renders how much was typed as a band rather than a count.

@@ -436,11 +436,29 @@ summary of the product pass.
 
 ```
 cmd/windows-mcp-server   Cobra/Viper CLI (stdio transport)
-internal/winmcp          server bootstrap: inventory + MCP server + deps middleware
+internal/winmcp          server bootstrap: RunStdio composed from mcp-server-core,
+                         plus the Windows probes, credentials, DACL check and
+                         the go-winio harness dial
 internal/desktop         the Windows engine — one COM STA thread serving UIA
                          traversal, SendInput, GDI screenshots, overlays,
                          PowerShell, plus a WMI worker thread
-internal/guardrails/     the security stack, split by lifecycle layer:
+internal/psdata          PowerShell data binding for model-supplied values
+pkg/windows              MCP tool definitions, personas, and the shim over the
+                         shared toolkit
+mcp-server-core          (imported) the platform-agnostic half, shared with
+                         macos-mcp-server:
+    inventory            domain-agnostic toolset engine (grouping, filtering,
+                         read-only, resources, prompts)
+    toolkit              dependency injection, argument accessors, result
+                         constructors, assertions, evidence sink, Scrape, Plan/Apply
+    surface              the MCP server construction, pinned capabilities,
+                         completion, cache hints, wire capture
+    runtime              guardrail wiring: policy load, egress provisioning,
+                         harness servant, planner, evidence sealing, journeys
+    conformance          the loopback HTTP host and the suite fixtures
+    journeys / runrecord journey schema, compiler, recorder output; OTLP run records
+    mcpspec / mcpconf    vendored-schema loader; conformance-results reporting
+agentweave-harness       (imported) the security stack, split by lifecycle layer:
     signals              signal vocabulary, probes, registry, checks
     audit                hash chain, destination, VerifyChain
     hostmatch            egress allowlist matching + forbidden address ranges
@@ -450,11 +468,6 @@ internal/guardrails/     the security stack, split by lifecycle layer:
     watch                heartbeat, rug-pull, in-flight monitor
     contain              kill switch, containment ladder, actuator, firewall
     status               status endpoint, GuardrailStatus + Kill tools
-internal/mcpspec         vendored-schema loader + offline wire validation
-internal/mcpconf         official conformance-suite results: ingest + reporting
-pkg/windows              MCP tool definitions, personas, dependency-injection glue
-pkg/inventory            domain-agnostic toolset engine (grouping, filtering,
-                         read-only, resources, prompts)
 policy/examples          starting-point policy documents
 schema/                  vendored MCP protocol schemas, one dir per revision
 conformance/             expected-failure baselines + committed suite results
@@ -475,9 +488,10 @@ go test ./... -count=1
 golangci-lint run --config=./.golangci.yml
 ```
 
-`pkg/inventory`, the parameter helpers, the policy engine and the egress matcher
-are cross-platform and tested everywhere; the Windows automation packages build
-and test only on Windows. See [CONTRIBUTING.md](CONTRIBUTING.md) and
+The inventory engine, the parameter helpers, the policy engine and the egress
+matcher are cross-platform and tested in their own modules (mcp-server-core,
+agentweave-harness); the Windows automation packages build and test only on
+Windows, though they cross-compile from anywhere with `GOOS=windows`. See [CONTRIBUTING.md](CONTRIBUTING.md) and
 [CLAUDE.md](CLAUDE.md).
 
 ---

@@ -213,7 +213,7 @@ windows-mcp-server.exe stdio --persona business-user --toolsets screen,interacti
 windows-mcp-server.exe stdio --persona qa-test-engineer --exclude-tools Registry,FileSystem
 ```
 
-If you do add a persona in a fork, `pkg/inventory` is domain-agnostic and does
+If you do add a persona in a fork, `mcp-server-core/inventory` is domain-agnostic and does
 the filtering; the persona map and the toolset constants are the only things you
 need to touch.
 

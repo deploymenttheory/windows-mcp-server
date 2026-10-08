@@ -1,6 +1,10 @@
 package windows
 
-import "github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+import (
+	"slices"
+
+	"github.com/deploymenttheory/mcp-server-core/inventory"
+)
 
 // Toolset metadata. Each tool declares membership in exactly one of these. The
 // Default flag marks toolsets included when the caller asks for the "default"
@@ -186,4 +190,15 @@ var Personas = map[string]Persona{
 func LookupPersona(id string) (Persona, bool) {
 	p, ok := Personas[id]
 	return p, ok
+}
+
+// PersonaIDs lists the persona selectors, sorted, for completion and
+// `personas`.
+func PersonaIDs() []string {
+	out := make([]string, 0, len(Personas))
+	for id := range Personas {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out
 }

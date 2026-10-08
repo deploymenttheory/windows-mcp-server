@@ -125,26 +125,6 @@ type CredentialSpec struct {
 	Persist CredentialPersist
 }
 
-// CredentialInfo is the non-secret view of an installed credential — everything
-// the Credentials tool is allowed to report.
-type CredentialInfo struct {
-	Name     string `json:"name"`
-	Target   string `json:"target"`
-	Username string `json:"username,omitempty"`
-	Type     string `json:"type"`
-	Persist  string `json:"persist"`
-	Present  bool   `json:"present"`
-	// Injectable is false for credential classes Windows will not read back.
-	Injectable bool `json:"injectable"`
-	// AllowUnmaskedTarget lets this credential be injected into a control that
-	// does not report itself as masked. It defaults to false, so injection
-	// normally requires a confirmed password field — see requireMaskedFocus. It is
-	// an operator decision, declared per credential in the credentials document,
-	// because it trades the never-read guarantee for reach into destinations that
-	// cannot report IsPassword (a console window, some Electron and Java apps).
-	AllowUnmaskedTarget bool `json:"allow_unmasked_target"`
-}
-
 // WriteCredential installs a credential into the calling user's credential set.
 // The secret is copied into a UTF-16 blob, handed to CredWrite, and the blob is
 // zeroed before returning.

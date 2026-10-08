@@ -12,7 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+	"github.com/deploymenttheory/mcp-server-core/inventory"
 )
 
 // pointForLabelOrLoc resolves a click point from a label (int) or a [x,y] loc.

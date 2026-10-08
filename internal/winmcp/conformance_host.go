@@ -14,19 +14,12 @@ package winmcp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/http"
 	"os"
-	"runtime/debug"
-	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/contain"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/enforce"
@@ -34,6 +27,10 @@ import (
 	"github.com/deploymenttheory/agentweave-harness/guardrails/signals"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/status"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/watch"
+	"github.com/deploymenttheory/mcp-server-core/conformance"
+	"github.com/deploymenttheory/mcp-server-core/runtime"
+	"github.com/deploymenttheory/mcp-server-core/surface"
+	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )
 
@@ -45,7 +42,7 @@ type ConformanceConfig struct {
 	Path string
 	// Fixtures registers the named tools, resources and prompts the conformance
 	// suite requires in order to exercise tools/call, resources/read and
-	// prompts/get at all (see conformance_fixtures.go).
+	// prompts/get at all (mcp-server-core/conformance).
 	//
 	// This is the difference between the suite's two passes. Without it the run
 	// measures the manifest this server actually ships; with it the run measures
@@ -54,17 +51,32 @@ type ConformanceConfig struct {
 	Fixtures bool
 }
 
-// shutdownGrace bounds the wait for in-flight requests when the context ends, so
-// a hung stream cannot leave the CI job running to its timeout.
-const shutdownGrace = 5 * time.Second
-
 // RunConformanceHost serves this server's MCP surface over Streamable HTTP on
 // loopback so the official conformance suite can connect to it.
 //
 // What makes the evidence meaningful is that the surface is built by
-// newMCPSurface and wrapped in the same middleware chain as RunStdio, in the same
+// newSurface and wrapped in the same middleware chain as RunStdio, in the same
 // order: inject-deps and cache hints from the shared constructor, then audit,
 // rug-pull and the policy engine. Only the transport differs.
+func RunConformanceHost(ctx context.Context, cfg Config, hostCfg ConformanceConfig) error {
+	if err := conformance.RequireLoopback(hostCfg.Addr); err != nil {
+		return fmt.Errorf("conformance host: %w", err)
+	}
+	// Logs go to stderr: stdout carries the bound URL for the harness runner.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	server, err := buildConformanceServer(ctx, cfg, hostCfg.Fixtures, logger)
+	if err != nil {
+		return err
+	}
+	if err := conformance.Serve(ctx, server, hostCfg.Addr, hostCfg.Path, logger); err != nil {
+		return fmt.Errorf("conformance host: %w", err)
+	}
+	return nil
+}
+
+// buildConformanceServer assembles the server the host serves. It is separate
+// from the transport so a test can drive the same object over an in-memory
+// transport and compare its manifest with the stdio one.
 //
 // Three deliberate differences from a production run, each to avoid measuring
 // something other than protocol conformance:
@@ -79,74 +91,7 @@ const shutdownGrace = 5 * time.Second
 //     still serves, because most of the suite needs no engine and losing the run
 //     to obtain one would be a bad trade.
 //   - Handler panics are recovered rather than fatal. Finishing the run and
-//     reporting is the whole job here; see recoverMiddleware.
-func RunConformanceHost(ctx context.Context, cfg Config, hostCfg ConformanceConfig) error {
-	if err := requireLoopback(hostCfg.Addr); err != nil {
-		return err
-	}
-	// Logs go to stderr: stdout carries the bound URL for the harness runner.
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
-	server, err := buildConformanceServer(ctx, cfg, hostCfg.Fixtures, logger)
-	if err != nil {
-		return err
-	}
-
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
-		&mcp.StreamableHTTPOptions{
-			// Protocol 2026-07-28 removed protocol-level sessions (SEP-2567), and the
-			// suite's stateless scenarios exercise exactly that. Leaving sessions on
-			// would make the server answer a sessionless client with session
-			// machinery it is no longer allowed to use.
-			Stateless: true,
-			Logger:    logger,
-			// DNS-rebinding protection is left at its default (on). The suite has a
-			// scenario for it precisely because a localhost server without HTTPS or
-			// auth is the case that needs it, so disabling it here would be
-			// disabling the thing under test.
-		})
-
-	mux := http.NewServeMux()
-	mux.Handle(hostCfg.Path, handler)
-
-	var lc net.ListenConfig
-	listener, err := lc.Listen(ctx, "tcp", hostCfg.Addr)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", hostCfg.Addr, err)
-	}
-	url := fmt.Sprintf("http://%s%s", listener.Addr().String(), hostCfg.Path)
-	// The bound URL on stdout is the runner's contract: with :0 the port is only
-	// known here, and the harness needs it to build --url.
-	fmt.Fprintln(os.Stdout, url)
-	logger.Info("conformance host listening", "url", url, "stateless", true)
-
-	httpServer := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	errc := make(chan error, 1)
-	go func() { errc <- httpServer.Serve(listener) }()
-
-	select {
-	case err := <-errc:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return fmt.Errorf("serve: %w", err)
-	case <-ctx.Done():
-		// Deliberately NOT derived from ctx: ctx is already cancelled, and a
-		// cancelled context makes Shutdown abandon in-flight requests immediately.
-		// The grace period is the point — the suite's last response should finish
-		// before the process exits, or the run's own results are the casualty.
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
-		defer cancel()
-		if err := httpServer.Shutdown(shutdownCtx); err != nil { //nolint:contextcheck // see above
-			return fmt.Errorf("shutdown: %w", err)
-		}
-		return nil
-	}
-}
-
-// buildConformanceServer assembles the server the host serves. It is separate
-// from the transport so a test can drive the same object over an in-memory
-// transport and compare its manifest with the stdio one.
+//     reporting is the whole job here; see conformance.RecoverMiddleware.
 func buildConformanceServer(
 	ctx context.Context, cfg Config, fixturesEnabled bool, logger *slog.Logger,
 ) (*mcp.Server, error) {
@@ -156,10 +101,9 @@ func buildConformanceServer(
 	}
 
 	// A real engine when the runner can host one, so resources/read returns real
-	// desktop state and the suite's caching checks measure something. It is
-	// best-effort: a headless or UIA-less environment must degrade to a nil engine
-	// rather than refusing to serve, because most of the suite needs no engine at
-	// all and losing the whole run to get one would be a bad trade.
+	// desktop state and the suite's caching checks measure something. A headless
+	// or UIA-less environment degrades to a nil engine rather than refusing to
+	// serve.
 	dsk, err := desktop.New(logger, desktop.Options{}) //nolint:contextcheck // owns its lifetime
 	if err != nil {
 		logger.Warn("no desktop engine for the conformance host; "+
@@ -167,50 +111,39 @@ func buildConformanceServer(
 		dsk = nil
 	}
 
-	deps := windows.NewBaseDeps(dsk, logger, nil).WithEnforceHTTPS(enforceHTTPS(cfg))
-	surface := newMCPSurface(cfg, inv, personaInstructions, deps)
-	server := surface.Server
+	deps := windows.NewBaseDeps(dsk, logger, nil)
+	deps.WithEnforceHTTPS(cfg.EnforceHTTPS)
+	s := newSurface(cfg, inv, personaInstructions, deps)
+	server := s.Server
 
 	// The transparency services, as RunStdio wires them. A trip here logs and
 	// records rather than actuating containment: the conformance host has no
 	// desktop to contain, and a kill mid-suite would destroy the evidence.
-	audit := audit.NewAuditLog(&conformanceAuditDestination{logger: logger})
+	auditLog := audit.NewAuditLog(&conformance.AuditDestination{Logger: logger})
 	rugpull := watch.NewRugPull(func(reason string) {
 		logger.Error("guardrail.rugpull", "reason", reason)
-	}, audit)
+	}, auditLog)
 
-	// The policy engine under the built-in default: present, evaluating and
-	// recording, refusing nothing. The suite must meet the same middleware chain a
-	// real session does — otherwise the conformance evidence describes a server
-	// nobody runs — but a policy that refused calls would report the refusals as
-	// protocol failures.
-	engine := policy.NewEngine(policy.Default(), newGuardrailRegistry(cfg, logger), nil,
-		func() *signals.Env { return &signals.Env{Sys: &conformanceProbe{}, Logger: logger} })
+	engine := policy.NewEngine(policy.Default(), runtime.NewGuardrailRegistry(envNames, logger), nil,
+		func() *signals.Env { return &signals.Env{Sys: &conformance.Probe{}, Logger: logger} })
 
-	// One call, outermost first — see installReceiving for why it cannot be
-	// several. recoverMiddleware is the first layer inside the unconditional two,
-	// so nothing a handler does can take the process down.
-	//
-	// That recover is not defensive padding. Without it, one handler dereferencing
-	// a nil engine killed the host mid-suite, and every scenario after that point
-	// reported "fetch failed" — indistinguishable, in the results, from a server
-	// that answered wrongly. A conformance run whose failures might mean "the
-	// server is not there" is not evidence of anything.
-	surface.installReceiving(
-		recoverMiddleware(logger),
-		audit.Middleware(),
+	// One call, outermost first — see Surface.InstallReceiving for why it cannot
+	// be several. The recover layer is the first inside the unconditional two, so
+	// nothing a handler does can take the process down: without it one handler
+	// dereferencing a nil engine killed the host mid-suite, and every scenario
+	// after that point reported "fetch failed".
+	s.InstallReceiving(
+		conformance.RecoverMiddleware(logger),
+		auditLog.Middleware(),
 		rugpull.Middleware(),
 		rugpull.PromptMiddleware(),
 		rugpull.ResourceMiddleware(),
 		rugpull.DiscoverMiddleware(),
-		enforce.Middleware(engine, enforce.EnforcerDeps{
-			Audit:  audit,
-			Logger: logger,
-		}),
+		enforce.Middleware(engine, enforce.EnforcerDeps{Audit: auditLog, Logger: logger}),
 	)
 
 	inv.RegisterAll(ctx, server, deps)
-	engine.SetIndex(newToolIndex(ctx, inv))
+	engine.SetIndex(runtime.NewToolIndex(ctx, inv))
 
 	kill := contain.NewKillSwitch(nil)
 	statusTool, statusHandler := status.StatusTool(
@@ -226,95 +159,12 @@ func buildConformanceServer(
 	// will actually serve. Pinning the product manifest and then adding fixtures
 	// would trip the rug-pull detector on the suite's first tools/list — correctly,
 	// since the manifest really would have changed after the baseline.
-	fixtures := registerConformanceFixtures(server, fixturesEnabled)
-
-	tools := append(invMCPTools(ctx, inv), statusTool, killTool)
+	fixtures := conformance.RegisterFixtures(server, fixturesEnabled)
+	tools := append(surface.MCPTools(ctx, inv), statusTool, killTool)
 	rugpull.SetBaseline(append(tools, fixtures.Tools...))
-	rugpull.SetPromptBaseline(append(invMCPPrompts(ctx, inv), fixtures.Prompts...))
-	rugpull.SetResourceBaseline(append(invMCPResources(ctx, inv), fixtures.Resources...))
-	rugpull.SetDiscoverBaseline(surface.Capabilities, surface.Instructions)
+	rugpull.SetPromptBaseline(append(surface.MCPPrompts(ctx, inv), fixtures.Prompts...))
+	rugpull.SetResourceBaseline(append(surface.MCPResources(ctx, inv), fixtures.Resources...))
+	rugpull.SetDiscoverBaseline(s.Capabilities, s.Instructions)
 
 	return server, nil
 }
-
-// requireLoopback refuses any address that is not loopback.
-//
-// This host has no authentication and no authorization: it is a test fixture that
-// serves the full tool manifest of a desktop-automation server. Binding it to a
-// routable interface would publish that manifest, and the ability to call it, to
-// the network. The check is here rather than in the CLI so no future caller can
-// route around it.
-func requireLoopback(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("parse listen address %q: %w", addr, err)
-	}
-	if host == "localhost" {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("conformance host refuses to bind %q: loopback only", addr) //nolint:err113 // one-off guard
-	}
-	return nil
-}
-
-// recoverMiddleware turns a panicking handler into a JSON-RPC error instead of a
-// dead process.
-//
-// It belongs on the conformance host and not on the stdio server. Here the whole
-// point is to finish the run and produce results, so one broken handler must not
-// cost the evidence for every scenario after it — a run whose failures might mean
-// "the server is not there" proves nothing. A production session makes the
-// opposite trade: a panic there means the engine's state is unknown, and driving
-// a desktop from an unknown state is worse than stopping.
-func recoverMiddleware(logger *slog.Logger) mcp.Middleware {
-	return func(next mcp.MethodHandler) mcp.MethodHandler {
-		return func(ctx context.Context, method string, req mcp.Request) (res mcp.Result, err error) {
-			defer func() {
-				if r := recover(); r != nil {
-					logger.Error("handler panicked", "method", method, "panic", r,
-						"stack", string(debug.Stack()))
-					res = nil
-					err = &jsonrpc.Error{
-						Code:    jsonrpc.CodeInternalError,
-						Message: fmt.Sprintf("handler for %s panicked: %v", method, r),
-					}
-				}
-			}()
-			return next(ctx, method, req)
-		}
-	}
-}
-
-// conformanceProbe satisfies signals.SystemProbe without a desktop engine.
-//
-// The conformance host creates no engine — the suite never drives the real
-// desktop — so the default policy's signals have nothing to read. Every method
-// returns a zero value, which makes run-context report a non-interactive session
-// and therefore fail. Under the default policy that is a warning and nothing
-// more, which is the intended outcome: the middleware is exercised on every
-// request, and no request is refused.
-type conformanceProbe struct{}
-
-func (*conformanceProbe) RunShell(context.Context, string) (string, error) { return "", nil }
-func (*conformanceProbe) DomainSKU() (signals.DomainSKU, error) {
-	return signals.DomainSKU{}, nil
-}
-func (*conformanceProbe) RunContext() signals.RunContext { return signals.RunContext{} }
-func (*conformanceProbe) DeviceIdentity() signals.DeviceIdentity {
-	return signals.DeviceIdentity{Hostname: "conformance-host"}
-}
-func (*conformanceProbe) IsAdmin() bool { return false }
-
-// conformanceAuditDestination writes the hash-chained audit entries to the logger, so a
-// conformance run leaves the same transparency trail a real session would and the
-// entries land in the workflow log next to the harness output.
-type conformanceAuditDestination struct{ logger *slog.Logger }
-
-func (s *conformanceAuditDestination) Write(e audit.AuditEntry) error {
-	s.logger.Info("audit", "seq", e.Seq, "event", e.Event, "hash", e.EntryHash)
-	return nil
-}
-func (s *conformanceAuditDestination) Flush() error { return nil }
-func (s *conformanceAuditDestination) Close() error { return nil }

@@ -214,7 +214,7 @@ proto3 JSON mapping.
 **1 — Evidence must never be sampled.** The policy document's
 `telemetry.sample_ratio` governs what is *exported*; it must not govern what is
 *recorded*. A run record with a statistical subset of its own steps is not
-evidence. `internal/runrecord` is therefore wholly independent of the exporter
+evidence. `mcp-server-core/runrecord` is therefore wholly independent of the exporter
 and its sampler: it builds the spans itself and every one of them is kept.
 
 **2 — The OTel Go SDK has no file exporter.** So the spans are built directly as

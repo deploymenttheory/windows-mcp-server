@@ -9,8 +9,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/deploymenttheory/mcp-server-core/journeys"
+	"github.com/deploymenttheory/mcp-server-core/runtime"
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/internal/journeys"
 )
 
 // errNoOutputPath reports a record request with no --out destination.
@@ -29,9 +30,9 @@ func RecordJourney(ctx context.Context, cfg Config, name, out string) (journeys.
 		return journeys.Journey{}, errNoOutputPath
 	}
 
-	logger, cleanup, err := newLogger(cfg.LogFile)
+	logger, cleanup, err := runtime.NewLogger(cfg.LogFile)
 	if err != nil {
-		return journeys.Journey{}, err
+		return journeys.Journey{}, fmt.Errorf("logger: %w", err)
 	}
 	defer cleanup()
 

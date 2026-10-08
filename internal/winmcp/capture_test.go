@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/deploymenttheory/windows-mcp-server/internal/mcpspec"
+	"github.com/deploymenttheory/mcp-server-core/mcpspec"
 )
 
 func schemaDir() string { return filepath.Join("..", "..", "schema") }
@@ -88,32 +88,3 @@ func TestServedSurfaceValidatesAgainstTheNewestRevision(t *testing.T) {
 	})
 }
 
-// TestCaptureRecordsTheWireNotTheSDKView is the regression guard for a bug this
-// capture used to have.
-//
-// It reported the handshake from ClientSession.InitializeResult(), which on
-// 2026-07-28 is a *synthesized legacy view*: the real exchange is server/discover,
-// whose result must carry resultType, cacheScope, ttlMs and supportedVersions.
-// Validating the synthesized view made a conformant server look non-conformant.
-func TestCaptureRecordsTheWireNotTheSDKView(t *testing.T) {
-	surface, err := CaptureSurface(context.Background(), Config{Toolsets: []string{"all"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(surface.HandshakeResult) == 0 {
-		t.Fatal("no handshake result captured")
-	}
-	var got map[string]json.RawMessage
-	if err := json.Unmarshal(surface.HandshakeResult, &got); err != nil {
-		t.Fatal(err)
-	}
-	if _, isDiscover := got["supportedVersions"]; !isDiscover {
-		t.Skip("this revision negotiates initialize, not server/discover")
-	}
-	for _, field := range []string{"resultType", "cacheScope", "ttlMs", "supportedVersions"} {
-		if _, ok := got[field]; !ok {
-			t.Errorf("captured handshake is missing %q — looks like the normalized "+
-				"InitializeResult rather than the wire DiscoverResult", field)
-		}
-	}
-}

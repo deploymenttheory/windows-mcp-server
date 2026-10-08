@@ -23,8 +23,8 @@ import (
 
 	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/evidence"
-	"github.com/deploymenttheory/windows-mcp-server/internal/journeys"
-	"github.com/deploymenttheory/windows-mcp-server/internal/mcpconf"
+	"github.com/deploymenttheory/mcp-server-core/journeys"
+	"github.com/deploymenttheory/mcp-server-core/mcpconf"
 	"github.com/deploymenttheory/windows-mcp-server/internal/winmcp"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
 )
@@ -121,7 +121,7 @@ func policyTestCmd() *cobra.Command {
 			"the field.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			reports, err := winmcp.TestPolicy(winmcp.Config{Version: version}, args)
+			reports, err := winmcp.TestPolicy(args)
 			if err != nil {
 				return err
 			}

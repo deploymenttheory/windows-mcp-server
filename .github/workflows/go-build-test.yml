@@ -67,9 +67,10 @@ jobs:
 
       # The UI Automation engine tests self-skip when the environment cannot host
       # UIA (hosted runners have no interactive desktop session), so this job
-      # guarantees compilation plus the pure-logic suites: pkg/inventory,
-      # pkg/windows (manifest invariants, param coercion), and internal/winmcp.
-      # (The guardrails package suites run in the agentweave-harness repo's CI.)
+      # guarantees compilation plus the pure-logic suites: pkg/windows (manifest
+      # invariants) and internal/winmcp. (The inventory, toolkit and runtime
+      # suites run in mcp-server-core's CI; the guardrails package suites in the
+      # agentweave-harness repo's.)
       # -v keeps those skips visible rather than silent.
       - name: Test
         run: go test ./... -count=1 -v

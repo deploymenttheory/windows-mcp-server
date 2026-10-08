@@ -1,9 +1,13 @@
-package journeys
+//go:build windows && (amd64 || arm64)
+
+package winmcp
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/deploymenttheory/mcp-server-core/journeys"
 )
 
 // TestShippedExampleJourneysCompile keeps the examples runnable: a journey that
@@ -23,14 +27,14 @@ func TestShippedExampleJourneysCompile(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			j, err := Parse(raw)
+			j, err := journeys.Parse(raw)
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
 			if err := j.Validate(); err != nil {
 				t.Fatalf("validate: %v", err)
 			}
-			doc, err := Compile(j, "test")
+			doc, err := journeys.Compile(j, "test")
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}

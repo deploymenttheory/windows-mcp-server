@@ -2,7 +2,8 @@
 
 // Package winmcp wires the Windows automation engine and tool inventory into an
 // MCP server and runs it over a transport. It is the bootstrap layer between
-// the cobra CLI (cmd/windows-mcp-server) and the domain package (pkg/windows).
+// the cobra CLI (cmd/windows-mcp-server) and the domain package (pkg/windows),
+// composed from the shared mcp-server-core runtime.
 package winmcp
 
 import (
@@ -10,10 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +20,6 @@ import (
 
 	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/contain"
-	"github.com/deploymenttheory/agentweave-harness/guardrails/egress"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/enforce"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/signals"
@@ -29,9 +27,17 @@ import (
 	"github.com/deploymenttheory/agentweave-harness/guardrails/telemetry"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/watch"
 	"github.com/deploymenttheory/agentweave-harness/wire"
+	"github.com/deploymenttheory/mcp-server-core/inventory"
+	"github.com/deploymenttheory/mcp-server-core/runtime"
+	"github.com/deploymenttheory/mcp-server-core/surface"
 	"github.com/deploymenttheory/windows-mcp-server/internal/desktop"
-	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
 	"github.com/deploymenttheory/windows-mcp-server/pkg/windows"
+)
+
+// ServerName and ServerTitle identify this server in server/discover.
+const (
+	ServerName  = "windows-mcp-server"
+	ServerTitle = "Windows MCP Server"
 )
 
 // Config controls how the server is assembled and which tools it exposes.
@@ -108,6 +114,9 @@ var ErrPersonaNeedsUser = errors.New(
 	"persona requires an interactive user context, but the process is running as SYSTEM",
 )
 
+// ErrUnknownPersona reports a persona id that is not registered.
+var ErrUnknownPersona = errors.New("unknown persona")
+
 // ErrStartupDenied reports a device that did not meet the startup-scoped rules
 // of the active policy.
 var ErrStartupDenied = errors.New("device devicePolicy denied startup")
@@ -118,21 +127,23 @@ var ErrStartupDenied = errors.New("device devicePolicy denied startup")
 // surface explicitly with --toolsets, or to drop the tool.
 var ErrPersonaToolBypass = errors.New("--tools escapes the persona's toolsets")
 
-// ErrCredentialExposureDenied reports a --credentials-file served alongside a
-// toolset that can read the installed credentials back (shell or filesystem)
-// without the policy acknowledging the exposure. It is a configuration error, not
-// a device denial: the fix is to the toolset selection or the policy document, so
-// it is not routed through the guardrail decision.
-var ErrCredentialExposureDenied = errors.New(
-	"credentials exposed to a toolset that can read them back",
-)
+// ErrKilled reports a session ended by the kill switch.
+var ErrKilled = errors.New("session terminated by kill switch")
 
 // RunStdio builds the server and serves the MCP protocol over stdio until the
 // context is cancelled or the client disconnects.
+//
+// The order is the contract: policy first (it names everything else), then the
+// audit chain, the engine, startup admission, the tool surface, credentials,
+// the harness attach, egress, the kill ladder, the planner, the middleware
+// chain, registration, the guardrail tools and baselines, the in-flight
+// monitor, the status endpoint, and only then the transport.
+//
+//nolint:gocyclo,cyclop,maintidx,funlen,gocognit // the wiring order is the contract
 func RunStdio(ctx context.Context, cfg Config) error {
-	logger, cleanup, err := newLogger(cfg.LogFile)
+	logger, cleanup, err := runtime.NewLogger(cfg.LogFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("logger: %w", err)
 	}
 	defer cleanup()
 
@@ -140,10 +151,10 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// destination, the heartbeat cadence, whether the session is recorded and where — so
 	// a bad document must fail before any of that is stood up, and certainly
 	// before a desktop engine exists.
-	reg := newGuardrailRegistry(cfg, logger)
-	devicePolicy, err := loadPolicy(cfg, reg, logger)
+	reg := runtime.NewGuardrailRegistry(envNames, logger)
+	devicePolicy, err := runtime.LoadPolicy(cfg.PolicyConfig, reg, logger)
 	if err != nil {
-		return err
+		return fmt.Errorf("policy: %w", err)
 	}
 	// Carried onto Config because it has to reach the tool dependencies and the
 	// guardrail Env, neither of which holds a policy.
@@ -154,39 +165,33 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// directory-destination mode the audit file (session-<stamp>.audit.jsonl) and the
 	// recording (session-<stamp>.mp4) correlate by name — the correlation an
 	// evidence bundle later relies on.
-	sessionStamp := time.Now().Format("20060102-150405")
-	// Keyed by default now: an unkeyed chain is tamper-evident but not
-	// unforgeable, since anyone who can write the file can recompute every hash
-	// after an edit. See resolveAuditKey for what the generated key does and does
-	// not protect against.
-	auditKey := resolveAuditKey(devicePolicy.Transparency.AuditDestination, logger)
+	sessionStamp := runtime.SessionStamp()
+	// Keyed by default: an unkeyed chain is tamper-evident but not unforgeable,
+	// since anyone who can write the file can recompute every hash after an
+	// edit. The HMAC key is an environment secret, never a flag or policy field.
+	auditKey := runtime.ResolveAuditKey(envNames, devicePolicy.Transparency.AuditDestination, logger)
 	dest, err := audit.OpenDestination(devicePolicy.Transparency.AuditDestination, sessionStamp, auditKey)
 	if err != nil {
 		return fmt.Errorf("audit log: %w", err)
 	}
-	// The HMAC key is an environment secret, never a flag or policy field: argv is
-	// world-readable and the policy is meant to be checked in. Absent, the chain is
-	// unkeyed — the default — so a device that worked yesterday still starts. (The
-	// local name shadows the package; on the right-hand side it is still the
-	// package, since a := binding is not in scope until after the statement.)
-	audit := audit.NewAuditLog(dest, audit.WithHMACKey(auditKey))
+	auditLog := audit.NewAuditLog(dest, audit.WithHMACKey(auditKey))
 	// sealAtExit is populated later, once the planner exists and the closing posture
 	// is captured. It runs from inside the audit-close defer, so it fires after the
 	// chain is sealed and (defers being LIFO) after the recorder is finalized — both
 	// are inputs to the bundle.
 	var sealAtExit func()
 	defer func() {
-		_ = audit.Close()
+		_ = auditLog.Close()
 		if sealAtExit != nil {
 			sealAtExit()
 		}
 	}()
-	_, _ = audit.Append("server.started", map[string]any{"version": cfg.Version, "session": sessionStamp})
+	_, _ = auditLog.Append("server.started", map[string]any{"version": cfg.Version, "session": sessionStamp})
 
 	// Off-box anchoring of the chain head, if the policy asks for it. It is
 	// defence-in-depth beyond keying — the key lives on this box, the anchor does
 	// not — and never gates startup.
-	stopAnchor := startAnchor(ctx, devicePolicy.Transparency.Anchor, audit, logger)
+	stopAnchor := startAnchor(ctx, devicePolicy.Transparency.Anchor, auditLog, logger)
 	defer stopAnchor()
 
 	// contextcheck reports the recorder's ffmpeg child here because it does not
@@ -218,7 +223,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// The index is supplied once the manifest exists; a startup decision has no
 	// tool to resolve.
 	engine := policy.NewEngine(devicePolicy, reg, nil, envFn)
-	holder := &decisionHolder{}
+	holder := &runtime.DecisionHolder{}
 
 	probe := envFn().Sys
 	runContext := probe.RunContext()
@@ -228,8 +233,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// registering tools or provisioning credentials.
 	startup := engine.Evaluate(ctx, policy.StartupSubject())
 	decision := engine.DecisionFrom(startup, probe.DeviceIdentity(), runContext)
-	holder.set(decision)
-	_, _ = audit.Append("devicePolicy.decided", decision)
+	holder.Set(decision)
+	_, _ = auditLog.Append("devicePolicy.decided", decision)
 
 	// Session 0 has no desktop to drive, so the automation toolsets are dropped
 	// there regardless of what was asked for. This is detected rather than
@@ -242,8 +247,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 
 	if !startup.Allowed() {
 		signals.LogDecision(logger, "deny", decision)
-		_, _ = audit.Append("devicePolicy.denied", decision.Reasons)
-		_ = audit.Flush()
+		_, _ = auditLog.Append("devicePolicy.denied", decision.Reasons)
+		_ = auditLog.Flush()
 		dsk.ShowSecurityBanner("STARTUP BLOCKED — device did not meet devicePolicy")
 		dsk.Notify(ctx, "Windows MCP: startup blocked",
 			"Device did not meet devicePolicy: "+startup.Reason())
@@ -269,8 +274,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// Record the resolved tool surface: an operator (or an incident review) can
 	// see exactly what was served under which persona and selection, which the
 	// per-manifest hash baseline deliberately does not spell out.
-	enabledToolsetIDs := toolsetIDs(inv.EnabledToolsets())
-	_, _ = audit.Append("server.configured", map[string]any{
+	enabledToolsetIDs := surface.ToolsetIDs(inv.EnabledToolsets())
+	_, _ = auditLog.Append("server.configured", map[string]any{
 		"persona":               cfg.Persona,
 		"toolsets":              enabledToolsetIDs,
 		"unrecognized_toolsets": inv.UnrecognizedToolsets(),
@@ -285,70 +290,46 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// silently widen that guarantee. Refuse it: name the escaping tools and point at
 	// the explicit way to compose a surface by hand.
 	if cfg.Persona != "" {
-		if outside := toolsOutsidePersona(cfg.Tools, inv.EnabledToolsets()); len(outside) > 0 {
-			_, _ = audit.Append("tools.persona_bypass.denied", map[string]any{
+		if outside := surface.ToolsOutsidePersona(
+			cfg.Tools,
+			inv.EnabledToolsets(),
+			windows.ToolToolsets(),
+		); len(
+			outside,
+		) > 0 {
+			_, _ = auditLog.Append("tools.persona_bypass.denied", map[string]any{
 				"persona": cfg.Persona,
 				"tools":   outside,
 			})
-			_ = audit.Flush()
+			_ = auditLog.Flush()
 			return fmt.Errorf("%w: %v are outside the %q persona's toolsets; select --toolsets "+
 				"explicitly instead of a persona, or drop those tools", ErrPersonaToolBypass, outside, cfg.Persona)
 		}
 	}
 
 	// --- Init-time credentials ---
-	// Installed credentials live in the calling user's Credential Manager, so a
-	// toolset that can read that back (shell via CredRead, filesystem via a
-	// Credential Manager backup) defeats the never-read guarantee. Refuse that
-	// exposure before anything is installed, unless the policy explicitly
-	// accepts it — the same "refuse rather than serve a weaker posture
-	// than the document describes" stance the firewall tiers take. The refusal is
-	// audited first, then a typed error names the toolsets and both remedies.
-	if cfg.CredentialsFile != "" {
-		unacked, acked := splitCredentialExposure(
-			inv.EnabledToolsets(),
-			devicePolicy.Credentials.AcknowledgeToolsetExposure,
-			credentialsDeclareUnmaskedTargets(cfg.CredentialsFile),
-		)
-		if len(unacked) > 0 {
-			_, _ = audit.Append("credentials.exposure.denied", map[string]any{
-				"credentials_file": true,
-				"exposed_toolsets": unacked,
-			})
-			_ = audit.Flush()
-			return fmt.Errorf("%w: the %v toolset(s) can read installed credentials back out of the "+
-				"Credential Manager; remove them, or acknowledge the exposure in the policy document "+
-				"(credentials.acknowledge_toolset_exposure)", ErrCredentialExposureDenied, unacked)
-		}
-		if len(acked) > 0 {
-			logger.Warn(
-				"credentials served alongside toolsets that can read them back; exposure acknowledged in policy",
-				"toolsets",
-				acked,
-			)
-			_, _ = audit.Append("credentials.exposure.acknowledged", map[string]any{
-				"exposed_toolsets": acked,
-			})
-		}
+	// Refuse the exposure before anything is installed, unless the policy
+	// explicitly accepts it; see refuseCredentialExposure.
+	if err := refuseCredentialExposure(cfg, inv, devicePolicy, auditLog, logger); err != nil {
+		return err
 	}
-
 	// Provisioned only after admission and the exposure check, so a denied
 	// startup never installs credentials, and removed again on every shutdown path.
-	installedCreds, cleanupCreds, err := provisionCredentials(dsk, cfg, audit, logger)
+	installedCreds, cleanupCreds, err := provisionCredentials(dsk, cfg, auditLog, logger)
 	if err != nil {
 		return err
 	}
 	defer cleanupCreds()
 
-	deps := windows.NewBaseDeps(dsk, logger, nil).
-		WithCredentials(credentialInfos(installedCreds)).
-		WithEnforceHTTPS(enforceHTTPS(cfg)).
-		WithProtectedPaths(protectedPaths(cfg, devicePolicy))
+	deps := windows.NewBaseDeps(dsk, logger, nil)
+	deps.WithCredentials(credentialInfos(installedCreds)).
+		WithEnforceHTTPS(cfg.EnforceHTTPS).
+		WithProtectedPaths(guardrailPaths(cfg, devicePolicy))
 
 	// Built by the same function the conformance host uses, so the surface the
 	// official suite is measured against is the surface this binary serves.
-	surface := newMCPSurface(cfg, inv, personaInstructions, deps)
-	server := surface.Server
+	s := newSurface(cfg, inv, personaInstructions, deps)
+	server := s.Server
 
 	// --- Out-of-band kill switch + tiered action executor ---
 	runCtx, cancel := context.WithCancelCause(ctx)
@@ -361,7 +342,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// When the harness spawned this server it left the channel address and a
 	// bootstrap token in the environment. Dial back, authenticate, and serve
 	// signal evaluation, actuation and liveness for the session. When no harness
-	// is present, harnessAddress() is empty and the server runs standalone
+	// is present, HarnessAddress() is empty and the server runs standalone
 	// unchanged.
 	//
 	// The attach happens before the egress provisioning on purpose: the ack's
@@ -382,16 +363,16 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// twice. The harness only acks enforce once its decider is actually
 	// installed, which is what makes that shedding safe.
 	harnessEnforcing := false
-	var harnessProxy harnessEgress
-	var servant *harnessServant
+	var harnessProxy runtime.HarnessEgress
+	var servant *runtime.HarnessServant
 	var harnessRestoreMu sync.Mutex
 	var harnessRestore func() error
-	egressRestore := &egressRestoreHolder{}
-	if pipe, token := harnessAddress(); pipe != "" {
-		rungs := buildRungs(rungPrimitives{
+	egressRestore := &runtime.EgressRestoreHolder{}
+	if pipe, token := runtime.HarnessAddress(); pipe != "" {
+		rungs := runtime.BuildRungs(runtime.RungPrimitives{
 			Actuator:     actuator,
 			Banner:       dsk.ShowSecurityBanner,
-			Seal:         audit.Flush,
+			Seal:         auditLog.Flush,
 			Finalize:     func() { _ = dsk.Close() },
 			CleanupCreds: cleanupCreds,
 			SetRestore: func(r func() error) {
@@ -404,12 +385,12 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			// so it needs no shared object with the local egress path (which,
 			// in enforce mode, is not running — the server's own policy has
 			// egress off).
-			Egress:        egress.WindowsEnforcer{Logger: logger},
+			Egress:        newEnforcer(logger),
 			EgressRestore: egressRestore,
 			Logger:        logger,
 		})
 
-		s, ack, derr := attachHarness(pipe, token, cfg.Version, sessionStamp, servantDeps{
+		sv, ack, derr := attachHarness(pipe, token, cfg.Version, sessionStamp, runtime.ServantDeps{
 			Registry:   reg,
 			EnvFn:      envFn,
 			Rungs:      rungs,
@@ -419,39 +400,40 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			Logger:     logger,
 			OnLost: func(cause error) {
 				if cause == nil {
-					cancel(errHarnessChannelLost)
+					cancel(runtime.ErrHarnessChannelLost)
 					return
 				}
-				cancel(fmt.Errorf("%w: %w", errHarnessChannelLost, cause))
+				cancel(fmt.Errorf("%w: %w", runtime.ErrHarnessChannelLost, cause))
 			},
 		})
 		// The token has done its job. Scrub both bootstrap vars so no tool the
 		// agent runs can read the channel credential back — the same discipline
-		// scrubSecretEnv applies to the policy's secrets.
-		_ = os.Unsetenv(envHarnessPipe)
-		_ = os.Unsetenv(envHarnessToken)
+		// ScrubSecretEnv applies to the policy's secrets.
+		_ = os.Unsetenv(runtime.EnvHarnessPipe)
+		_ = os.Unsetenv(runtime.EnvHarnessToken)
 		if derr != nil {
 			return fmt.Errorf("agentweave-harness: %w", derr)
 		}
-		servant = s
+		servant = sv
 		harnessEnforcing = ack.Mode == wire.ModeEnforce
-		harnessProxy = harnessEgress{
+		harnessProxy = runtime.HarnessEgress{
 			Port:       ack.EffectiveConfig.EgressProxyPort,
 			Executable: ack.EffectiveConfig.EgressProxyExecutable,
 		}
 		logger.Info("attached to agentweave-harness", "mode", ack.Mode, "proto", ack.Proto,
 			"local_enforcement", !harnessEnforcing, "egress_proxy_port", harnessProxy.Port)
-		_, _ = audit.Append("harness.attached", map[string]any{
+		_, _ = auditLog.Append("harness.attached", map[string]any{
 			"mode": ack.Mode, "local_enforcement": !harnessEnforcing,
 			"egress_proxy_port": harnessProxy.Port,
 		})
 		// Before the servant starts serving and before RegisterAll builds the
 		// tool surface, per the wire contract; envFn and the tool deps both see
 		// the folded settings from the first call they answer.
-		applyEffectiveConfig(ack.EffectiveConfig, &cfg, devicePolicy, deps, dsk.ShowSecurityBanner, logger)
+		runtime.ApplyEffectiveConfig(ack.EffectiveConfig, &cfg.EnforceHTTPS, deps.BaseDeps,
+			guardrailPaths(cfg, devicePolicy), windows.NormalizePath, dsk.ShowSecurityBanner, logger)
 
-		go servant.serve(runCtx)
-		servant.StartHeartbeat(runCtx, heartbeatFromAck(ack))
+		go servant.Serve(runCtx)
+		servant.StartHeartbeat(runCtx, runtime.HeartbeatFromAck(ack))
 		if names := installedCredentialNames(installedCreds); len(names) > 0 {
 			_ = servant.PushCredentialEvent(wire.CredentialInstalled, names)
 		}
@@ -461,7 +443,13 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// Registered before the executor's Restore defer so the deferred stack
 	// unwinds in the right order: containment is undone first, then the egress
 	// state it was layered over.
-	egressSvc, cleanupEgress, suspendEgress, err := provisionEgress(runCtx, devicePolicy, audit, logger, harnessProxy)
+	egressSvc, cleanupEgress, suspendEgress, err := provisionEgress(
+		runCtx,
+		devicePolicy,
+		auditLog,
+		logger,
+		harnessProxy,
+	)
 	if err != nil {
 		return err
 	}
@@ -471,16 +459,16 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// the same allowlist as everything else's. deps is the pointer the
 	// middleware captured, and RegisterAll has not run yet.
 	switch {
-	case harnessProxy.announced():
+	case harnessProxy.Announced():
 		deps.WithEgressProxy(fmt.Sprintf("127.0.0.1:%d", harnessProxy.Port))
 	case egressSvc != nil:
 		deps.WithEgressProxy(egressSvc.Addr())
 	}
 
 	executor := contain.NewKillExecutor(contain.KillExecutorDeps{
-		Config:   killPolicyConfig(devicePolicy),
+		Config:   runtime.KillPolicyConfig(devicePolicy),
 		Actuator: actuator,
-		Audit:    audit,
+		Audit:    auditLog,
 		Logger:   logger,
 		Banner:   dsk.ShowSecurityBanner,
 		Finalize: func() {
@@ -511,9 +499,9 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	if servant != nil {
 		// The egress firewall rules a harness egress_apply installed come out
 		// on exit, in case the harness never sent an explicit egress_restore
-		// (a crash, a lost channel). run() is idempotent, so an explicit
+		// (a crash, a lost channel). Run() is idempotent, so an explicit
 		// restore already having fired makes this a no-op.
-		defer func() { _ = egressRestore.run() }()
+		defer func() { _ = egressRestore.Run() }()
 		defer func() {
 			harnessRestoreMu.Lock()
 			r := harnessRestore
@@ -535,7 +523,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			WebhookURL:   devicePolicy.Approvals.WebhookURL,
 			Timeout:      devicePolicy.Approvals.Timeout.Std(),
 			PollInterval: devicePolicy.Approvals.PollInterval.Std(),
-			HMACKey:      []byte(os.Getenv("WINDOWS_MCP_APPROVAL_KEY")),
+			HMACKey:      []byte(os.Getenv(envNames.ApprovalKey())),
 			Logger:       logger,
 		})
 		logger.Info("dual control enabled", "webhook", devicePolicy.Approvals.WebhookURL,
@@ -545,11 +533,11 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// Plan-and-apply. Wired after the kill switch so an apply can abandon its
 	// remaining steps when containment trips; deps is a pointer the surface's
 	// middleware already captured, so setting the planner now reaches the handlers.
-	sessionPlanner := newPlanner(engine, audit, inventoryRegistry{inv: inv, deps: deps},
+	sessionPlanner := runtime.NewPlanner(engine, auditLog, runtime.InventoryRegistry{Inv: inv, Deps: deps},
 		func() bool { tripped, _ := kill.Tripped(); return tripped }).
-		withReadRegister(deps)
+		WithReadRegister(deps)
 	if approver != nil {
-		sessionPlanner.withApprovals(approver, sessionStamp, devicePolicy.Approvals.Timeout.Std())
+		sessionPlanner.WithApprovals(approver, sessionStamp, devicePolicy.Approvals.Timeout.Std())
 	}
 	deps.WithPlanner(sessionPlanner)
 
@@ -557,19 +545,19 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// is report-only: still detected and audited, but it contains nothing and the
 	// server keeps serving. Transparency is never conditional on containment.
 	triggers := devicePolicy.Kill.Triggers
-	tripSentinel := tripFunc("sentinel", triggers.Sentinel, kill, audit, logger)
-	tripPostureDrift := tripFunc("posture-drift", triggers.PostureDrift, kill, audit, logger)
-	tripRugpull := tripFunc("rugpull", triggers.RugPull, kill, audit, logger)
-	tripHeartbeat := tripFunc("heartbeat-gap", triggers.HeartbeatGap, kill, audit, logger)
+	tripSentinel := runtime.TripFunc("sentinel", triggers.Sentinel, kill, auditLog, logger)
+	tripPostureDrift := runtime.TripFunc("posture-drift", triggers.PostureDrift, kill, auditLog, logger)
+	tripRugpull := runtime.TripFunc("rugpull", triggers.RugPull, kill, auditLog, logger)
+	tripHeartbeat := runtime.TripFunc("heartbeat-gap", triggers.HeartbeatGap, kill, auditLog, logger)
 	// A kill verdict needs no trigger switch: the rule that produced it said
 	// `on_fail: kill` in this same policy, which is the operator arming it. Audit
 	// mode still caps it to a warning, so the engine never reaches here under the
 	// default.
-	tripPolicy := tripFunc("devicePolicy", true, kill, audit, logger)
+	tripPolicy := runtime.TripFunc("devicePolicy", true, kill, auditLog, logger)
 
 	// --- Layer 4d: rug-pull detector (baseline pinned after all AddTool) ---
-	heartbeat := watch.NewHeartbeat(audit)
-	rugpull := watch.NewRugPull(tripRugpull, audit)
+	heartbeat := watch.NewHeartbeat(auditLog)
+	rugpull := watch.NewRugPull(tripRugpull, auditLog)
 
 	// OTLP export, off unless a collector endpoint is configured. It is
 	// observability, not a control, so a construction failure warns and disables it
@@ -587,8 +575,8 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		tele, terr := telemetry.New(ctx, telemetry.Config{
 			Endpoint:    devicePolicy.Telemetry.Endpoint,
 			SampleRatio: devicePolicy.Telemetry.SampleRatio,
-			Headers:     telemetry.ParseHeaders(os.Getenv("WINDOWS_MCP_OTLP_HEADERS")),
-			ServiceName: "windows-mcp-server",
+			Headers:     telemetry.ParseHeaders(os.Getenv(envNames.OTLPHeaders())),
+			ServiceName: ServerName,
 			Version:     cfg.Version,
 		})
 		if terr != nil {
@@ -604,31 +592,32 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// Read before the scrub below, like every other environment secret, even though
 	// the endpoint it belongs to is constructed much further down. Resolving it at
 	// the point of use would read a variable this line has already cleared.
-	statusToken, err := resolveStatusToken(devicePolicy.Transparency, logger)
+	statusToken, err := runtime.ResolveStatusToken(devicePolicy.Transparency, logger)
 	if err != nil {
-		return err
+		return fmt.Errorf("status token: %w", err)
 	}
 
 	// The evidence export destination, for the same reason: the sink is not used
 	// until the seal fires from the audit-close defer, long after the scrub, so its
 	// credentials are read into it here. A nil sink means export is off or could
 	// not be configured — never a reason to fail the session.
-	exportSink := provisionExport(devicePolicy, audit, logger)
+	exportSink := runtime.ProvisionExport(devicePolicy, auditLog, logger)
+	evidenceKeyFile := os.Getenv(envNames.EvidenceKeyFile())
 
 	// Every environment secret has now been read into the component that needs it,
 	// so clear them from the process environment before any tool can run. This is
-	// the second half of the defence; see scrubSecretEnv.
-	scrubSecretEnv(devicePolicy, logger)
+	// the second half of the defence; see ScrubSecretEnv.
+	runtime.ScrubSecretEnv(envNames, devicePolicy, logger)
 
 	// Receiving middleware, outermost first, installed in one call so the order
-	// below is the order that actually runs (see installReceiving). Telemetry sits
-	// between audit and rug-pull: audit must see every request first, and a span
-	// should cover the rug-pull and policy work that follows. The policy engine is
-	// innermost, so nothing can route around it and the audit and rug-pull layers
-	// still observe the requests it refuses.
-	surface.installReceiving(receivingChain(
+	// below is the order that actually runs (see Surface.InstallReceiving).
+	// Telemetry sits between audit and rug-pull: audit must see every request
+	// first, and a span should cover the rug-pull and policy work that follows.
+	// The policy engine is innermost, so nothing can route around it and the
+	// audit and rug-pull layers still observe the requests it refuses.
+	s.InstallReceiving(runtime.ReceivingChain(
 		harnessEnforcing,
-		audit.Middleware(),
+		auditLog.Middleware(),
 		telemetryMiddleware,
 		[]mcp.Middleware{
 			rugpull.Middleware(),
@@ -637,7 +626,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			rugpull.DiscoverMiddleware(),
 		},
 		enforce.Middleware(engine, enforce.EnforcerDeps{
-			Audit:           audit,
+			Audit:           auditLog,
 			Kill:            tripPolicy,
 			RecordDecision:  recordDecision,
 			Approver:        approver,
@@ -662,15 +651,12 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// and fingerprints every manifest surface from the wire, where a tampered
 	// server cannot vouch for itself.
 	var baselineTools []*mcp.Tool
+	snapshot := runtime.SnapshotFn(startedAt, rugpull, heartbeat, auditLog, kill, egressSvc, devicePolicy.Egress,
+		runtime.ExportStatus(devicePolicy.Transparency.Export, exportSink))
 	if !harnessEnforcing {
 		// Registered unconditionally within the local stack (present under any
 		// persona).
-		statusTool, statusHandler := status.StatusTool(
-			holder.get,
-			snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress,
-				exportStatus(devicePolicy.Transparency.Export, exportSink)),
-			kill,
-		)
+		statusTool, statusHandler := status.StatusTool(holder.Get, snapshot, kill)
 		server.AddTool(statusTool, statusHandler)
 		// The agent-facing Kill tool always stops the session, but only actuates the
 		// containment ladder when the policy configures containment. It is not an
@@ -687,29 +673,29 @@ func RunStdio(ctx context.Context, cfg Config) error {
 		// resources are pinned too: a mutated prompt changes the instructions the
 		// model follows, and a mutated resource URI changes what it reads, so both are
 		// rug-pull vectors as much as a mutated tool is.
-		baselineTools = append(invMCPTools(runCtx, inv), statusTool, killTool)
+		baselineTools = append(surface.MCPTools(runCtx, inv), statusTool, killTool)
 		baseHash := rugpull.SetBaseline(baselineTools)
-		_, _ = audit.Append("tools.pinned", map[string]any{"hash": baseHash, "count": len(baselineTools)})
+		_, _ = auditLog.Append("tools.pinned", map[string]any{"hash": baseHash, "count": len(baselineTools)})
 
-		basePrompts := invMCPPrompts(runCtx, inv)
+		basePrompts := surface.MCPPrompts(runCtx, inv)
 		promptHash := rugpull.SetPromptBaseline(basePrompts)
-		_, _ = audit.Append("prompts.pinned", map[string]any{"hash": promptHash, "count": len(basePrompts)})
+		_, _ = auditLog.Append("prompts.pinned", map[string]any{"hash": promptHash, "count": len(basePrompts)})
 
-		baseResources := invMCPResources(runCtx, inv)
+		baseResources := surface.MCPResources(runCtx, inv)
 		resourceHash := rugpull.SetResourceBaseline(baseResources)
-		_, _ = audit.Append("resources.pinned", map[string]any{"hash": resourceHash, "count": len(baseResources)})
+		_, _ = auditLog.Append("resources.pinned", map[string]any{"hash": resourceHash, "count": len(baseResources)})
 
 		// Protocol 2026-07-28 removed the initialize handshake and made server/discover
 		// the canonical advertisement of capabilities and instructions, so it is pinned
 		// too — otherwise a widened capability set or rewritten model instructions would
 		// drift entirely unwatched.
-		discoverHash := rugpull.SetDiscoverBaseline(surface.Capabilities, surface.Instructions)
-		_, _ = audit.Append("discover.pinned", map[string]any{"hash": discoverHash})
+		discoverHash := rugpull.SetDiscoverBaseline(s.Capabilities, s.Instructions)
+		_, _ = auditLog.Append("discover.pinned", map[string]any{"hash": discoverHash})
 	}
 
 	// The engine can now resolve tools; from here every request is decided against
 	// the manifest that is actually served.
-	engine.SetIndex(newToolIndex(runCtx, inv))
+	engine.SetIndex(runtime.NewToolIndex(runCtx, inv))
 
 	// --- In-flight: signal refresh, posture drift, sentinel, always-on verifiers ---
 	verifiers := []watch.VerifyFunc{
@@ -727,13 +713,13 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	if !harnessEnforcing {
 		// The local rug-pull recheck only exists alongside its baseline; under an
 		// enforcing harness the fingerprints are taken from the wire instead.
-		verifiers = append(verifiers, rugpullVerifier(rugpull,
+		verifiers = append(verifiers, runtime.RugpullVerifier(rugpull,
 			func() []*mcp.Tool { return baselineTools }, tripRugpull))
 	}
 	watch.StartMonitor(runCtx, watch.MonitorConfig{
 		Interval:         devicePolicy.InFlight.Interval.Std(),
 		ControlDir:       devicePolicy.InFlight.ControlDir,
-		SentinelToken:    sentinelToken(devicePolicy.InFlight.ControlDir, audit, logger),
+		SentinelToken:    runtime.SentinelToken(devicePolicy.InFlight.ControlDir, auditLog, logger),
 		TripSentinel:     tripSentinel,
 		TripPostureDrift: tripPostureDrift,
 		Stopped:          func() bool { tripped, _ := kill.Tripped(); return tripped },
@@ -744,7 +730,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 			// being called.
 			v := engine.Evaluate(c, policy.StartupSubject())
 			d := engine.DecisionFrom(v, probe.DeviceIdentity(), probe.RunContext())
-			holder.set(d)
+			holder.Set(d)
 			return d
 		},
 		Verify: verifiers,
@@ -758,13 +744,12 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// --- Status endpoint (always-on when an address is configured) ---
 	if devicePolicy.Transparency.StatusAddr != "" {
 		ss := &status.StatusServer{
-			Addr:    devicePolicy.Transparency.StatusAddr,
-			Token:   statusToken,
-			Current: holder.get,
-			Snapshot: snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress,
-				exportStatus(devicePolicy.Transparency.Export, exportSink)),
-			Kill:   kill,
-			Logger: logger,
+			Addr:     devicePolicy.Transparency.StatusAddr,
+			Token:    statusToken,
+			Current:  holder.Get,
+			Snapshot: snapshot,
+			Kill:     kill,
+			Logger:   logger,
 		}
 		if err := ss.Start(runCtx); err != nil {
 			logger.Warn("guardrails status endpoint disabled", "error", err)
@@ -773,7 +758,7 @@ func RunStdio(ctx context.Context, cfg Config) error {
 
 	logger.Info("starting windows-mcp-server over stdio",
 		"version", cfg.Version,
-		"enabled_toolsets", toolsetIDs(inv.EnabledToolsets()),
+		"enabled_toolsets", enabledToolsetIDs,
 		"policy_mode", string(devicePolicy.Mode),
 		"policy_signals", devicePolicy.SignalIDs(),
 		"policy_rules", len(devicePolicy.Rules),
@@ -786,21 +771,19 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	// fire from the audit-close defer once the chain and recording are finalized.
 	if devicePolicy.Transparency.EvidenceDir != "" {
 		var posture []byte
-		if b, mErr := json.Marshal(
-			snapshotFn(startedAt, rugpull, heartbeat, audit, kill, egressSvc, devicePolicy.Egress,
-				exportStatus(devicePolicy.Transparency.Export, exportSink))(),
-		); mErr == nil {
+		if b, mErr := json.Marshal(snapshot()); mErr == nil {
 			posture = b
 		}
 		plans := sessionPlanner.StoredPlans()
 		sealAtExit = func() {
-			autoSealEvidence(devicePolicy.Transparency, sessionStamp, plans, posture, exportSink, logger)
+			runtime.AutoSealEvidence(devicePolicy.Transparency, sessionStamp, plans, posture, exportSink,
+				evidenceKeyFile, logger)
 		}
 	}
 
 	if tripped, reason := kill.Tripped(); tripped {
 		logger.Error("session terminated by kill switch", "reason", reason)
-		return fmt.Errorf("session terminated by kill switch: %s", reason)
+		return fmt.Errorf("%w: %s", ErrKilled, reason)
 	}
 	// A requested stop (the Kill tool with the switch unarmed) is a normal
 	// shutdown, not a failure — exit cleanly so the host does not read it as a crash.
@@ -814,69 +797,31 @@ func RunStdio(ctx context.Context, cfg Config) error {
 	return nil
 }
 
-// snapshotFn builds the always-on server-status snapshot provider.
-func snapshotFn(
-	startedAt time.Time,
-	rp *watch.RugPull,
-	hb *watch.Heartbeat,
-	audit *audit.AuditLog,
-	kill *contain.KillSwitch,
-	egressSvc *egress.Service,
-	egressCfg policy.EgressPolicy,
-	exportSt *status.ExportStatus,
-) status.SnapshotProvider {
-	return func() status.ServerStatus {
-		beats, age := hb.Snapshot()
-		seq, head := audit.Head()
-		tripped, reason := kill.Tripped()
-		return status.ServerStatus{
-			UptimeSec:        time.Since(startedAt).Seconds(),
-			ToolManifestHash: rp.Baseline(),
-			HeartbeatSeq:     beats,
-			HeartbeatAgeSec:  age.Seconds(),
-			AuditSeq:         seq,
-			AuditChainHead:   head,
-			Killed:           tripped,
-			KillReason:       reason,
-			Egress:           egressStatus(egressSvc, egressCfg),
-			EvidenceExport:   exportSt,
-		}
-	}
+// newSurface is the one constructor for the protocol-facing server. RunStdio,
+// CaptureSurface and the conformance host all go through it, so the surface
+// the official suite is measured against is the surface the binary serves.
+func newSurface(
+	cfg Config,
+	inv *inventory.Inventory,
+	personaInstructions string,
+	deps *windows.BaseDeps,
+) *surface.Surface {
+	return surface.New(
+		surface.Config{Name: ServerName, Title: ServerTitle, Version: cfg.Version},
+		inv, personaInstructions, deps,
+		surface.CompletionHandlerFor(inv, surface.CompletionSources{
+			PersonaIDs: windows.PersonaIDs(),
+			CommonApps: commonApps,
+		}),
+	)
 }
 
-// invMCPTools returns the registered tool definitions as []*mcp.Tool for
-// fingerprinting.
-func invMCPTools(ctx context.Context, inv *inventory.Inventory) []*mcp.Tool {
-	sts := inv.AvailableTools(ctx)
-	out := make([]*mcp.Tool, 0, len(sts))
-	for i := range sts {
-		t := sts[i].Tool
-		out = append(out, &t)
-	}
-	return out
-}
-
-// invMCPPrompts returns the registered prompts as []*mcp.Prompt for fingerprinting.
-func invMCPPrompts(ctx context.Context, inv *inventory.Inventory) []*mcp.Prompt {
-	sps := inv.AvailablePrompts(ctx)
-	out := make([]*mcp.Prompt, 0, len(sps))
-	for i := range sps {
-		p := sps[i].Prompt
-		out = append(out, &p)
-	}
-	return out
-}
-
-// invMCPResources returns the registered fixed-URI resources as []*mcp.Resource
-// for fingerprinting.
-func invMCPResources(ctx context.Context, inv *inventory.Inventory) []*mcp.Resource {
-	srs := inv.AvailableResources(ctx)
-	out := make([]*mcp.Resource, 0, len(srs))
-	for i := range srs {
-		res := srs[i].Resource
-		out = append(out, &res)
-	}
-	return out
+// commonApps are frequently automated Windows applications, offered as launch
+// suggestions. Deliberately a short curated list rather than an enumeration of
+// installed software, which would be slow and leak the machine's inventory.
+var commonApps = []string{
+	"chrome", "explorer", "msedge", "mspaint", "notepad",
+	"outlook", "powershell", "taskmgr", "winword", "wt",
 }
 
 // buildInventory applies persona, toolset, read-only, and allow/deny
@@ -890,7 +835,7 @@ func buildInventory(cfg Config, autoLimit bool) (*inventory.Inventory, string, e
 	if cfg.Persona != "" {
 		persona, ok := windows.LookupPersona(cfg.Persona)
 		if !ok {
-			return nil, "", fmt.Errorf("unknown persona %q", cfg.Persona)
+			return nil, "", fmt.Errorf("%w: %q", ErrUnknownPersona, cfg.Persona)
 		}
 		personaInstructions = persona.Instructions
 		// Explicit --toolsets overrides the persona's selection.
@@ -911,7 +856,7 @@ func buildInventory(cfg Config, autoLimit bool) (*inventory.Inventory, string, e
 		// Supplying credentials is the opt-in for the credentials toolset: there is
 		// nothing for it to operate on otherwise. Skipped under autoLimit, because
 		// Session 0 cannot drive the sign-in UI the injection targets.
-		toolsets = withToolset(toolsets, string(windows.ToolsetCredentials.ID))
+		toolsets = runtime.WithToolset(toolsets, string(windows.ToolsetCredentials.ID))
 	}
 
 	inv, err := windows.NewInventory().
@@ -927,59 +872,25 @@ func buildInventory(cfg Config, autoLimit bool) (*inventory.Inventory, string, e
 	return inv, personaInstructions, nil
 }
 
-// withToolset adds id to a toolset selection. A nil selection means "the default
-// set", so it is made explicit as "default" plus id rather than collapsing to id
-// alone, which would silently drop every default toolset.
-func withToolset(toolsets []string, id string) []string {
-	if len(toolsets) == 0 {
-		return []string{"default", id}
+// CaptureSurface assembles the tool manifest this configuration would serve,
+// runs a real in-process MCP session against it over an in-memory transport,
+// and returns the wire objects a client actually receives.
+//
+// No desktop engine is created. tools/list never invokes a tool handler, so the
+// dependency-injection middleware is wired with a nil engine; a handler call
+// here would be a bug, not a supported path.
+func CaptureSurface(ctx context.Context, cfg Config) (surface.Captured, error) {
+	logger := slog.New(slog.DiscardHandler)
+	inv, personaInstructions, err := buildInventory(cfg, false)
+	if err != nil {
+		return surface.Captured{}, fmt.Errorf("build inventory: %w", err)
 	}
-	for _, t := range toolsets {
-		if t == id || t == "all" {
-			return toolsets
-		}
+	deps := windows.NewBaseDeps(nil, logger, nil)
+	s := newSurface(cfg, inv, personaInstructions, deps)
+	s.InstallReceiving()
+	got, err := surface.Capture(ctx, s, inv, deps, cfg.Version)
+	if err != nil {
+		return surface.Captured{}, fmt.Errorf("capture surface: %w", err)
 	}
-	return append(append([]string(nil), toolsets...), id)
-}
-
-// combineInstructions joins the persona guidance and the toolset-derived
-// instructions, omitting empty parts.
-func combineInstructions(parts ...string) string {
-	var nonEmpty []string
-	for _, p := range parts {
-		if p != "" {
-			nonEmpty = append(nonEmpty, p)
-		}
-	}
-	return strings.Join(nonEmpty, "\n\n")
-}
-
-func toolsetIDs(tss []inventory.ToolsetMetadata) []string {
-	ids := make([]string, len(tss))
-	for i, ts := range tss {
-		ids[i] = string(ts.ID)
-	}
-	return ids
-}
-
-// newLogger returns a structured logger writing to logFile (debug level) or, if
-// empty, to stderr (info level). stdout is never used, so it stays clean for
-// the MCP stdio transport.
-func newLogger(logFile string) (*slog.Logger, func(), error) {
-	var w io.Writer = os.Stderr
-	level := slog.LevelInfo
-	cleanup := func() {}
-
-	if logFile != "" {
-		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to open log file %q: %w", logFile, err)
-		}
-		w = f
-		level = slog.LevelDebug
-		cleanup = func() { _ = f.Close() }
-	}
-
-	logger := slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}))
-	return logger, cleanup, nil
+	return got, nil
 }

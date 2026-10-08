@@ -9,21 +9,24 @@ subsystem.
 
 An MCP server (stdio transport only) bridging AI agents to the Windows desktop.
 A Go port of the Python [Windows-MCP](https://github.com/CursorTouch/Windows-MCP),
-built on `deploymenttheory/go-bindings-win32`, `go-bindings-wmi`, and the official
-`modelcontextprotocol/go-sdk`. Perception is the UI Automation accessibility tree
+built on `deploymenttheory/go-bindings-win32`, `go-bindings-wmi`, the shared
+`deploymenttheory/mcp-server-core` (the platform-agnostic half: inventory,
+toolkit, surface, runtime, conformance host, journeys), the
+`deploymenttheory/agentweave-harness` guardrails, and the official
+`modelcontextprotocol/go-sdk`. Its sibling, macos-mcp-server, is the same
+design on the other platform and consumes the same core. Perception is the UI Automation accessibility tree
 — there is no CV model.
 
 | Package | Role |
 |---|---|
 | `cmd/windows-mcp-server` | cobra CLI (`stdio`/`check`/`personas`), viper `WINDOWS_MCP_*` env binding |
-| `internal/winmcp` | `RunStdio` startup orchestration + the OS adapters (`systemProbe`, health probe, TPM attestation) |
+| `internal/winmcp` | `RunStdio` startup orchestration + the OS adapters (`systemProbe`, health probe, TPM attestation, credentials and the DACL check, the go-winio harness dial) |
 | `internal/desktop` | the Win32/UIA/WMI engine — one COM STA thread |
-| `pkg/windows` | tool definitions (one file per topic) + toolset/persona metadata |
-| `pkg/inventory` | domain-agnostic toolset filter/registration engine (mirrors `github-mcp-server`) |
-| `agentweave-harness/guardrails/*` (imported module) | the security stack, split by lifecycle layer (see below) |
+| `pkg/windows` | tool definitions (one file per topic) + toolset/persona metadata, and the `dependencies.go` shim over the shared toolkit |
+| `internal/psdata` | PowerShell data binding (`PSScript`), the one defence against a value becoming source text |
+| `mcp-server-core` (imported) | inventory engine, tool toolkit, MCP surface, guardrail runtime, journeys, run records, schema loader, conformance host + fixtures, conformance-results reporting |
+| `agentweave-harness/guardrails/*` (imported) | the security stack, split by lifecycle layer (see below) |
 | `policy/examples` | starting-point policy documents (validated by the test suite) |
-| `internal/mcpspec` | vendored-schema loader + offline wire validation (platform-agnostic; no build tag) |
-| `internal/mcpconf` | official conformance-suite results: ingest + reporting (no build tag) |
 | `schema/` | vendored MCP protocol schemas + `versions.json` |
 | `conformance/` | expected-failure baselines + committed suite results |
 
@@ -36,6 +39,11 @@ go test ./... -count=1
 $env:GOARCH='arm64'; go build ./...   # the (amd64 || arm64) tag is asserted everywhere
 golangci-lint run --config=./.golangci.yml
 ```
+
+From a Mac or Linux box the Windows packages cannot run but they cross-compile
+and type-check, which is enough to work on the wiring: `GOOS=windows
+GOARCH=amd64 go build ./...`, `go vet ./...`, `go build -tags conformance
+./...` and `golangci-lint run` with the same `GOOS`. CI runs the real tests.
 
 CI is **Windows-only by design** (`.github/workflows/go-build-test.yml`): nearly
 every file is `//go:build windows`, so a Linux runner would compile almost
@@ -96,8 +104,9 @@ no CLSID constant, follow this pattern and comment why.
 
 ## Adding a tool
 
-All 35 inventory tools use `NewToolFromHandler` (`pkg/windows/dependencies.go:136`).
-The generic `NewTool[In, Out]` exists but has zero users — prefer the established
+All 35 inventory tools use `NewToolFromHandler` (`pkg/windows/dependencies.go`), a
+thin wrapper over `toolkit.NewToolFromHandler[ToolDependencies]`. The generic
+`toolkit.NewTool[D, In, Out]` exists but has zero users — prefer the established
 path. Canonical shape (see `pkg/windows/clipboard.go:15-69`):
 
 ```go
@@ -126,9 +135,9 @@ Checklist:
 2. `Annotations.Title` plus a correct `ReadOnlyHint`; add `DestructiveHint` /
    `OpenWorldHint` pointers where apt (see `shell.go:18-30`).
 3. `InputSchema: &jsonschema.Schema{Type: "object", ...}`.
-4. Parse with `ArgsMap` then the `params.go` accessors — **never hand-roll arg
-   parsing**. They coerce on purpose: Claude Desktop strips `anyOf` and
-   stringifies bools/arrays (`params.go:12-15`), so `OptionalIntSlice` accepts
+4. Parse with `ArgsMap` then the `toolkit` accessors (re-exported from
+   `dependencies.go`) — **never hand-roll arg parsing**. They coerce on purpose:
+   Claude Desktop strips `anyOf` and stringifies bools/arrays, so `OptionalIntSlice` accepts
    both `[10,20]` and `"[10,20]"`, and `OptionalBool` accepts `true/1/yes`.
 5. Register in the correct comment group of `AllTools()` (`tools.go:15-60`).
 6. **Bump `TestExpectedToolCount`** (`tools_test.go:53`) — it is a deliberate
@@ -147,42 +156,51 @@ Checklist:
 
 ### The `IsError` convention — read this before returning an error
 
-Documented at `pkg/windows/result.go:22-25` and enforced by convention
-everywhere: an **expected or user-facing failure returns an `IsError` result with
+Documented on `mcp-server-core/toolkit`'s result constructors and enforced by
+convention everywhere: an **expected or user-facing failure returns an `IsError` result with
 a nil Go error**, so the model can read the message and self-correct. A non-nil
-Go error is reserved for genuine infrastructure failure. Use only the `result.go`
-constructors (`NewToolResultText`, `NewToolResultErrorFromErr`, …).
+Go error is reserved for genuine infrastructure failure. Use only the `toolkit`
+constructors (`NewToolResultText`, `NewToolResultErrorFromErr`, …), re-exported
+from `dependencies.go`.
 
 ### Dependency injection is middleware, not closures
 
-`InjectDepsMiddleware` (`dependencies.go:88`) puts `ToolDependencies` on the
-context; handlers pull it via `MustDepsFromContext`. The `deps` argument passed
+`toolkit.InjectDepsMiddleware` (installed by `surface.New`) puts the server's
+dependency set on the context; handlers pull it via `MustDepsFromContext`
+(`pkg/windows/dependencies.go`, a typed wrapper over the toolkit generic). The `deps` argument passed
 to `RegisterTools` is ignored by every handler — the context is the real path.
 Receiving-middleware order, outermost first: **inject-deps → cache-hints → audit
 → telemetry → rug-pull → tool-policy**. Order matters; audit must see the call,
 and policy must be innermost so nothing bypasses it.
 
 **Install the whole chain in one `AddReceivingMiddleware` call** — that is what
-`mcpSurface.installReceiving` (`internal/winmcp/surface.go`) is for, and every
-entry point goes through it. The SDK composes the middleware given to a *single*
+`surface.Surface.InstallReceiving` (mcp-server-core) is for, and every entry
+point goes through it. The SDK composes the middleware given to a *single*
 call outermost-first, but each separate call wraps the chain built so far, so
 adding them one at a time makes the **last** one outermost — silently reversing
 the order. That inversion put the policy engine outside the audit layer, and a
 refused call produced no `tool.call` entry at all. `TestReceivingMiddlewareRuns\
-OutermostFirst` and `TestOuterMiddlewareObservesRefusedRequests` pin it.
+OutermostFirst` and `TestOuterMiddlewareObservesRefusedRequests` pin it, in core.
 
 ### Personas and toolsets
 
 A persona (`toolsets.go:74-142`) is *only* a (toolset selection + read-only
 stance + instructions text) preset over the one manifest. Adding a persona never
-means adding tools. `pkg/inventory` also supports resources and prompts and an
-`InstructionsFunc` per toolset — currently unused; don't assume they're wired.
+means adding tools. The IDs and memberships are identical to macos-mcp-server's
+so a policy document means the same thing on both platforms.
+`mcp-server-core/inventory` also supports an `InstructionsFunc` per toolset —
+currently unused; don't assume it's wired.
 
 ## The security subsystem
 
 A policy engine on the request path, plus an out-of-band kill switch. See
 `docs/security-architecture.md` for the design and `docs/policy-config.md` for the
-document schema.
+document schema. The policy engine, audit chain, rug-pull detection, kill switch
+and egress proxy come from agentweave-harness; the wiring of them into a session
+(`runtime.ProvisionEgress`, `runtime.ReceivingChain`, `runtime.TripFunc`, the
+harness servant, the planner, evidence sealing) comes from
+`mcp-server-core/runtime`; this repo supplies the Windows probes and actuators
+(`internal/winmcp`) and the order in which `RunStdio` calls them.
 
 **The guardrails packages live in the
 [agentweave-harness](https://github.com/deploymenttheory/agentweave-harness)
@@ -192,9 +210,10 @@ process can eventually own adjudication. This server imports them for its
 standalone (in-process) stack; their layer table, acyclic-import rule and
 package-level invariants are documented in that repo's CLAUDE.md, and their
 package tests run in that repo's CI, not here. Everything below about how this
-server *wires* them still applies, and the wiring-level tests
-(`TestReceivingMiddlewareRunsOutermostFirst`, `TestServerDefaultPolicyIsAuditOnly`,
-…) stay in this repo. When a change here needs a guardrails-package change, that
+server *wires* them still applies. The generic wiring-level tests
+(`TestReceivingMiddlewareRunsOutermostFirst`, …) now run in mcp-server-core; the
+ones that pin this server's own choices (`TestServerDefaultPolicyIsAuditOnly`,
+the egress delegation tests, the credential-exposure persona tests) stay here. When a change here needs a guardrails-package change, that
 is a two-PR dance: harness PR + tag first, then bump the pin in go.mod.
 
 Everything is configured by a JSON document — `--policy-config` is the only
@@ -204,18 +223,19 @@ security flag.
 
 When the agentweave-harness process spawns this server it sets
 `AGENTWEAVE_CONTROL_PIPE` and `AGENTWEAVE_CONTROL_TOKEN` in the environment.
-`harnesslink.go` detects that, dials the control channel, authenticates with the
-token (then scrubs both vars, like every other secret env var), and serves the
-harness: `signal.evaluate` runs registered guardrail checks **by declared id
-only** (`harnessServant.handleSignalEvaluate`), `actuate` executes a **closed
-rung set** (`buildRungs` in `harnessrungs.go`) mapped onto the same primitives
-the local kill executor uses, and heartbeats/credential-events/audit-anchors are
+`runtime.HarnessAddress` detects that; `harnesslink.go` here supplies the
+go-winio named-pipe dialer and `runtime.AttachHarness` authenticates with the
+token (then RunStdio scrubs both vars, like every other secret env var) and
+serves the harness through `runtime.HarnessServant`: `signal.evaluate` runs
+registered guardrail checks **by declared id only**, `actuate` executes a
+**closed rung set** (`runtime.BuildRungs`) mapped onto the same primitives the
+local kill executor uses, and heartbeats/credential-events/audit-anchors are
 pushed up. There is deliberately no generic execution verb on the channel — the
 two properties `TestServantNeverExposesRunShell` and
-`TestServantSignalEvaluateUsesDeclaredIdsOnly` pin, so a harness compromise
-cannot become RCE on this host. Channel loss cancels the run context
-(`errHarnessChannelLost`), so the ordinary LIFO teardown — credential cleanup
-included — runs exactly as on any other exit.
+`TestServantSignalEvaluateUsesDeclaredIdsOnly` pin, in core, so a harness
+compromise cannot become RCE on this host. Channel loss cancels the run context
+(`runtime.ErrHarnessChannelLost`), so the ordinary LIFO teardown — credential
+cleanup included — runs exactly as on any other exit.
 
 How much of the local stack runs depends on the `hello.ack`'s mode. Under an
 **observe** ack the mode is additive: the server still wires its full
@@ -227,22 +247,22 @@ middleware, no GuardrailStatus/Kill tools, no rug-pull baselines or recheck
 cannot vouch for itself). The local **audit** middleware stays in every mode —
 this host's chain is the record of what the process actually served, kept so
 the harness's account of the session is not the only one — as do the kill
-executor and actuation rungs the harness drives. The seam is `receivingChain`
-(`localstack.go`), pinned by `TestHarnessModeInstallsNoLocalEnforcement`,
-`TestHarnessModeStillAuditsLocally` and `TestObserveAckKeepsFullLocalStack`;
-Status/Kill registration and the baselines live in one `if` block in
+executor and actuation rungs the harness drives. The seam is
+`runtime.ReceivingChain`, pinned in core by
+`TestHarnessModeInstallsNoLocalEnforcement`, `TestHarnessModeStillAuditsLocally`
+and `TestObserveAckKeepsFullLocalStack`; Status/Kill registration and the baselines live in one `if` block in
 `server.go` deliberately, so the pinned tool surface and the served tool
-surface can never disagree. With no harness present `harnessAddress()` is
-empty and the server runs standalone unchanged.
+surface can never disagree. With no harness present `runtime.HarnessAddress()`
+is empty and the server runs standalone unchanged.
 
 In enforce mode the composed egress policy lives harness-side, so the server's
 own `devicePolicy.Egress` is off and the local `provisionEgress` path does
 nothing. The harness instead drives OS enforcement over the channel: an
 `egress_apply` actuation carries the tier, app list, proxy port and harness
-executable, and the server's egress rungs (`harnessrungs.go`,
-`RungEgressApply/Suspend/Restore` over a fresh `egress.WindowsEnforcer`) install
-the firewall/WinINET, stashing the undo in an `egressRestoreHolder` that the
-explicit `egress_restore` rung and the exit defer both reach exactly once.
+executable, and the server's egress rungs (`runtime.BuildRungs` over a fresh
+`egress.WindowsEnforcer` from `newEnforcer`) install the firewall/WinINET,
+stashing the undo in a `runtime.EgressRestoreHolder` that the explicit
+`egress_restore` rung and the exit defer both reach exactly once.
 
 When the ack announces an egress proxy (`egress_proxy_port` +
 `egress_proxy_executable`) for a session whose **local** policy still has egress
@@ -250,15 +270,16 @@ enabled (observe mode with local egress), the server starts **no local egress
 listener** — that is the only thing skipped. `Recover()` still runs on every start, the
 elevation refusal still applies, and OS enforcement still installs, pointed
 at the harness's port with the global-block allow rule naming the harness
-executable (`provisionDelegatedEgress`,
-`TestHarnessModeSkipsLocalProxyOnlyWhenPortAnnounced`). The attach therefore
+executable (`runtime.ProvisionEgress` with the Windows enforcer plugged in by
+`provisionEgress`; `TestHarnessModeSkipsLocalProxyOnlyWhenPortAnnounced` here
+runs it with the real enforcer). The attach therefore
 happens *before* egress provisioning in RunStdio, with the harness teardown
 defers registered after the executor's Restore so the unwind keeps its
 layering. Fail-closed holds across a harness death: the firewall stands while
 the proxy dies, so traffic is cut rather than freed. The servant is a separate implementer of the wire contract — it
 imports the public `wire` package but never the harness's internal transport, so
-the pipe is dialed with go-winio directly. Servant wire-protocol logic is tested
-over `net.Pipe` (`harnesslink_test.go`); note `net.Pipe` and the Windows control
+the pipe is dialed with go-winio directly (`dialHarness`). Servant wire-protocol
+logic is tested over `net.Pipe` in core; note `net.Pipe` and the Windows control
 pipe are both synchronous, so a test that has the servant send and the test read
 must do so on separate goroutines or it deadlocks.
 
@@ -272,7 +293,7 @@ must do so on separate goroutines or it deadlocks.
 - **Transparency is never conditional on containment.** Every verdict is audited,
   including allows and including in audit mode, and the `policy.decision` entry is
   written *before* any trip. A trigger that fires while its policy switch is off
-  is still detected, logged and chained (`killswitch.disarmed` via `tripFunc`).
+  is still detected, logged and chained (`killswitch.disarmed` via `runtime.TripFunc`).
 - **A report-only trip must not end the in-flight monitor.** `MonitorConfig.Stopped`
   gates loop exit and only a real trip sets it. Returning unconditionally after a
   trip would make disabling one trigger silently disable all monitoring.
@@ -403,7 +424,7 @@ can *use* a secret but can never *read* one.
 - The `Credentials` tool has exactly three modes — `list`, `verify`, `inject` —
   and `TestCredentialsToolNeverReturnsSecrets` pins that set. **Do not add a
   `get`/`read` mode**: it would put plaintext into the model's context.
-- `ToolDependencies.Credentials()` returns `[]desktop.CredentialInfo`, which has
+- `ToolDependencies.Credentials()` returns `[]toolkit.CredentialInfo`, which has
   no secret field. `TestCredentialInfosOmitSecretsAndDefault` asserts on the
   serialized *keys* (not substrings — `domain_password` is a class name, not a
   secret).
@@ -425,7 +446,7 @@ unbuffered job channel.
 ## Enforce HTTPS
 
 `"enforce_https": true` in the policy document refuses plaintext `http://`
-targets. `pkg/windows/urlpolicy.go` owns the tool-layer policy; the guardrails
+targets. `mcp-server-core/toolkit/urlpolicy.go` owns the tool-layer policy; the guardrails
 `signals` package (`remote.go`) applies it to the may-run endpoint via
 `Env.EnforceHTTPS`. RunStdio copies the setting onto `Config` right after loading,
 because it has to reach the tool dependencies and the guardrail `Env`, neither of
@@ -438,10 +459,10 @@ Two traps to preserve:
   bypass. Use `strings.EqualFold` / `strings.ToLower`.
 - **A URL-shaped value is a navigation.** `App`'s `name` is normally something like
   `notepad`, but `Start-Process http://example.com` opens the default browser.
-  `urlSchemeIfURL` exists to spot that, and requires an explicit `://` so a bare
+  `toolkit.URLSchemeIfURL` exists to spot that, and requires an explicit `://` so a bare
   `example.com` or a file path is not mistaken for a URL.
 
-When adding another URL entry point, gate it through `enforceHTTPSScheme` and
+When adding another URL entry point, gate it through `toolkit.EnforceHTTPSScheme` and
 update the "Data exposure over plaintext HTTP" row of the threat-model table in
 `docs/security-architecture.md`, which is where the Enforce HTTPS coverage is
 recorded.
@@ -474,37 +495,39 @@ by the project it graded. Do not reintroduce a score.
   unauthenticated HTTP listener serving the full desktop-automation manifest is
   exactly what the stdio-only posture exists to prevent. The workflow asserts this
   by grepping an untagged build's `--help`.
-- **One constructor, or the evidence is worthless.** `newMCPSurface`
-  (`internal/winmcp/surface.go`) builds the server for `RunStdio`, `CaptureSurface`
-  and the conformance host alike, and installs inject-deps plus cache hints.
+- **One constructor, or the evidence is worthless.** `newSurface`
+  (`internal/winmcp/server.go`, over `surface.New`) builds the server for
+  `RunStdio`, `CaptureSurface` and the conformance host alike, and
+  `InstallReceiving` adds inject-deps plus cache hints.
   Evidence gathered over HTTP only describes the shipped binary because the two
   serve the same thing; `TestConformanceHostServesTheShippedSurface` is what keeps
   that true. If you add construction anywhere, add it there.
 - **Two passes, recorded separately.** The suite's scenarios name fixed fixtures
   (`test_simple_text`, `test://static-text`, …), so a product server cannot pass
-  them. `--fixtures` registers exactly those names (also `conformance`-tagged); the
-  pass without it is what the product ships. Never merge the two results — the
+  them. `--fixtures` registers exactly those names (`conformance.RegisterFixtures`
+  in core, reached only from the `conformance`-tagged host); the pass without it
+  is what the product ships. Never merge the two results — the
   distinction is what makes each claim honest.
 - **Gate on the suite, never re-derive it.** `--expected-failures` plus its exit
   code already handle both directions: an unlisted failure fails, and a listed
-  entry that starts passing also fails. `internal/mcpconf` only ingests and
-  renders. Every baseline entry carries its reason.
+  entry that starts passing also fails. `mcp-server-core/mcpconf` only ingests
+  and renders. Every baseline entry carries its reason.
 - **`--suite all`, not `active`.** The harness classifies 2026-07-28 as its draft
   revision, so `active` excludes precisely the scenarios this revision introduced.
 - **Pin the harness version exactly.** 2026-07-28 support is on the `0.2.0-alpha`
   line; stable `0.1.x` predates the revision. The workflow reports a newer version
   rather than floating onto it.
 
-`internal/mcpspec` is now just the schema loader plus the revision manifest. It
-backs one offline pass/fail check (`capture_test.go`) so `go test` still catches a
+`mcp-server-core/mcpspec` is just the schema loader plus the revision manifest;
+the vendored schemas stay in this repo's `schema/`. It backs one offline pass/fail check (`capture_test.go`) so `go test` still catches a
 broken tool schema without Node, and the workflow's new-revision detector. Keep
 lookups def-driven via `Spec.FirstPresent(...)`: revisions restructure (draft-07
 `definitions` before 2025-11-25, 2020-12 `$defs` after; 2026-07-28 drops
 `InitializeResult` for `DiscoverResult`).
 
 **Capture the wire, not the SDK's view.** `ClientSession.InitializeResult()` is a
-*synthesized legacy view* on the new protocol. `recordtransport.go` records real
-`jsonrpc.Message` frames; use `frameLog.ResultFor(method)`.
+*synthesized legacy view* on the new protocol. `surface.RecordingTransport` records
+real `jsonrpc.Message` frames; use `FrameLog.ResultFor(method)`.
 
 ### What 2026-07-28 changed that this code owns
 
@@ -525,7 +548,7 @@ The SDK implements the wire; the gaps were in our layers, and they are load-bear
 - A blocked non-tool method returns a **JSON-RPC error** (`blockedError`), not an
   `IsError` result. The `IsError` convention is tools-only: answering a
   `resources/read` with a `CallToolResult` puts the wrong envelope on the wire.
-- `cacheHintsMiddleware` sets `ttlMs`/`cacheScope` on all six cacheable results.
+- `surface.CacheHintsMiddleware` sets `ttlMs`/`cacheScope` on all six cacheable results.
   The SDK's `"public"` default is wrong here — a `resources/read` returns one
   user's desktop, and the manifest depends on this session's persona and toolsets.
 
@@ -556,8 +579,8 @@ Added alongside tools; four rules keep them safe and visible.
 `Server.capabilities()` *infers* any capability left nil, filling
 Prompts/Resources with `ListChanged: true` the moment one is registered. That
 re-opens the silent re-advertisement channel rug-pull detection exists to close.
-`pinnedCapabilities()` declares all four explicitly with `ListChanged` false —
-keep it that way, in `server.go` **and** `speccheck.go`.
+`surface.PinnedCapabilities()` declares all four explicitly with `ListChanged`
+false — keep it that way.
 
 ### Guardrails cover the new methods
 
@@ -571,13 +594,11 @@ with no pinned baseline is skipped rather than treated as drift.
 ## Build tags
 
 Everything is `//go:build windows && (amd64 || arm64)` **except** the
-deliberately platform-agnostic files: `pkg/windows/{toolsets,params,result}.go`,
-all of `pkg/inventory`, all of `internal/mcpspec`, and all of `internal/mcpconf`.
-(The guardrails packages, which carry the same untagged-core / windows-tagged-
-actuation split, now live in the agentweave-harness module, whose CI runs an
-ubuntu leg precisely to keep that core runnable without a Windows host.)
-Preserve that split — it is what keeps the filter engine, the schema validation,
-the conformance reporting and the security logic testable in isolation.
+deliberately platform-agnostic files: `pkg/windows/{toolsets,psscript}.go` and
+`internal/psdata`. The rest of the platform-agnostic code — the inventory engine,
+the toolkit, the schema loader, the conformance reporting — lives in
+mcp-server-core, and the guardrails packages in agentweave-harness; both have CI
+legs that keep that code runnable without a Windows host. Preserve that split.
 
 There is one extra tag: **`conformance`**. It adds the loopback HTTP host and the
 conformance-suite fixtures and nothing else, and `go build ./...` must never
@@ -591,7 +612,7 @@ go test -tags conformance ./internal/winmcp/ -count=1
 ## Notable gotchas
 
 - **stdout is reserved** for the MCP stdio transport. Logs go to stderr or a file
-  (`newLogger`, `server.go:451`); the audit `stderrDestination` writes `AUDIT {json}`
+  (`runtime.NewLogger`); the audit `stderr` destination writes `AUDIT {json}`
   lines to stderr for the same reason.
 - **`winenv.go` exists because MCP hosts strip the environment.** It rebuilds
   `PATH` and friends from the registry (merging, not overwriting, PATH). Resolve
@@ -601,6 +622,6 @@ go test -tags conformance ./internal/winmcp/ -count=1
   `powershell.go:29`), which removes all shell-quoting concerns. Toasts
   specifically need Windows PowerShell 5.1 (`RunWindowsPowerShell`) because
   pwsh 7 does not expose the WinRT APIs.
-- `Capabilities.Tools = &mcp.ToolCapabilities{}` (`server.go:210`) deliberately
+- `surface.PinnedCapabilities()` sets `Tools = &mcp.ToolCapabilities{}`, which deliberately
   suppresses `tools/list_changed` — a silent manifest change is exactly what the
   rug-pull detector exists to catch.

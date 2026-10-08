@@ -10,7 +10,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/deploymenttheory/windows-mcp-server/pkg/inventory"
+	"github.com/deploymenttheory/mcp-server-core/inventory"
 )
 
 // xmlEscape escapes text for inclusion in XML/toast content.

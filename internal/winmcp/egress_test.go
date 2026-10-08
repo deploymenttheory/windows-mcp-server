@@ -4,11 +4,13 @@ package winmcp
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/deploymenttheory/agentweave-harness/guardrails/audit"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/egress"
 	"github.com/deploymenttheory/agentweave-harness/guardrails/policy"
+	"github.com/deploymenttheory/mcp-server-core/runtime"
 )
 
 // egressTestPolicy builds an enabled egress policy with no OS-enforcement
@@ -24,16 +26,16 @@ func egressTestPolicy() *policy.Policy {
 	}
 }
 
-// TestHarnessModeSkipsLocalProxyOnlyWhenPortAnnounced pins the Phase-6
-// boundary: with no announced port the server runs its own listener exactly
-// as before; with one announced it runs none and delegates — never both,
-// never neither.
+// TestHarnessModeSkipsLocalProxyOnlyWhenPortAnnounced pins the boundary with
+// the Windows enforcer plugged in: with no announced port the server runs its
+// own listener exactly as before; with one announced it runs none and
+// delegates — never both, never neither.
 func TestHarnessModeSkipsLocalProxyOnlyWhenPortAnnounced(t *testing.T) {
 	log := audit.NewAuditLog(nil)
 
 	// No announcement: the local proxy starts (standalone behavior).
 	svc, cleanup, _, err := provisionEgress(
-		context.Background(), egressTestPolicy(), log, discardLogger(), harnessEgress{})
+		context.Background(), egressTestPolicy(), log, discardLogger(), runtime.HarnessEgress{})
 	if err != nil {
 		t.Fatalf("standalone provisioning failed: %v", err)
 	}
@@ -44,7 +46,7 @@ func TestHarnessModeSkipsLocalProxyOnlyWhenPortAnnounced(t *testing.T) {
 
 	// Announced: no local listener; enforcement is delegated.
 	svc, cleanup, suspend, err := provisionEgress(
-		context.Background(), egressTestPolicy(), log, discardLogger(), harnessEgress{
+		context.Background(), egressTestPolicy(), log, discardLogger(), runtime.HarnessEgress{
 			Port:       48123,
 			Executable: `C:\hn\agentweave-harness.exe`,
 		})
@@ -70,8 +72,11 @@ func TestDelegatedEgressStillRefusesUnelevatedEnforcement(t *testing.T) {
 	pol.Egress.Applications = policy.StringSet{`C:\Tools\agent.exe`}
 
 	_, _, _, err := provisionEgress(
-		context.Background(), pol, audit.NewAuditLog(nil), discardLogger(), harnessEgress{Port: 48123})
+		context.Background(), pol, audit.NewAuditLog(nil), discardLogger(), runtime.HarnessEgress{Port: 48123})
 	if err == nil {
 		t.Fatal("unelevated server accepted an enforcement-demanding policy under delegation")
+	}
+	if !errors.Is(err, egress.ErrNotElevated) {
+		t.Errorf("want ErrNotElevated, got %v", err)
 	}
 }
