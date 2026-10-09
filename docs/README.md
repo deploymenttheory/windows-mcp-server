@@ -47,7 +47,7 @@ what you are trying to do.
 | [Journey taxonomy](journey-taxonomy.md) | **Normative.** The closed vocabularies a journey is written in — verbs, selectors, subjects, operators — the rules that make a run deterministic, and how a journey's reach is derived rather than declared |
 | [Journey evidence](journey-evidence.md) | What a journey run records: the OpenTelemetry span model, the `journey.*` attribute registry, the OTLP/JSON artifact and how it is sealed into a bundle |
 | [Security architecture](security-architecture.md) | How the policy engine, audit chain, rug-pull detection, kill switch, credentials and egress fit together — with diagrams, the containment ladder, the privilege-degrade model, a threat-model mapping, the trust model and a component/file map |
-| [MCP compliance](mcp-compliance.md) | Per-scenario results from the official conformance suite at protocol revision `2026-07-28`. **Generated** by `.github/workflows/mcp-spec-compliance.yml`; do not edit by hand |
+| [MCP compliance](mcp-compliance.md) | Required PR gate for implemented behavior against the latest published MCP revision |
 
 ## For contributors
 

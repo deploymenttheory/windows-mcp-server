@@ -1,6 +1,6 @@
 {
   "source": "https://github.com/modelcontextprotocol/modelcontextprotocol/tree/main/schema",
-  "note": "Vendored MCP protocol schema revisions, one directory per released revision. Kept in-repo so conformance scoring is hermetic and offline. Managed by .github/workflows/mcp-spec-compliance.yml — do not edit by hand.",
+  "note": "Vendored published MCP protocol revisions. The required PR gate fails when the latest published revision is not present; assess the implemented product surface when updating.",
   "versions": [
     "2024-11-05",
     "2025-03-26",

@@ -28,7 +28,6 @@ design on the other platform and consumes the same core. Perception is the UI Au
 | `agentweave-harness/guardrails/*` (imported) | the security stack, split by lifecycle layer (see below) |
 | `policy/examples` | starting-point policy documents (validated by the test suite) |
 | `schema/` | vendored MCP protocol schemas + `versions.json` |
-| `conformance/` | expected-failure baselines + committed suite results |
 
 ## Build, test, lint
 
@@ -481,53 +480,16 @@ gate helpers directly.
 
 ## MCP conformance
 
-The server targets protocol revision **2026-07-28**, and the verdict on whether it
-conforms comes from the official suite,
-`github.com/modelcontextprotocol/conformance`, run by
-`.github/workflows/mcp-spec-compliance.yml`. This replaced a scorer written in
-this repo that graded our own wire objects and published 100/100 — a number marked
-by the project it graded. Do not reintroduce a score.
-
-- **The suite is HTTP-only.** `--url` is a required option of its `server` command;
-  there is no stdio path. Hence `conformance-serve`, in
-  `internal/winmcp/conformance_host.go` behind `//go:build ... && conformance`.
-  `go build ./...` must never compile it — a released binary with an
-  unauthenticated HTTP listener serving the full desktop-automation manifest is
-  exactly what the stdio-only posture exists to prevent. The workflow asserts this
-  by grepping an untagged build's `--help`.
-- **One constructor, or the evidence is worthless.** `newSurface`
-  (`internal/winmcp/server.go`, over `surface.New`) builds the server for
-  `RunStdio`, `CaptureSurface` and the conformance host alike, and
-  `InstallReceiving` adds inject-deps plus cache hints.
-  Evidence gathered over HTTP only describes the shipped binary because the two
-  serve the same thing; `TestConformanceHostServesTheShippedSurface` is what keeps
-  that true. If you add construction anywhere, add it there.
-- **Two passes, recorded separately.** The suite's scenarios name fixed fixtures
-  (`test_simple_text`, `test://static-text`, …), so a product server cannot pass
-  them. `--fixtures` registers exactly those names (`conformance.RegisterFixtures`
-  in core, reached only from the `conformance`-tagged host); the pass without it
-  is what the product ships. Never merge the two results — the
-  distinction is what makes each claim honest.
-- **Gate on the suite, never re-derive it.** `--expected-failures` plus its exit
-  code already handle both directions: an unlisted failure fails, and a listed
-  entry that starts passing also fails. `mcp-server-core/mcpconf` only ingests
-  and renders. Every baseline entry carries its reason.
-- **`--suite all`, not `active`.** The harness classifies 2026-07-28 as its draft
-  revision, so `active` excludes precisely the scenarios this revision introduced.
-- **Pin the harness version exactly.** 2026-07-28 support is on the `0.2.0-alpha`
-  line; stable `0.1.x` predates the revision. The workflow reports a newer version
-  rather than floating onto it.
-
-`mcp-server-core/mcpspec` is just the schema loader plus the revision manifest;
-the vendored schemas stay in this repo's `schema/`. It backs one offline pass/fail check (`capture_test.go`) so `go test` still catches a
-broken tool schema without Node, and the workflow's new-revision detector. Keep
-lookups def-driven via `Spec.FirstPresent(...)`: revisions restructure (draft-07
-`definitions` before 2025-11-25, 2020-12 `$defs` after; 2026-07-28 drops
-`InitializeResult` for `DiscoverResult`).
-
-**Capture the wire, not the SDK's view.** `ClientSession.InitializeResult()` is a
-*synthesized legacy view* on the new protocol. `surface.RecordingTransport` records
-real `jsonrpc.Message` frames; use `FrameLog.ResultFor(method)`.
+The required `.github/workflows/mcp-spec-compliance.yml` job runs on every PR.
+It fails if a newer published MCP schema revision exists, then runs
+`TestProductSpecGate` and the wire result tests against the latest vendored
+schema. `CaptureSurface` uses the same `newSurface` constructor as `RunStdio`;
+the core `surface` package records raw responses, validates each implemented
+capability and definition, and probes safe product methods. Add a validator and
+product probe whenever the server implements another MCP capability or result
+shape. Do not publish a percentage of the full optional protocol surface.
+The optional `conformance` build tag still provides an HTTP diagnostic host;
+its fixtures are not part of the required verdict or released binary.
 
 ### What 2026-07-28 changed that this code owns
 
@@ -551,9 +513,6 @@ The SDK implements the wire; the gaps were in our layers, and they are load-bear
 - `surface.CacheHintsMiddleware` sets `ttlMs`/`cacheScope` on all six cacheable results.
   The SDK's `"public"` default is wrong here — a `resources/read` returns one
   user's desktop, and the manifest depends on this session's persona and toolsets.
-
-After changing the tool manifest, the workflow regenerates the report; there is no
-local command that mints evidence, because evidence has to come from the suite.
 
 ## Resources and prompts
 
