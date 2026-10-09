@@ -7,7 +7,7 @@ require (
 	github.com/deploymenttheory/agentweave-harness v1.0.1
 	github.com/deploymenttheory/go-bindings-win32 v0.5.0
 	github.com/deploymenttheory/go-bindings-wmi v1.0.1
-	github.com/deploymenttheory/mcp-server-core v0.2.1
+	github.com/deploymenttheory/mcp-server-core v0.2.2-0.20261009083303-8cbf2b78ca4d
 	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2

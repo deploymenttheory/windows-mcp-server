@@ -1,6 +1,5 @@
 # windows-mcp-server
 
-[![MCP conformance](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdeploymenttheory%2Fwindows-mcp-server%2Fmain%2Fconformance%2Fbadge.json)](docs/mcp-compliance.md)
 [![Spec compliance](https://github.com/deploymenttheory/windows-mcp-server/actions/workflows/mcp-spec-compliance.yml/badge.svg)](https://github.com/deploymenttheory/windows-mcp-server/actions/workflows/mcp-spec-compliance.yml)
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server that bridges
@@ -79,7 +78,7 @@ do**, see the walk-throughs for a
 | **Credentials** | The agent signs in to apps and sites without ever being told the secret. The `Credentials` tool has no read mode and no engine method returns plaintext — but see the note below on toolset exposure | [Credentials](docs/credentials.md) |
 | **Session recording** | Once `transparency.recording_dir` is set, the whole session goes to one video file — automatically, under every persona — with timeline markers | [Session recording](docs/recording.md) |
 | **Kill switch** | Out-of-band, tiered containment. A trip always audits, raises the banner and seals the log; the optional rungs — isolate, kill processes, lock, shut down — run in a fixed order, with the recording finalized before shutdown and the session aborted last | [Security architecture](docs/security-architecture.md) |
-| **MCP conformance** | Protocol revision `2026-07-28`, measured by the official suite in CI | [MCP compliance](docs/mcp-compliance.md) |
+| **MCP conformance** | Implemented protocol behavior checked against the latest published spec on every PR | [MCP compliance](docs/mcp-compliance.md) |
 
 > **On the credentials claim:** the guarantee holds at the tool boundary — the
 > `Credentials` tool cannot read a secret back and no engine method returns one.
@@ -402,33 +401,12 @@ input or take focus.
 
 ## MCP conformance
 
-The server targets protocol revision **`2026-07-28`**. Conformance is measured by
-the official
-[modelcontextprotocol/conformance](https://github.com/modelcontextprotocol/conformance)
-suite, which `.github/workflows/mcp-spec-compliance.yml` runs and commits the
-results of.
-
-`2026-07-28` is a stateless protocol: no sessions and no `initialize` handshake.
-Each request carries its protocol version and client capabilities in `_meta`,
-`server/discover` advertises identity and capabilities, `subscriptions/listen`
-carries server-to-client notifications, every result carries `resultType`, list
-and read results carry `ttlMs` and `cacheScope`, POSTs carry `Mcp-Method` /
-`Mcp-Name` headers, and MCP error codes sit in the reserved `-32020..-32099`
-range.
-
-Three passes run: **product** (the manifest the server ships), **fixtures** (the
-same server with the suite's named fixture tools registered, behind the
-`conformance` build tag), and a **backward-compatibility** run at `2025-11-25`.
-CI gates on the suite's own exit code — a failure absent from the baseline fails
-the build, and so does a baseline entry that has started passing.
-
-`go build ./...` does not compile the conformance host, so **the released binary
-has no HTTP listener** and is stdio-only. Both it and `stdio` build their MCP
-surface through one function, so what the suite measures is what the shipped
-binary serves.
-
-**→ [The report](docs/mcp-compliance.md)** is the verdict; the badge is a
-summary of the product pass.
+Every PR runs the required **MCP spec gate** against the latest published MCP
+revision. It captures the product's actual advertised surface and raw wire
+responses, checks the definitions and safe method calls against the published
+schema, and fails if a newer revision needs assessment. The check covers the
+features this server implements, without assigning a percentage for optional
+features it does not implement. See [MCP spec gate](docs/mcp-compliance.md).
 
 ---
 
@@ -470,7 +448,6 @@ agentweave-harness       (imported) the security stack, split by lifecycle layer
     status               status endpoint, GuardrailStatus + Kill tools
 policy/examples          starting-point policy documents
 schema/                  vendored MCP protocol schemas, one dir per revision
-conformance/             expected-failure baselines + committed suite results
 ```
 
 All Win32/COM work is serialized onto one STA thread; WMI runs on its own
