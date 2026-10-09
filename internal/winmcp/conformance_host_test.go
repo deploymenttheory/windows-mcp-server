@@ -3,6 +3,7 @@
 package winmcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -10,17 +11,13 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/deploymenttheory/mcp-server-core/surface"
 )
 
-// TestConformanceHostServesTheShippedSurface is what makes the conformance
-// evidence transfer.
-//
-// The official suite can only reach a server over HTTP, so it is measured against
-// the conformance host rather than the stdio binary operators actually run. That
-// only proves something about the shipped server if the two serve the same thing.
-// This test connects to the host's server object over an in-memory transport and
-// compares the tool manifest and declared capabilities, byte for byte, with what
-// CaptureSurface records from the stdio construction.
+// TestConformanceHostServesTheShippedSurface keeps the optional HTTP diagnostic
+// host aligned with the product construction. Both sides are compared as raw
+// client-visible responses; the SDK's decoded Tool view may omit wire fields.
 //
 // Fixtures are off here on purpose: with them on the manifests are *meant* to
 // differ, and that difference is exactly why the suite is run twice and the two
@@ -41,7 +38,7 @@ func TestConformanceHostServesTheShippedSurface(t *testing.T) {
 	}
 	hostTools, hostCaps := listOverMemory(t, ctx, server)
 
-	if diff := diffToolNames(stdio.ToolsListResult, hostTools); diff != "" {
+	if diff := diffToolNames(t, stdio.ToolsListResult, hostTools); diff != "" {
 		t.Errorf("conformance host and stdio server serve different tools: %s", diff)
 	}
 	if string(canonical(t, stdio.Capabilities)) != string(canonical(t, hostCaps)) {
@@ -104,16 +101,16 @@ func TestConformanceFixturesAreAdditive(t *testing.T) {
 		"test_logging_tool":           true,
 		"json_schema_2020_12_tool":    true,
 
-		"test_input_required_result_elicitation":    true,
-		"test_input_required_result_sampling":       true,
-		"test_input_required_result_list_roots":     true,
-		"test_input_required_result_request_state":  true,
+		"test_input_required_result_elicitation":     true,
+		"test_input_required_result_sampling":        true,
+		"test_input_required_result_list_roots":      true,
+		"test_input_required_result_request_state":   true,
 		"test_input_required_result_multiple_inputs": true,
-		"test_input_required_result_multi_round":    true,
-		"test_input_required_result_tampered_state": true,
-		"test_input_required_result_capabilities":   true,
-		"test_streaming_elicitation":                true,
-		"test_x_mcp_header":                         true,
+		"test_input_required_result_multi_round":     true,
+		"test_input_required_result_tampered_state":  true,
+		"test_input_required_result_capabilities":    true,
+		"test_streaming_elicitation":                 true,
+		"test_x_mcp_header":                          true,
 	}
 	for name := range got {
 		if !suiteFixtures[name] {
@@ -134,38 +131,55 @@ func listOverMemory(t *testing.T, ctx context.Context, server *mcp.Server) (map[
 	}
 	defer func() { _ = ss.Close() }()
 
+	frames := surface.NewFrameLog()
 	client := mcp.NewClient(&mcp.Implementation{Name: "equivalence", Version: "test"}, nil)
-	cs, err := client.Connect(ctx, clientTransport, nil)
+	cs, err := client.Connect(ctx, &surface.RecordingTransport{Inner: clientTransport, Frames: frames}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = cs.Close() }()
 
-	res, err := cs.ListTools(ctx, nil)
-	if err != nil {
+	if _, err := cs.ListTools(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	rawList, ok := frames.ResultFor("tools/list")
+	if !ok {
+		t.Fatal("tools/list returned no raw result")
+	}
+	var res struct {
+		Tools []json.RawMessage `json:"tools"`
+	}
+	if err := json.Unmarshal(rawList, &res); err != nil {
 		t.Fatal(err)
 	}
 	tools := map[string]json.RawMessage{}
 	for _, tool := range res.Tools {
-		raw, err := json.Marshal(tool)
-		if err != nil {
+		var named struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(tool, &named); err != nil {
 			t.Fatal(err)
 		}
-		tools[tool.Name] = raw
+		tools[named.Name] = tool
 	}
 
-	var caps json.RawMessage
-	if init := cs.InitializeResult(); init != nil && init.Capabilities != nil {
-		if caps, err = json.Marshal(init.Capabilities); err != nil {
-			t.Fatal(err)
-		}
+	rawDiscover, ok := frames.ResultFor(surface.MethodDiscover)
+	if !ok {
+		t.Fatal("server/discover returned no raw result")
 	}
-	return tools, caps
+	var discover struct {
+		Capabilities json.RawMessage `json:"capabilities"`
+	}
+	if err := json.Unmarshal(rawDiscover, &discover); err != nil {
+		t.Fatal(err)
+	}
+	return tools, discover.Capabilities
 }
 
 // diffToolNames compares a captured tools/list payload against the host's tools,
 // reporting the first difference rather than dumping both manifests.
-func diffToolNames(captured json.RawMessage, host map[string]json.RawMessage) string {
+func diffToolNames(t *testing.T, captured json.RawMessage, host map[string]json.RawMessage) string {
+	t.Helper()
 	var payload struct {
 		Tools []json.RawMessage `json:"tools"`
 	}
@@ -185,7 +199,7 @@ func diffToolNames(captured json.RawMessage, host map[string]json.RawMessage) st
 		if !ok {
 			return "stdio serves " + named.Name + " but the conformance host does not"
 		}
-		if string(hostTool) != string(raw) {
+		if !bytes.Equal(canonical(t, hostTool), canonical(t, raw)) {
 			return "definition of " + named.Name + " differs between transports"
 		}
 	}
