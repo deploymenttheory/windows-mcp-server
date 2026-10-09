@@ -75,6 +75,17 @@ jobs:
       - name: Test
         run: go test ./... -count=1 -v
 
+      # The optional HTTP host has its own build tag. Compile and exercise its
+      # equivalence tests so raw-wire capture changes cannot silently break it.
+      - name: Conformance-tagged build and tests
+        run: |
+          go build -tags conformance ./...
+          go test -tags conformance ./internal/winmcp -run 'ConformanceHost|ConformanceFixtures|MRTR' -count=1
+          $helpText = go run ./cmd/windows-mcp-server --help 2>&1
+          if ($helpText -match 'conformance-serve') {
+            throw 'conformance-serve leaked into the untagged release build'
+          }
+
       # The shipped policy fixtures are executable: run them through the real CLI
       # so a rule change that drops a requirement fails here. bash so the glob
       # expands (pwsh would pass it literally).
