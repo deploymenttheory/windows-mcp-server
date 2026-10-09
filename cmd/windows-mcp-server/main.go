@@ -42,6 +42,7 @@ func main() {
 func rootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "windows-mcp-server",
+		Version: version,
 		Short: "MCP server for Windows desktop automation",
 		Long: "windows-mcp-server exposes Windows desktop automation (UI Automation, input, " +
 			"screenshots, window/app control, PowerShell, and system state) as MCP tools, " +

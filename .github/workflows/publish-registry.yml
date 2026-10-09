@@ -1,0 +1,61 @@
+name: publish-mcp-registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing public release tag to publish or verify
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download and verify the published bundle
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') { throw 'Registry retry must run from main' }
+          if ($env:TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][a-zA-Z0-9.-]+)?$') { throw "Invalid release tag: $env:TAG" }
+          if ((gh release view $env:TAG --json isDraft --jq .isDraft) -ne 'false') { throw "$env:TAG is not public" }
+          $version = $env:TAG.Substring(1)
+          $name = "windows-mcp-server_${version}_windows_amd64.mcpb"
+          gh release download $env:TAG --pattern $name --pattern "$name.sha256" `
+            --pattern "$name.sigstore.json" --dir $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { throw 'Bundle download failed' }
+          $bundle = Join-Path $env:RUNNER_TEMP $name
+          $expected = (Get-Content "$bundle.sha256").Split(' ')[0]
+          $actual = (Get-FileHash -Algorithm SHA256 $bundle).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw 'Published MCPB checksum mismatch' }
+          gh release download v1.8.1 --repo modelcontextprotocol/registry `
+            --pattern mcp-publisher_windows_amd64.tar.gz --dir $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { throw 'MCP Registry publisher download failed' }
+          tar -xf (Join-Path $env:RUNNER_TEMP 'mcp-publisher_windows_amd64.tar.gz') -C $env:RUNNER_TEMP mcp-publisher.exe
+          if ($LASTEXITCODE -ne 0) { throw 'MCP Registry publisher extraction failed' }
+          Add-Content -Path $env:GITHUB_PATH -Value $env:RUNNER_TEMP
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Verify the released bundle signature
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          $name = "windows-mcp-server_$($env:TAG.Substring(1))_windows_amd64.mcpb"
+          $bundle = Join-Path $env:RUNNER_TEMP $name
+          $identity = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/$env:TAG"
+          cosign verify-blob --bundle "$bundle.sigstore.json" --certificate-identity $identity `
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com $bundle
+          if ($LASTEXITCODE -ne 0) { throw 'Published MCPB signature invalid' }
+      - name: Publish or confirm the Registry entry
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          $bundle = Join-Path $env:RUNNER_TEMP "windows-mcp-server_$($env:TAG.Substring(1))_windows_amd64.mcpb"
+          & scripts/publish-registry.ps1 -Tag $env:TAG -Bundle $bundle

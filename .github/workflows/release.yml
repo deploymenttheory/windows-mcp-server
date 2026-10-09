@@ -1,50 +1,223 @@
-# Builds and attaches the release binaries when release-please tags a release.
-#
-# release-please owns the version, the changelog and the GitHub release itself;
-# this only builds the artifacts and appends them. Splitting it that way means a
-# failure here leaves the release intact rather than half-made, and it can be
-# re-run without re-tagging.
+# Build tagged source, Authenticode-sign both executables, verify the packages,
+# then publish the Release Please draft. No signing key lives in this repo.
 name: release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft release tag, e.g. v1.4.1
+        required: true
 
 permissions:
   contents: read
 
 jobs:
-  goreleaser:
-    name: 📦 Build and sign release archives
-    runs-on: windows-latest
+  release:
+    name: 📦 Sign, verify and publish Windows release
+    runs-on: windows-2025
+    environment: windows-release-signing
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     permissions:
-      # Attaching the archives to the release.
       contents: write
-      # Keyless signing: cosign exchanges this token for a short-lived
-      # certificate naming this workflow, so the signature says which workflow
-      # in which repository produced the artifact.
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # goreleaser derives the version from the tag, which needs the tags
-          # and the history behind them.
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+
+      # A manual recovery uses the workflow from main and the source from the
+      # unchanged tag. Keep repaired packaging helpers outside the checkout.
+      - name: Stage release tooling from the workflow revision
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($source in @('scripts/package-release.ps1', 'scripts/publish-registry.ps1', 'packaging/mcpb/manifest.json')) {
+            $spec = "$($env:GITHUB_SHA):$source"
+            $destination = Join-Path $env:RUNNER_TEMP (Split-Path $source -Leaf)
+            git show $spec | Set-Content -LiteralPath $destination -Encoding utf8
+            if ($LASTEXITCODE -ne 0) { throw "Cannot stage $source from $($env:GITHUB_SHA)" }
+          }
+
+      - name: Require a draft tag and Azure signing configuration
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][a-zA-Z0-9.-]+)?$') { throw "Invalid release tag: $env:RELEASE_TAG" }
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:GITHUB_REF -ne 'refs/heads/main') { throw 'Manual recovery must run from main' }
+          $tagCommit = git rev-list -n 1 $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0 -or $tagCommit -ne (git rev-parse HEAD)) { throw "Checkout does not match $env:RELEASE_TAG" }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release tag is not on main' }
+          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'AZURE_SIGNING_ENDPOINT', 'AZURE_SIGNING_ACCOUNT', 'AZURE_SIGNING_PROFILE')) {
+            if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing release signing setting: $name" }
+          }
+          for ($attempt = 1; $attempt -le 12; $attempt++) {
+            $state = gh release view $env:RELEASE_TAG --json isDraft --jq .isDraft 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              if ($state -eq 'true') { exit 0 }
+              throw "$env:RELEASE_TAG is public; publish a new version instead of replacing its assets"
+            }
+            Start-Sleep -Seconds 5
+          }
+          throw "Release Please did not create a draft for $env:RELEASE_TAG"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Install the pinned MCPB packer
+        run: npm install --global --no-audit --no-fund @anthropic-ai/mcpb@2.1.2
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      # syft produces the per-archive SBOMs the goreleaser `sboms` block emits.
       - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
 
-      - name: Run goreleaser
+      # GoReleaser stamps both PE files from the tag. Packaging happens only
+      # after the signer mutates those files in place.
+      - name: Build release executables
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          version: "~> v2"
-          args: release --clean
+          version: v2.18.2
+          args: release --clean --skip=archive,sign,publish,sbom
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Azure login for Artifact Signing
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Authenticode-sign both executables
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Authenticode signatures and stamped version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:RELEASE_TAG.Substring(1)
+          $artifacts = Get-Content -Raw dist/artifacts.json | ConvertFrom-Json
+          $binaries = @($artifacts | Where-Object { $_.type -eq 'Binary' -and $_.goos -eq 'windows' })
+          if ($binaries.Count -ne 2) { throw "Expected two Windows executables, found $($binaries.Count)" }
+          foreach ($binary in $binaries) {
+            $path = Join-Path $PWD.Path $binary.path
+            $signature = Get-AuthenticodeSignature -FilePath $path
+            if ($signature.Status -ne 'Valid') { throw "$path has no valid Authenticode signature: $($signature.Status)" }
+            Write-Output "$($binary.goarch): $($signature.SignerCertificate.Subject)"
+          }
+          $amd64 = $binaries | Where-Object goarch -eq 'amd64'
+          $reported = & (Join-Path $PWD.Path $amd64.path) --version
+          if ($LASTEXITCODE -ne 0 -or $reported -ne "windows-mcp-server version $version") { throw "Incorrect release version: $reported" }
+
+      - name: Pack signed archives and Claude Desktop bundle
+        shell: pwsh
+        run: |
+          & (Join-Path $env:RUNNER_TEMP 'package-release.ps1') `
+            -Version $env:RELEASE_TAG.Substring(1) -RepositoryRoot $PWD.Path `
+            -ManifestPath (Join-Path $env:RUNNER_TEMP 'manifest.json') -DistDir (Join-Path $PWD.Path 'dist')
+
+      - name: Generate SBOMs, checksums and keyless signatures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:RELEASE_TAG.Substring(1)
+          $archives = @('amd64', 'arm64') | ForEach-Object { "dist/windows-mcp-server_${version}_windows_$_.zip" }
+          foreach ($archive in $archives) {
+            syft scan "file:$archive" -o "cyclonedx-json=$archive.sbom.json"
+            if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed for $archive" }
+          }
+          $checksum = "dist/windows-mcp-server_${version}_checksums.txt"
+          $lines = foreach ($archive in $archives) { "$((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant())  $(Split-Path $archive -Leaf)" }
+          [IO.File]::WriteAllLines((Join-Path $PWD.Path $checksum), [string[]]$lines)
+          cosign sign-blob --bundle "$checksum.sigstore.json" $checksum --yes
+          if ($LASTEXITCODE -ne 0) { throw 'Checksum signing failed' }
+          $bundle = "dist/windows-mcp-server_${version}_windows_amd64.mcpb"
+          $bundleHash = (Get-FileHash -Algorithm SHA256 $bundle).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path $PWD.Path "$bundle.sha256"), "$bundleHash  $(Split-Path $bundle -Leaf)`n")
+          cosign sign-blob --bundle "$bundle.sigstore.json" $bundle --yes
+          if ($LASTEXITCODE -ne 0) { throw 'MCPB signing failed' }
+
+      - name: Verify and upload the staged assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:RELEASE_TAG.Substring(1)
+          $checksum = "dist/windows-mcp-server_${version}_checksums.txt"
+          $bundle = "dist/windows-mcp-server_${version}_windows_amd64.mcpb"
+          $identity = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/.github/workflows/release.yml@$env:GITHUB_REF"
+          foreach ($target in @($checksum, $bundle)) {
+            cosign verify-blob --bundle "$target.sigstore.json" --certificate-identity $identity `
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com $target
+            if ($LASTEXITCODE -ne 0) { throw "Signature verification failed: $target" }
+          }
+          foreach ($line in (Get-Content $checksum)) {
+            if ($line -notmatch '^([a-f0-9]{64})  (.+)$') { throw "Invalid checksum line: $line" }
+            $actual = (Get-FileHash -Algorithm SHA256 (Join-Path 'dist' $Matches[2])).Hash.ToLowerInvariant()
+            if ($actual -ne $Matches[1]) { throw "Archive checksum mismatch: $($Matches[2])" }
+          }
+          $actualBundleHash = (Get-FileHash -Algorithm SHA256 $bundle).Hash.ToLowerInvariant()
+          if ((Get-Content "$bundle.sha256").Split(' ')[0] -ne $actualBundleHash) { throw 'MCPB checksum mismatch' }
+          $assets = @(
+            "dist/windows-mcp-server_${version}_windows_amd64.zip",
+            "dist/windows-mcp-server_${version}_windows_amd64.zip.sbom.json",
+            "dist/windows-mcp-server_${version}_windows_arm64.zip",
+            "dist/windows-mcp-server_${version}_windows_arm64.zip.sbom.json",
+            $checksum, "$checksum.sigstore.json", $bundle, "$bundle.sha256", "$bundle.sigstore.json"
+          )
+          foreach ($asset in $assets) { if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Missing asset: $asset" } }
+          if ((gh release view $env:RELEASE_TAG --json isDraft --jq .isDraft) -ne 'true') { throw 'Release is no longer a draft' }
+          gh release upload $env:RELEASE_TAG @assets --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed' }
+
+      - name: Publish the verified preview release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit $env:RELEASE_TAG --draft=false --prerelease=true
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
+
+      - name: Download the pinned MCP Registry publisher
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download v1.8.1 --repo modelcontextprotocol/registry `
+            --pattern mcp-publisher_windows_amd64.tar.gz --dir $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { throw 'MCP Registry publisher download failed' }
+          tar -xf (Join-Path $env:RUNNER_TEMP 'mcp-publisher_windows_amd64.tar.gz') -C $env:RUNNER_TEMP mcp-publisher.exe
+          if ($LASTEXITCODE -ne 0) { throw 'MCP Registry publisher extraction failed' }
+          Add-Content -Path $env:GITHUB_PATH -Value $env:RUNNER_TEMP
+
+      - name: Publish the bundle to the MCP Registry
+        continue-on-error: true # Registry outages can be retried without changing public assets.
+        shell: pwsh
+        run: |
+          & (Join-Path $env:RUNNER_TEMP 'publish-registry.ps1') `
+            -Tag $env:RELEASE_TAG `
+            -Bundle (Join-Path $PWD.Path "dist/windows-mcp-server_$($env:RELEASE_TAG.Substring(1))_windows_amd64.mcpb")
