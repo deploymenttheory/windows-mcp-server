@@ -11,8 +11,8 @@ github.com/deploymenttheory/go-bindings-win32 v0.5.0 h1:B5qu2L+XvQRPe0/ni7Q9PAu3
 github.com/deploymenttheory/go-bindings-win32 v0.5.0/go.mod h1:J3mOfF0N1uFmI8Cm3GPtq1YJYnwAKUkOsmc36GYbm0w=
 github.com/deploymenttheory/go-bindings-wmi v1.0.1 h1:PWP0CuNaUj2bC0Cxijw2vFY7Z5XsLcTwpv7eN/XS09c=
 github.com/deploymenttheory/go-bindings-wmi v1.0.1/go.mod h1:wg79QBZ1pKyc5qyL0irN073v1mgk/AlUnhoI9RuaoVc=
-github.com/deploymenttheory/mcp-server-core v0.2.2-0.20261009083303-8cbf2b78ca4d h1:T2sTPT2HxPyGRaWCfOHM4M55u/nv03aRQ/S3tUMx+ng=
-github.com/deploymenttheory/mcp-server-core v0.2.2-0.20261009083303-8cbf2b78ca4d/go.mod h1:O+nVdfrIoo0wmunKookwIqa6yWZ87m0QKnTCOyCEfKE=
+github.com/deploymenttheory/mcp-server-core v0.2.2 h1:ndZg5R9kybc1FdYLlxglJbHVn6jYrG1he/RzCU3ePBk=
+github.com/deploymenttheory/mcp-server-core v0.2.2/go.mod h1:O+nVdfrIoo0wmunKookwIqa6yWZ87m0QKnTCOyCEfKE=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
 github.com/fsnotify/fsnotify v1.9.0 h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S9k=
