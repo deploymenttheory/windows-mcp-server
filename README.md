@@ -38,10 +38,14 @@ an agent whose actions are conditional, bounded, and reviewable.
 
 ## Quick start
 
-Windows 10 or 11 (amd64 or arm64), Go 1.25+ to build.
+Windows 10 or 11 (amd64 or arm64). Download the archive for your architecture
+from [GitHub Releases](https://github.com/deploymenttheory/windows-mcp-server/releases),
+then extract it to a stable directory. Starting with releases built by the new
+distribution workflow, Claude Desktop on amd64 can install the release `.mcpb`
+directly. Go 1.25+ is needed only to build from source.
 
 ```powershell
-go build -o windows-mcp-server.exe ./cmd/windows-mcp-server
+.\windows-mcp-server.exe --version
 ```
 
 Point any MCP client at the binary with the `stdio` subcommand:
@@ -59,7 +63,8 @@ Point any MCP client at the binary with the `stdio` subcommand:
 
 **→ [Getting started](docs/getting-started.md)** covers Claude Code, Cursor,
 Codex CLI and Claude Desktop specifically, and what to do before pointing this at
-a machine you care about.
+a machine you care about. [Releasing](docs/releasing.md) covers signing,
+distribution and the preview lifecycle.
 
 Not sure this is for you? If you have to **approve** it on a fleet, read
 [Deciding to deploy this](docs/deployment-decision.md). If you have a **job to

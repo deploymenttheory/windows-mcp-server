@@ -3,17 +3,38 @@
 From nothing to an MCP client driving the Windows desktop, then the two things
 worth doing before you point it at anything real.
 
-- [Build](#build)
+- [Install](#install)
 - [First run](#first-run)
 - [Connect a client](#connect-a-client)
+- [Upgrade or recover](#upgrade-or-recover)
 - [Choose what the agent can do](#choose-what-the-agent-can-do)
 - [Before anything real](#before-anything-real)
 
 ---
 
-## Build
+## Install
 
-Requires Windows 10 or 11 (amd64 or arm64) and Go 1.25+.
+Requires Windows 10 or 11 on amd64 or arm64. Download
+`windows-mcp-server_<version>_windows_<arch>.zip` from the
+[GitHub release](https://github.com/deploymenttheory/windows-mcp-server/releases)
+for your machine's architecture. Extract it to a stable directory, such as
+`%LOCALAPPDATA%\Programs\windows-mcp-server`, and use the extracted EXE's
+absolute path in your MCP client. Releases made by the new distribution
+workflow carry an Azure Authenticode-signed executable, signed checksums and
+a CycloneDX SBOM. Earlier releases, including v1.4.0, have keyless-signed
+checksums but predate Azure executable signing.
+
+For Claude Desktop on **amd64**, starting with releases built by the new
+distribution workflow, download
+`windows-mcp-server_<version>_windows_amd64.mcpb` from the same release, then
+choose **Settings > Extensions > Advanced settings > Install Extension**. It
+contains the signed EXE and needs no separate ZIP install. Windows arm64 users
+should use the arm64 ZIP and the manual Claude Desktop configuration below;
+the MCPB format has no CPU architecture selector. Install the extension or
+configure the standalone EXE in Claude Desktop, so the server is not listed
+twice.
+
+For a source build, install Go 1.25+ and run:
 
 ```powershell
 go build -o windows-mcp-server.exe ./cmd/windows-mcp-server
@@ -108,6 +129,10 @@ WINDOWS_MCP_OVERLAY = "true"
 
 ### Claude Desktop
 
+On amd64, prefer the release `.mcpb` under **Settings > Extensions > Advanced
+settings > Install Extension**. The following manual entry is for the ZIP
+installation, or for arm64:
+
 `claude_desktop_config.json` (Settings → Developer → Edit Config):
 
 ```json
@@ -131,6 +156,25 @@ carries MCP.)
 
 > **Escaping:** JSON needs `C:\\path\\...`; TOML accepts `\\` or a single-quoted
 > literal `'C:\path\...'`. If the binary is on `PATH`, the bare name works.
+
+---
+
+## Upgrade or recover
+
+Stop MCP clients, extract the newer ZIP into the same stable directory, and
+check the executable before restarting the clients:
+
+```powershell
+$server = "$env:LOCALAPPDATA\Programs\windows-mcp-server\windows-mcp-server.exe"
+& $server --version
+Get-AuthenticodeSignature $server | Select-Object Status, SignerCertificate
+```
+
+Client entries continue to use that path. For Claude Desktop, install the
+newer `.mcpb` from its GitHub release; a privately installed extension is
+upgraded manually. Keep only one Claude Desktop entry for this server. For a
+bad public version, reinstall a known-good release while a corrected patch is
+prepared. Published release tags and assets are not replaced.
 
 ---
 

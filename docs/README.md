@@ -17,6 +17,7 @@ what you are trying to do.
 | Guide | For |
 |---|---|
 | [Getting started](getting-started.md) | Build, first run, connecting an MCP client, and the two things to do before pointing it at anything real |
+| [Releasing](releasing.md) | Azure Authenticode setup, preview release flow, client acceptance and recovery |
 | [Toolsets and personas](toolsets-and-personas.md) | What every tool does, how to select a subset, what a persona is and how far it can be customised |
 | [Policy configuration](policy-config.md) | The device-policy document: full schema reference, signals, rules, verdicts, rate limits, kill switch |
 | [Egress setup](egress.md) | Restricting which domains the device may reach — proxy, scoped firewall rules, machine-wide default-deny, and how to verify each tier |

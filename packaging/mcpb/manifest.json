@@ -1,0 +1,29 @@
+{
+  "manifest_version": "0.3",
+  "name": "windows-mcp-server",
+  "display_name": "Windows MCP Server",
+  "version": "0.0.0",
+  "description": "Local Windows desktop automation through MCP.",
+  "author": {
+    "name": "Deployment Theory"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/deploymenttheory/windows-mcp-server"
+  },
+  "homepage": "https://github.com/deploymenttheory/windows-mcp-server",
+  "documentation": "https://github.com/deploymenttheory/windows-mcp-server/blob/main/docs/getting-started.md",
+  "support": "https://github.com/deploymenttheory/windows-mcp-server/issues",
+  "license": "MIT",
+  "compatibility": {
+    "platforms": ["win32"]
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "server/windows-mcp-server.exe",
+    "mcp_config": {
+      "command": "${__dirname}/server/windows-mcp-server.exe",
+      "args": ["stdio", "--persona", "business-user"]
+    }
+  }
+}

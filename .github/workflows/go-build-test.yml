@@ -11,6 +11,17 @@ on:
       - '**/*.go'
       - 'go.mod'
       - 'go.sum'
+      - '.goreleaser.yaml'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
+      - 'packaging/**'
+      - 'scripts/package-release.ps1'
+      - 'scripts/publish-registry.ps1'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/publish-registry.yml'
+      - 'docs/getting-started.md'
+      - 'docs/releasing.md'
+      - 'README.md'
 
 permissions:
   contents: read
@@ -109,3 +120,31 @@ jobs:
         env:
           GOARCH: arm64
         run: go build ./...
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: v2.18.2
+          install-only: true
+
+      - name: Validate the distributable ZIPs and Claude Desktop bundle
+        shell: pwsh
+        run: |
+          npm install --global --no-audit --no-fund @anthropic-ai/mcpb@2.1.2
+          if ($LASTEXITCODE -ne 0) { throw 'MCPB CLI install failed' }
+          goreleaser check
+          if ($LASTEXITCODE -ne 0) { throw 'GoReleaser configuration invalid' }
+          goreleaser release --snapshot --clean --skip=archive,sign,publish,sbom
+          if ($LASTEXITCODE -ne 0) { throw 'GoReleaser snapshot build failed' }
+          $version = (Get-Content -Raw dist/metadata.json | ConvertFrom-Json).version
+          & scripts/package-release.ps1 -Version $version -RepositoryRoot $PWD.Path `
+            -ManifestPath packaging/mcpb/manifest.json -DistDir (Join-Path $PWD.Path 'dist')
+          $binary = (Get-Content -Raw dist/artifacts.json | ConvertFrom-Json) | `
+            Where-Object { $_.type -eq 'Binary' -and $_.goarch -eq 'amd64' }
+          $reported = & (Join-Path $PWD.Path $binary.path) --version
+          if ($LASTEXITCODE -ne 0 -or $reported -ne "windows-mcp-server version $version") {
+            throw "Snapshot version mismatch: $reported"
+          }
