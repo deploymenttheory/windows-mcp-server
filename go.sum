@@ -5,8 +5,8 @@ github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F9
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
-github.com/deploymenttheory/agentweave-harness v1.0.1-0.20261008191534-a01948594dc7 h1:lTarikToNWrPn9oYG2OPphwakznHQazjLm+zpmvovCM=
-github.com/deploymenttheory/agentweave-harness v1.0.1-0.20261008191534-a01948594dc7/go.mod h1:S02ZzdZjO4sO5khEbSUolETBu1nrYDGMxmmR/hkbQh4=
+github.com/deploymenttheory/agentweave-harness v1.0.1 h1:PV86HQ5uhhrPD8GbAW3MZWPXqU+uXmtbgY4AnPeRF+Y=
+github.com/deploymenttheory/agentweave-harness v1.0.1/go.mod h1:S02ZzdZjO4sO5khEbSUolETBu1nrYDGMxmmR/hkbQh4=
 github.com/deploymenttheory/go-bindings-win32 v0.5.0 h1:B5qu2L+XvQRPe0/ni7Q9PAu3j3it94cyDJjGTeMLG/o=
 github.com/deploymenttheory/go-bindings-win32 v0.5.0/go.mod h1:J3mOfF0N1uFmI8Cm3GPtq1YJYnwAKUkOsmc36GYbm0w=
 github.com/deploymenttheory/go-bindings-wmi v1.0.1 h1:PWP0CuNaUj2bC0Cxijw2vFY7Z5XsLcTwpv7eN/XS09c=
