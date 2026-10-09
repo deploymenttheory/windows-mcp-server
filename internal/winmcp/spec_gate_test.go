@@ -29,8 +29,12 @@ func TestProductSpecGate(t *testing.T) {
 	var promptCount int
 	got, err := captureSurfaceWithProbes(context.Background(), Config{Toolsets: []string{"all"}, Version: "test"},
 		func(ctx context.Context, client *mcp.ClientSession) error {
-			if _, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "Wait", Arguments: map[string]any{"duration": 0}}); err != nil {
+			wait, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "Wait", Arguments: map[string]any{"duration": 0}})
+			if err != nil {
 				return fmt.Errorf("call safe product tool: %w", err)
+			}
+			if wait.IsError {
+				return fmt.Errorf("safe product tool Wait returned an error result")
 			}
 			listed, err := client.ListPrompts(ctx, nil)
 			if err != nil {
