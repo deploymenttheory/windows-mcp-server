@@ -3,7 +3,7 @@ module github.com/deploymenttheory/windows-mcp-server
 go 1.26.0
 
 require (
-	github.com/Microsoft/go-winio v0.6.2
+	github.com/Microsoft/go-winio v0.6.3
 	github.com/deploymenttheory/agentweave-harness v1.0.1
 	github.com/deploymenttheory/go-bindings-win32 v0.5.0
 	github.com/deploymenttheory/go-bindings-wmi v1.0.1
@@ -13,7 +13,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 )
 
 require (
