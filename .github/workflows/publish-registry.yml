@@ -40,7 +40,7 @@ jobs:
           tar -xf (Join-Path $env:RUNNER_TEMP 'mcp-publisher_windows_amd64.tar.gz') -C $env:RUNNER_TEMP mcp-publisher.exe
           if ($LASTEXITCODE -ne 0) { throw 'MCP Registry publisher extraction failed' }
           Add-Content -Path $env:GITHUB_PATH -Value $env:RUNNER_TEMP
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       - name: Verify the released bundle signature
         shell: pwsh
         env:
