@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/Microsoft/go-winio v0.6.3
 	github.com/deploymenttheory/agentweave-harness v1.0.1
-	github.com/deploymenttheory/go-bindings-win32 v0.5.0
+	github.com/deploymenttheory/go-bindings-win32 v0.7.0
 	github.com/deploymenttheory/go-bindings-wmi v1.0.1
 	github.com/deploymenttheory/mcp-server-core v0.2.2
 	github.com/google/jsonschema-go v0.4.3
